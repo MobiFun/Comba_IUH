@@ -1,0 +1,216 @@
+#############################################################
+# $URL: http://memo.prisma/svn/tm/IuhCsComba_Tm/tags/IuhCsComba_Tm-1.2.0/tgt/common/localutils/rm_itf.tsm $
+#
+# $Author: amedeo $
+#
+# Description: Procedures used to build and send SCTP primitives
+#
+# $Rev: 51700 $
+#
+# $Date: 2012-05-31 09:35:30 +0200 (Thu, 31 May 2012) $
+##############################################################
+
+typedef {STRUCT {STRING UserTag} {UINT EnbIdx} {UINT UeIdx} RMS1_MS_CREATE_CMD}
+typedef {STRUCT {STRING UserTag}                            RMS1_MS_CREATE_ACK}
+
+# -----------------------------------------------------------------------------
+typedef {STRUCT {STRING UserTag} {UINT EnbIdx} {UINT UeIdx} RMS1_MS_DELETE_CMD}
+typedef {STRUCT {STRING UserTag}                            RMS1_MS_DELETE_ACK}
+
+# -----------------------------------------------------------------------------
+typedef {STRUCT {STRING UserTag} {UINT EnbIdx} {UINT UeIdx} {USHORT ErabId}
+                {UINT LocIp} {UINT RemIp} {UINT LocTeId} {UINT RemTeId}
+                                                      RMS1_IUPS_GTP_SETUP_CMD }
+
+typedef {STRUCT {STRING UserTag} {USHORT ErabId}      RMS1_IUPS_GTP_SETUP_ACK }
+
+# -----------------------------------------------------------------------------
+typedef {STRUCT {STRING UserTag} {UINT EnbIdx} {UINT UeIdx} {USHORT ErabId} RMS1_IUPS_GTP_RELEASE_CMD }
+typedef {STRUCT {STRING UserTag} {USHORT ErabId}                            RMS1_IUPS_GTP_RELEASE_ACK }
+
+# =============================================================================
+proc rmS1_IuPsGtpSetupCmd {enbIdx ueIdx locIp remIp locTeId remTeId erabId userTag} {
+    log "rmS1_IuPsGtpSetupCmd: enbIdx=$enbIdx, ueIdx=$ueIdx, locIp=$locIp, remIp=$remIp, locTeId=$locTeId, remTeId=$remTeId, erabId=$erabId, userTag=$userTag"
+    new RMS1_IUPS_GTP_SETUP_CMD s
+    wr  s   UserTag  $userTag
+    wr  s   EnbIdx   $enbIdx
+    wr  s   UeIdx    $ueIdx
+    wr  s   ErabId   $erabId
+    wr  s   LocIp    $locIp
+    wr  s   RemIp    $remIp
+    wr  s   LocTeId  $locTeId
+    wr  s   RemTeId  $remTeId
+
+    send s $::_rmpid
+}
+
+proc rmS1_IuPsGtpReleaseCmd {enbIdx ueIdx erabId userTag} {
+    log "rmS1_IuPsGtpReleaseCmd: enbIdx=$enbIdx, ueIdx=$ueIdx, erabId=$erabId, userTag=$userTag"
+    new RMS1_IUPS_GTP_RELEASE_CMD s
+    wr  s   UserTag  $userTag
+    wr  s   EnbIdx   $enbIdx
+    wr  s   UeIdx    $ueIdx
+    wr  s   ErabId   $erabId
+
+    send s $::_rmpid
+}
+
+proc rmS1_MsCreateCmd {enbIdx ueIdx userTag} {
+    log "rmS1_MsCreateCmd: enbIdx=$enbIdx, ueIdx=$ueIdx, userTag=$userTag"
+    new RMS1_MS_CREATE_CMD s
+    wr  s   UserTag  $userTag
+    wr  s   EnbIdx   $enbIdx
+    wr  s   UeIdx    $ueIdx
+    
+    send s $::_rmpid
+}
+
+proc rmS1_MsDeleteCmd {enbIdx ueIdx userTag} {
+    log "rmS1_MsDeleteCmd: enbIdx=$enbIdx, ueIdx=$ueIdx, userTag=$userTag"
+    new RMS1_MS_DELETE_CMD s
+    wr  s   UserTag  $userTag
+    wr  s   EnbIdx   $enbIdx
+    wr  s   UeIdx    $ueIdx
+    
+    send s $::_rmpid
+}
+
+#===================================================================================
+typedef {STRUCT {STRING UserTag} {UINT EnbIdx} {UINT UeIdx} RMX2_HOIN_MS_CREATE_CMD }
+typedef {STRUCT {STRING UserTag}                            RMX2_HOIN_MS_CREATE_ACK }
+
+# -----------------------------------------------------------------------------
+typedef {STRUCT {STRING UserTag} {UINT EnbIdx} {UINT UeIdx} RMX2_HOIN_MS_DELETE_CMD }
+typedef {STRUCT {STRING UserTag}                            RMX2_HOIN_MS_DELETE_ACK }
+
+# -----------------------------------------------------------------------------
+typedef {STRUCT {STRING UserTag} {UINT EnbIdx} {UINT UeIdx} {USHORT ErabId}
+                {UINT LocIp} {UINT RemIp} {UINT UlTeId} {UINT DlTeId} RMX2_HOIN_IUPS_GTP_SETUP_CMD }
+
+typedef {STRUCT {STRING UserTag} {USHORT ErabId}       RMX2_HOIN_IUPS_GTP_SETUP_ACK }
+
+# -----------------------------------------------------------------------------
+typedef {STRUCT {STRING UserTag} {USHORT ErabId}       RMX2_HOIN_IUPS_GTP_END_MARKER_IND}
+
+# -----------------------------------------------------------------------------
+typedef {STRUCT {STRING UserTag} {UINT EnbIdx} {UINT UeIdx} {USHORT ErabId} RMX2_HOIN_IUPS_GTP_RELEASE_CMD }
+typedef {STRUCT {STRING UserTag} {USHORT ErabId}                            RMX2_HOIN_IUPS_GTP_RELEASE_ACK }
+
+# -----------------------------------------------------------------------------
+
+# =============================================================================
+proc rmX2HoIn_MsCreateCmd {enbIdx ueIdx userTag} {
+    log "rmX2HoIn_MsCreateCmd: enbIdx=$enbIdx, ueIdx=$ueIdx, userTag=$userTag"
+    new RMX2_HOIN_MS_CREATE_CMD s
+    wr  s   UserTag  $userTag
+    wr  s   EnbIdx   $enbIdx
+    wr  s   UeIdx    $ueIdx
+    
+    send s $::_rmpid
+}
+
+proc rmX2HoIn_MsDeleteCmd {enbIdx ueIdx userTag} {
+    log "rmX2HoIn_MsDeleteCmd: enbIdx=$enbIdx, ueIdx=$ueIdx, userTag=$userTag"
+    new RMX2_HOIN_MS_DELETE_CMD s
+    wr  s   UserTag  $userTag
+    wr  s   EnbIdx   $enbIdx
+    wr  s   UeIdx    $ueIdx
+    
+    send s $::_rmpid
+}
+
+proc rmX2HoIn_IuPsGtpSetupCmd {enbIdx ueIdx erabId userTag locIp remIp ulTeId dlTeId} {
+    log "rmX2HoIn_IuPsGtpSetupCmd: enbIdx=$enbIdx, ueIdx=$ueIdx, erabId=$erabId, userTag=$userTag, locIp=$locIp, remIp=$remIp, ulTeId=$ulTeId, dlTeId=$dlTeId"
+    new RMX2_HOIN_IUPS_GTP_SETUP_CMD s
+    wr  s   UserTag   $userTag
+    wr  s   EnbIdx    $enbIdx
+    wr  s   UeIdx     $ueIdx
+    wr  s   ErabId    $erabId
+    wr  s   LocIp     $locIp
+    wr  s   RemIp     $remIp
+    wr  s   UlTeId    $ulTeId
+    wr  s   DlTeId    $dlTeId
+    
+    send s $::_rmpid
+}
+
+proc rmX2HoIn_IuPsGtpReleaseCmd {enbIdx ueIdx erabId userTag} {
+    log "rmX2HoIn_IuPsGtpReleaseCmd: enbIdx=$enbIdx, ueIdx=$ueIdx, erabId=$erabId, userTag=$userTag"
+    new RMX2_HOIN_IUPS_GTP_RELEASE_CMD s
+    wr  s   UserTag  $userTag
+    wr  s   EnbIdx   $enbIdx
+    wr  s   UeIdx    $ueIdx
+    wr  s   ErabId   $erabId
+    
+    send s $::_rmpid
+}
+
+#===================================================================================
+typedef {STRUCT {STRING UserTag} {UINT EnbIdx} {UINT UeIdx} RMX2_HOOUT_MS_CREATE_CMD}
+typedef {STRUCT {STRING UserTag}                            RMX2_HOOUT_MS_CREATE_ACK}
+
+# -----------------------------------------------------------------------------
+typedef {STRUCT {STRING UserTag} {UINT EnbIdx} {UINT UeIdx} RMX2_HOOUT_MS_DELETE_CMD}
+typedef {STRUCT {STRING UserTag}                            RMX2_HOOUT_MS_DELETE_ACK}
+
+# -----------------------------------------------------------------------------
+typedef {STRUCT {STRING UserTag} {UINT EnbIdx} {UINT UeIdx} {USHORT ErabId}
+          {UINT LocIp} {UINT RemIp} {UINT UlTeId} {UINT DlTeId}
+                                                       RMX2_HOOUT_IUPS_GTP_SETUP_CMD}
+
+typedef {STRUCT {STRING UserTag} {USHORT ErabId}       RMX2_HOOUT_IUPS_GTP_SETUP_ACK}
+
+# -----------------------------------------------------------------------------
+typedef {STRUCT {STRING UserTag} {USHORT ErabId}       RMX2_HOOUT_IUPS_GTP_END_MARKER_IND}
+
+# -----------------------------------------------------------------------------
+typedef {STRUCT {STRING UserTag} {UINT EnbIdx} {UINT UeIdx} {USHORT ErabId} RMX2_HOOUT_IUPS_GTP_RELEASE_CMD }
+typedef {STRUCT {STRING UserTag} {USHORT ErabId}                            RMX2_HOOUT_IUPS_GTP_RELEASE_ACK }
+
+# =============================================================================
+proc rmX2HoOut_MsCreateCmd {enbIdx ueIdx userTag} {
+    log "rmX2HoOut_MsCreateCmd: enbIdx=$enbIdx, ueIdx=$ueIdx, userTag=$userTag"
+    new RMX2_HOOUT_MS_CREATE_CMD s
+    wr  s   UserTag  $userTag
+    wr  s   EnbIdx   $enbIdx
+    wr  s   UeIdx    $ueIdx
+    
+    send s $::_rmpid
+}
+
+proc rmX2HoOut_MsDeleteCmd {enbIdx ueIdx userTag} {
+    log "rmX2HoOut_MsDeleteCmd: enbIdx=$enbIdx, ueIdx=$ueIdx, userTag=$userTag"
+    new RMX2_HOOUT_MS_DELETE_CMD s
+    wr  s   UserTag  $userTag
+    wr  s   EnbIdx   $enbIdx
+    wr  s   UeIdx    $ueIdx
+    
+    send s $::_rmpid
+}
+
+proc rmX2HoOut_IuPsGtpSetupCmd { enbIdx ueIdx erabId userTag locIp remIp ulTeId dlTeId} {
+    log "rmX2HoOut_IuPsGtpSetupCmd: enbIdx=$enbIdx, ueIdx=$ueIdx, erabId=$erabId, userTag=$userTag, locIp=$locIp, remIp=$remIp, ulTeId=$ulTeId, dlTeId=$dlTeId"
+    new RMX2_HOOUT_IUPS_GTP_SETUP_CMD s
+    wr  s   UserTag   $userTag
+    wr  s   EnbIdx    $enbIdx
+    wr  s   UeIdx     $ueIdx
+    wr  s   ErabId    $erabId
+    wr  s   LocIp     $locIp
+    wr  s   RemIp     $remIp
+    wr  s   UlTeId    $ulTeId
+    wr  s   DlTeId    $dlTeId
+    
+    send s $::_rmpid
+}
+
+proc rmX2HoOut_IuPsGtpReleaseCmd {enbIdx ueIdx erabId userTag} {
+    log "rmX2HoOut_IuPsGtpReleaseCmd: enbIdx=$enbIdx, ueIdx=$ueIdx, erabId=$erabId, userTag=$userTag"
+    new RMX2_HOOUT_IUPS_GTP_RELEASE_CMD s
+    wr  s   UserTag  $userTag
+    wr  s   EnbIdx   $enbIdx
+    wr  s   UeIdx    $ueIdx
+    wr  s   ErabId   $erabId
+    
+    send s $::_rmpid
+}
+

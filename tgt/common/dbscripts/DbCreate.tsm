@@ -1,0 +1,282 @@
+# $URL: http://memo.prisma/svn/tm/tstmDb/tags/DbScripts-5.1.4/DbCreate.tsm $
+# $Rev: 13734 $
+# $Date: 2007-03-26 15:54:48 +0200 (Mon, 26 Mar 2007) $
+# $Author: roger $
+
+# This script interprets the csv file with a DB configuration and initialization data
+
+include DbCommon.tsm
+
+proc DbMngSupportInit {} {
+	#Check if the namespace DbMngSup already exists
+	if {[info exists DbMngSup]} {
+		log "DbMngSup already exists"
+		return
+	}
+
+	#create the namespace for the DbMng support variables
+	namespace eval DbMngSup {
+	
+	set Version [DbGetVersion]
+	
+	#Type values
+	set NormalTag {Normal}
+	set IndexTag {Index}
+	set KeyTag {Key}
+
+	#Access values
+	set ReadWriteTag {Read/Write}
+	set ReadOnlyTag {Read_Only}
+
+	}; #end of namespace
+}
+
+#get a string with version information
+proc DbGetVersion {} {
+
+	#used for log
+	set URL "\$URL: http://memo.prisma/svn/tm/tstmDb/tags/DbScripts-5.1.4/DbCreate.tsm $"
+	#log "URL: '$URL'"; #debug
+	if { ![regexp {([^/]+)/DbCreate.tsm} $URL MatchStr Ver]} {
+		log "DbMngSupportInit: error reading version"
+		set Version "unavailable version"
+	} else {
+		set Version "ver. $Ver"
+	}
+
+	if {[string match $Ver trunk]} {
+		set REV "\$Rev: 13734 $"
+		if {![regexp {Rev: ([\d]+)} $REV MatchStr Rev]} {
+			log "DbMngSupportInit: error reading revision"
+			set Version "$Version unavailable revision"
+		} else {
+			set Version "$Version rev. $Rev"
+		}
+	}
+	return $Version
+}
+
+#exit without deleting the DB, because not already created
+proc Exit {Str} {
+	global WannaExit
+
+	log $Str
+	log "DbCreate: end of execution"
+	set WannaExit 1
+}
+
+proc CloseAndExit {Str FileHnd} {
+	close $FileHnd
+	Exit $Str
+}
+
+proc CloseAndAbort { Str FileHnd} {
+	close $FileHnd
+	logscr $Str
+	exit	
+}
+#exit deleting the DB
+proc DeleteAndExit {DbName Str} {
+	#delete the namespace created for the DB
+	DbDelete ${DbName}
+	log "DB '${DbName}' deleted"
+	Exit $Str
+}
+
+#exit deleting the DB and closing the csv file
+proc DeleteCloseAndExit {DbName Str FileHnd} {
+	#delete the namespace created for the DB
+	DbDelete ${DbName}
+	log "DB '${DbName}' deleted"
+	CloseAndExit $Str $FileHnd
+}
+
+proc Init {SecondPar args} {
+	global WannaExit
+	global TitleLineTag TypeLineTag AccessLineTag ValueLineTag
+
+	global OpenCmd
+	if {[info commands tm_open] == ""} {
+		#tm_open doesn't exist in this Test Manager
+		set OpenCmd open
+		log "DbCreate.tsm: \"tm_open\" command not supported in this Test Manager..."
+		log "... \"open\" will be used"
+	} else {
+		set OpenCmd tm_open
+	}
+
+	set Version [DbGetVersion]
+
+	log "DbCreate $Version started"
+
+	set WannaExit 0
+
+	switch -regexp -- $SecondPar {
+		{^-.$} {switch -- $SecondPar {
+					#an option could start with '-'
+					"-a" {
+						#Db creation from a csv file and additional fields. 
+						#Ex: DbCreate.tsm $DbMngPid -a DbName.csv [list Fieldname Normal Read/Write]
+						set CsvFileName [lindex $args 0]
+						set AddFields [lrange $args 1 end]
+						set DbCreationMode Classic	
+						#get the DB name
+						set DbName [DbGetName $CsvFileName]
+					}
+					default {Exit "wrong option [lindex $SecondPar 0]\nallowed options are: -a"}
+				}
+		}
+		default {
+			#Db creation with 2 parameters.  #Ex: DbCreate.tsm $DbMngPid GmmDb.csv
+			set CsvFileName [lindex $SecondPar 0]
+			set DbCreationMode Classic	
+			#get the DB name
+			set DbName [DbGetName $CsvFileName]
+		}
+	}
+
+	if {!$WannaExit} {
+		#start reading the csv file
+		if {[catch {$OpenCmd $CsvFileName r} CsvHnd]} {
+			#log the error
+			Exit $CsvHnd
+		}
+	}
+
+	if {!$WannaExit} {
+		#Init Db manager support namespace
+		DbMngSupportInit
+
+		#start reading the csv file
+		set LineNum 0; #init
+		#read and store the Title line
+		for {gets $CsvHnd Line;incr LineNum} {[regexp {^#} $Line]} {gets $CsvHnd Line;incr LineNum} {
+			log "skip commented line $Line"
+		}
+		set PattStr "$TitleLineTag,(\[^\n]*)"
+		if {![regexp $PattStr $Line MatchStr ValueStr]} {
+			CloseAndExit  "Error at line $LineNum.\nThe first valid line of csv file should start with \"$TitleLineTag,\"\notherwise you can comment with #" $CsvHnd
+		}
+	}
+
+	if {!$WannaExit} {
+		set TitleLine $MatchStr
+		set AttrNameList [split $ValueStr ,]
+
+		#read and store the Type line
+		for {gets $CsvHnd Line;incr LineNum} {[regexp {^#} $Line]} {gets $CsvHnd Line;incr LineNum} {
+			log "skip commented line $Line"
+		}
+		set PattStr "$TypeLineTag,(\[^\n]*)"
+		if {![regexp $PattStr $Line MatchStr ValueStr]} {
+			CloseAndExit "Error at line $LineNum.\nThe second valid line of csv file should start with \"$TypeLineTag,\"\notherwise you can comment with #" $CsvHnd
+		}
+	}
+		
+	if {!$WannaExit} {
+		set TypeLine $MatchStr
+		set TypeList [split $ValueStr ,]
+	}
+
+	if {!$WannaExit} {
+		#read and store the Access line
+		for {gets $CsvHnd Line;incr LineNum} {[regexp {^#} $Line]} {gets $CsvHnd Line;incr LineNum} {
+			log "skip commented line $Line"
+		}
+		set PattStr "$AccessLineTag,(\[^\n]*)"
+		if {![regexp $PattStr $Line MatchStr ValueStr]} {
+			CloseAndExit "Error at line $LineNum.\nThe third valid line of csv file should start with \"$AccessLineTag,\"\notherwise you can comment with #" $CsvHnd
+		}
+	}
+
+	if {!$WannaExit} {
+		set AccessLine $MatchStr
+		set AccessList [split $ValueStr ,]
+	}
+
+	if {!$WannaExit} {
+		#check the number of entries of the first 3 lines
+		if { ([llength $AttrNameList] != [llength $TypeList]) ||
+			 ([llength $AttrNameList] != [llength $AccessList]) } {
+			log "The number of entries of the title, type and access lines aren't compatible"
+			log "Number of title entries: [llength $AttrNameList]"
+			log "Number of type entries: [llength $TypeList]"
+			log "Number of access entries: [llength $AccessList]"
+			#CloseAndExit "You need to fix the configuration file '$CsvFileName'" $CsvHnd
+			CloseAndAbort "You need to fix the configuration file '$CsvFileName'" $CsvHnd
+		}
+	}
+	
+	if {!$WannaExit} {
+		#create DbAttrList with the data for every attribute (name, type and access)
+		for {set idx 0} {$idx < [llength $AttrNameList]} {incr idx} {
+			lappend DbAttrList [list [lindex $AttrNameList $idx] [lindex $TypeList $idx] [lindex $AccessList $idx]]
+		}
+		if { [info exists AddFields] } {
+		    append DbAttrList " $AddFields"
+		}
+		DbCreate ${DbName} $DbAttrList
+	}
+
+	if {!$WannaExit} {
+	#read the csv file part with initialization values
+	#every line initializes a DB record
+		set PattStr "$ValueLineTag,(\[^\n]*)"
+		for {gets $CsvHnd Line} {![eof $CsvHnd] && !$WannaExit} {gets $CsvHnd Line} {
+			incr LineNum
+
+			if {[regexp {^#} $Line]} {
+				log "skip commented line $Line"
+				continue
+			} elseif {![regexp $PattStr $Line MatchStr ValueStr]} {
+				DeleteCloseAndExit ${DbName} "Error at line $LineNum.\nThe lines after the third valid one of csv file should start with \"Value,\" or #" $CsvHnd
+			}
+			if {!$WannaExit} {
+				#create the list of initialitation values
+				set InitList [split $ValueStr ,]
+				set InitValNum [llength $InitList]
+				for {set i 0} {$i < $InitValNum} {incr i} {
+					if {[string match [lindex $InitList $i] {}]} {
+						set InitList [lreplace $InitList $i $i "?"]
+					}
+				}
+
+				if { $InitValNum > [llength $DbAttrList] } {
+					DeleteCloseAndExit ${DbName} "Error at line $LineNum.\nWrong number of values $InitValNum. They should be [llength $DbAttrList]" $CsvHnd
+				}
+			}
+
+			if {!$WannaExit} {
+				#fill with ? the missing fields
+				for {set i 0} {$i < [expr {[llength $DbAttrList] - $InitValNum}]} {incr i} { 
+				  lappend InitList "?"
+			   }
+
+			}
+
+			# Create the DB's entries
+			if {!$WannaExit} {
+				DbCreateEntry ${DbName} $InitList
+			}
+			if {$WannaExit} {
+				break
+			}
+		}
+	}
+
+	if {!$WannaExit} {
+		if {[string match $DbCreationMode Classic]} {
+			CloseAndExit "DB ${DbName} creation successfully done" $CsvHnd
+		} else {
+			Exit "DB ${DbName} creation successfully done"
+		}
+	} else {
+		if {[info exists DbName]} {
+			log "********** failure creating the DB ${DbName} **********"
+		} else {
+			log "********** failure creating the DB **********"
+		}
+	}
+
+	stop
+}

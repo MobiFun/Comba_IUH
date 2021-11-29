@@ -1,0 +1,383 @@
+##############################################################
+# $URL:
+#
+# $Author:
+#
+# Description: GCC Multi Instance Handler for CoreNetwork 
+#
+#
+# $Rev:
+#
+# $Date:
+##############################################################
+
+proc RxSignalProc { } {
+	log "GccNetMultiInstanceHdl"
+	global _sig _state glDefaultPid
+	
+	set primName [lindex $_sig 0]
+
+	switch -exact -- $primName {
+		"GCC_SET_USER_PID" {
+			global glPidMsList
+			set glDefaultPid [rd _sig UserPid]
+			lappend glPidMsList $_sig
+			skipMsg
+		}
+		"MN_GCC_NET_ACT_REQ" { 
+			set result [MnGccNetActReq]
+			if { ![string compare $result "GCCCallReqAccepted"] } {
+				log "GCC Call Request accepted _state = $_state"
+			} else {
+				logscr "GCC Call Request not accepted while: $result" 
+				skipMsg
+			}
+		}
+		"MN_GCC_NET_REL_REQ" {
+			global _state
+			set result [MnGccNetRelReq]
+			if { $result != "GCCCallReleaseAccepted" } {
+				logscr "GCC Release not accepted while: $result"
+				skipMsg
+			} else {
+				logscr "GCC Release accepted"
+			}
+		}
+		"MM_GCC_EST_IND" { MmGccEstInd }
+		"MM_GCC_SYNC_CNF" { RecvMmGccSyncCnf }
+		"BSSAP_CTL_VGCS_SETUP_CNF" { RcvBssapVgcsSetupCnf }
+		"BSSAP_CTL_VGCS_FAIL_IND" { RcvBssapVgcsFailInd }	
+		"BSSAP_CTL_VGCS_HOV_PERFD_IND" { RcvBssapHovPerfdInd }
+		"GCR_ACCEPT" { RecvGcrAccept }
+		"MM_GCC_TALKER_IND" { RecvMmGccTalkerInd }
+		"MM_GCC_REL_IND" { RecvMmGccRelInd }	
+		"MM_GCC_DATA_IND" { RecvMmGccDataInd }
+	}
+
+}
+
+proc RecvMmGccDataInd { } {
+	global _sig _sigpdu glCurrent _state
+	set pdu [rd _sig Pdu]
+	set msId [rd _sig MsId]
+	gccPduToSig pdu
+	switch -exact -- [lindex $_sigpdu 0] {
+		"GCC_TERMINATION_REQUEST" {
+			global glGCCDb glCurrentMsId glCurrentGroupCallReference
+			set grCallRef [rd _sigpdu GroupCallReference]
+			GetInstance $grCallRef $glGCCDb glCurrentGroupCallReference
+			set _sig $_sigpdu
+			set glCurrentMsId $msId
+		}
+	}
+	
+}
+
+proc RecvMmGccTalkerInd { } {
+	global _sig glCurrentGroupCallReference glGCCDb
+	set grCallRef [rd _sig GroupCallRef]
+	
+	GetInstance $grCallRef $glGCCDb glCurrentGroupCallReference
+}
+
+proc RecvMmGccRelInd { } {
+	global _sig glGCCDb glCurrentGroupCallReference
+
+	set msId [rd _sig MsId]
+	set grCallRef [GetGroupCallRefByTalker $msId $glGCCDb]
+	if { $grCallRef != -1 } {
+		GetInstance $grCallRef $glGCCDb glCurrentGroupCallReference
+	} else {
+		logscr "############# ERROR: The talker which released is not present in the Db!"
+		skipMsg
+	}
+}
+
+proc GetGroupCallRefByTalker { msId gccDb } {
+	set idxList [DbGetIndexList $gccDb]
+	foreach idx $idxList {
+		set talkerMsId [DbGet $gccDb $idx TalkerMsId]
+		if { $talkerMsId == $msId } {
+			return $idx
+		}
+	}
+	#The talker is not present in the GCC Db!
+	return -1
+}
+
+proc RecvMmGccSyncCnf { } {
+	global _sig glGCCDb glCurrentGroupCallReference
+	
+	set msId [rd _sig MsId]
+	set grCallRef [GetGroupCallReferenceByMsId $msId]
+	if { $grCallRef == "-1" } {
+		logscr "### ERROR: Sync Cnf received from unknown MsId = $msId"
+		skipMsg
+	} else {
+		GetInstance $grCallRef $glGCCDb glCurrentGroupCallReference
+	}
+}
+
+proc GetGroupCallReferenceByMsId { msId } {
+	global glGCCDb
+
+	set idxList [DbGetIndexList $glGCCDb]
+	foreach idx $idxList {
+		set talkerMsId [DbGet $glGCCDb $idx TalkerMsId]
+		if { $msId == $talkerMsId } {
+			return $idx
+		}	
+	}
+	return -1
+}
+
+proc RecvGcrAccept { } {
+	global _sig glGCCDb glCurrentGroupCallReference _state
+	set groupCallReference [rd _sig GroupCallReference]
+	log "_state:$_state"
+	log "groupCallReference:$groupCallReference glCurrentGroupCallReference:$glCurrentGroupCallReference"
+	GetInstance $groupCallReference $glGCCDb glCurrentGroupCallReference
+	log "glCurrentGroupCallReference:$glCurrentGroupCallReference"
+	log "_state:$_state"
+
+	LogDb $glGCCDb
+}
+
+proc RcvBssapVgcsFailInd { } {
+	global _sig glGCCDb glCurrentGroupCallReference
+
+	LogInputSig
+	set grCallRef [rd _sig GroupCallReference]
+	set cause [rd _sig Cause]
+	#Check if the entry exists
+	if { ![DbEntryExists $glGCCDb $grCallRef] } {
+		logscr "RcvBssapVgcsFailInd: Entry not found in Db for grCallRef = $grCallRef"
+		LogDb $glGCCDb
+		skipMsg
+	} else {
+		GetInstance $grCallRef $glGCCDb glCurrentGroupCallReference
+		LogDb $glGCCDb
+	}
+}
+
+proc RcvBssapVgcsSetupCnf { } {
+	global _sig	glGCCDb glCurrentGroupCallReference _mmpid
+	logscr "One Bts correctly setup"
+	new MN_GCC_NET_ACT_CNF s
+	set grId [rd _sig GroupId]
+	set grCallId [rd _sig GroupCallAreaId]
+	wr s GroupId $grId
+	wr s GroupCallAreaId $grCallId
+	set grCallRef [GetGroupCallRef $grCallId $grId]
+	#Check if the entry exists
+	if { [DbEntryExists $glGCCDb $grCallRef] } {
+		set userPid [DbGet $glGCCDb $grCallRef UserPid]
+		set disId [DbGet $glGCCDb $grCallRef DisId]
+		wr s DisId $disId
+		send s $userPid
+		GetInstance $grCallRef $glGCCDb glCurrentGroupCallReference
+		#Send the CONNECT signal to the GCC pair
+		#but only if the caller is an MS and not a dispatcher
+		if { ![string compare $disId "?"] } {
+			#Finally send the CONNECT
+			new GCC_CONNECT t
+			wr t TIFlag 0
+			wr t TI0 0
+			wr t SeqNum	0
+			wr t GroupCallReference $grCallRef
+			set origPriority [DbGet $glGCCDb $glCurrentGroupCallReference OriginatorPriority]
+			if { [IsVoid $origPriority] } {
+				wr t Priority [DbGet $glGCCDb $glCurrentGroupCallReference eMLPPriority]
+			} else {
+				wr t Priority $origPriority
+			}
+			set prio [DbGet $glGCCDb $glCurrentGroupCallReference eMLPPriority]
+			wr t OriginatorIndication 1
+			new MM_GCC_DATA_REQ u
+			set msId [DbGet $glGCCDb $glCurrentGroupCallReference OriginatorMsId]
+
+			log "################## msId = $msId ###################"
+			log "##################  glCurrentGroupCallReference= $glCurrentGroupCallReference ###################"
+			set pdu [gccSigToPdu t]
+			wr u MsId $msId
+			wr u Pdu $pdu
+			send u $_mmpid
+		}	
+	} else {
+		logscr "RcvBssapVgcsSetupCnf: Entry not found in Db for grCallRef = $grCallRef"
+	} 
+}
+
+proc GetUserPidByMsId { msId } {
+	global glPidMsList
+	foreach idx $glPidMsList {
+		# log "GetUserPidByMsId: idx = $idx"
+		set msList [lindex $idx 2]
+		# log "GetUserPidByMsId: msList = $msList"
+		foreach msIdx $msList {
+			# log "GetUserPidByMsId: msIdx = $msIdx"
+			if { $msId == $msIdx } {
+				log "GetUserPidByMsId: Found msid ($msId) belonging from pid = [lindex $idx 1]"
+				return [lindex $idx 1]
+			}
+		}
+	}
+}
+#Activation of a VGCS call by a MS
+
+proc MmGccEstInd { } {
+	global _sig _sipdu glGCCDb glCurrentGroupCallReference glDefaultPid
+	global glBscDb glGroupCallInfoDb
+
+	LogInputSig
+	set msId [rd _sig MsId]
+	set cellId [rd _sig CellId]
+	set pdu [rd _sig Pdu]
+	gccPduToSig pdu
+	set sigName [lindex $_sigpdu 0]
+	if { ![string compare $sigName "GCC_SETUP"] } {
+		set grId [rd _sigpdu GroupCallReference]
+		set prio [rd _sigpdu Priority]
+		set lac [rd _sig Lac]
+		set grCallAreaId [GetCallAreaIdByLACCellIdAndGrId $lac $cellId $grId $glGroupCallInfoDb]
+		set grCallRef [GetGroupCallRef $grCallAreaId $grId]
+		logscr "Received groupcall request for group id: $grId calculated group call ref: $grCallRef"
+		logscr "Calculated GroupCallReference = $grCallRef"
+		if { ![DbEntryExists $glGCCDb $grCallRef] } {
+			#Get the pid of the user script by the originator
+			set userPid [GetUserPidByMsId $msId]
+			#The call does not yet exists, the network tries to create it
+			DbCreateEntry $glGCCDb [list $grCallRef "Null_N0" "?" "?" "1" $userPid "?" $msId \
+				$msId $msId $grId ? ? $prio 0]
+			LogDb $glGCCDb 
+			ForceNewInstance $grCallRef $glCurrentGroupCallReference $glGCCDb
+		} else {
+			#TODO: Make the MS join the call, but should check if the groupId matches
+			logscr "###### ERROR: the MS $msId is trying to setup a call which is already in place!"
+			logscr "The dedicated link to this MS will be released."
+			SendMmGccRelReq $msId
+			skipMsg
+		}
+	} elseif { ![string compare $sigName "GCC_TERMINATION_REQUEST"] } {
+		#Extract the message and forward it to the state machine
+		GetInstance [rd _sigpdu GroupCallReference] $glGCCDb glCurrentGroupCallReference
+		set _sig $_sigpdu		
+	} else {
+		logscr "###### ERROR: Unexpected $sigName for group call reference [rd _sigpdu GroupCallReference]"
+		skipMsg
+	}
+}
+
+#Activation of a VGCS call by a dispatcher
+
+proc MnGccNetActReq { } {
+    global _sig glGCCDb glCommonDb _src _state
+	global glCurrentGroupCallReference
+
+	set grId [rd _sig GroupId]
+	set grCallId [rd _sig GroupCallAreaId]
+	set eMLPPriority [rd _sig eMLPPriority]
+	#set Priority [rd _sig Priority]
+	set disId [rd _sig DisId]
+	set grCallRef [GetGroupCallRef $grCallId $grId]
+	log "MnGccNetActReq: GroupId = $grId GroupCallAreaId = $grCallId"
+	log "GroupCallReference = $grCallRef"
+	#Check if the call is not already in place
+	if { ![DbEntryExists $glGCCDb $grCallRef] } {
+		#Create Entry in Db
+		DbCreateEntry $glGCCDb [list $grCallRef "Null_N0" $eMLPPriority ? "1" $_src $disId \
+			"?" "?" "?" $grId "?" "?" "?" 0]
+		LogDb $glGCCDb
+	    # Instance selection
+		log "MnGccNetActReq: getting instance "
+		log "glCurrentGroupCallReference = $glCurrentGroupCallReference"
+    	#GetInstance $grCallRef $glGCCDb glCurrentGroupCallReference
+		ForceNewInstance $grCallRef $glCurrentGroupCallReference $glGCCDb
+		log "MnGccNetActReq: after getting instance"
+		log "glCurrentGroupCallReference = $glCurrentGroupCallReference"
+		log "MnGccNetActReq _state = $_state"
+
+		LogDb $glGCCDb
+		return GCCCallReqAccepted
+	} else {
+		return GCCCallReqAccepted
+		#return GCCCallReqAlreadyInPlace
+	}
+}
+
+proc ForceNewInstance { currentInstance previousInstance db } {
+	global _state glCurrentGroupCallReference
+	log "ForceNewInstance:"
+	log "currentInstance = $currentInstance previousInstance= $previousInstance"
+	if { $currentInstance == $previousInstance } {
+		set _state Null_N0
+	} else {
+		set numInstances [DbSize $db]
+		if { [expr ($previousInstance != 0) & ($numInstances >1) ] } {
+			if { [DbEntryExists $db $previousInstance] } {
+				#Save the state of the previous instance
+				DbSet $db $previousInstance State $_state
+			}
+		}
+		set glCurrentGroupCallReference $currentInstance
+		set _state Null_N0
+	}
+}
+
+proc MnGccNetRelReq { } {
+ 	global _sig glGCCDb glCommonDb glIdx _bssappid 
+	global glCurrentGroupCallReference
+
+	set grId [rd _sig GroupId]
+	set grCallId [rd _sig GroupCallAreaId]
+	set grCallRef [GetGroupCallRef $grCallId $grId]
+	
+	log "MnGccNetRelReq: grId = $grId grCallId = $grCallId grCallRef = $grCallRef"
+	LogDb $glGCCDb
+	#Check if the call is already in place
+	if { [DbEntryExists $glGCCDb $grCallRef] } {
+
+		GetInstance $grCallRef $glGCCDb glCurrentGroupCallReference
+		#Remove the GCC call
+		#Not this is done only when the BSSAP_CTL_VGCS_FAIL_IND with
+		#Cause = CallReleased is received
+		#DbRemEntry $glGCCDb $grCallRef
+
+		return GCCCallReleaseAccepted	
+		log "Entry in GCC Db removed"
+	} else {
+		return GCCCallRelUnaccepted
+	}
+}
+
+proc RcvBssapHovPerfdInd { } {
+	global _sig glGCCDb
+	LogReceivedSig
+	# Search for the talker
+	set idxList [DbGetIndexList $glGCCDb]
+	set hovPerfdMsId [rd _sig MsId]
+	set grCallRefIdList [rd _sig GrCallRefIdList]
+	foreach idx $idxList {
+		set talkerId [DbGet $glGCCDb $idx TalkerMsId]
+		logscr "RcvBssapHovPerfdInd: grCallRef = $idx talkerId = $talkerId hovPerfdMsId = $hovPerfdMsId"
+		if { $talkerId == $hovPerfdMsId } {
+			set pos [lsearch -exact $grCallRefIdList $idx]
+			if { $pos != -1 } {
+				# The MS doing the HO in involved in a group call
+				logscr "HO performed in a cell belonging to the same group call areea: GrCallRef = $idx"
+				skipMsg
+			} else {
+				global glCurrentGroupCallReference
+				logscr "HO performed in a cell which does not belong from the same group call area."
+				logscr "The current talker will be removed"
+				# Add the group call reference field
+				wr _sig GrCallRef $idx
+				GetInstance $idx $glGCCDb glCurrentGroupCallReference
+				return
+			}
+		}	
+	}
+}
+
+proc GccConfig { } {
+}

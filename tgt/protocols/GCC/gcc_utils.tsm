@@ -1,0 +1,182 @@
+#**********************************************************************
+# Title:
+#----------------------------------------------------------------------
+# $URL$
+#
+# $Author$
+# $Date$
+#
+# $Rev$
+#**********************************************************************
+
+# This file collects procs to be used from gcc_ms and gcc_cn
+
+proc FillMsDb { MsDbName } {
+	global glGCCDb glTnochannel glTMMest glTterm glTconnreq
+
+	#Copy all the entry of the csv in the Gcc own Ms Db
+	foreach idx [DbGetIndexList $MsDbName] {
+		set msId [DbGet $MsDbName $idx MsId]
+		set groupIdList [DbGet $MsDbName $idx GroupIdList]
+
+		if { [DbFieldExists $MsDbName CellId] } {
+			set cellId [DbGet $MsDbName $idx CellId]
+		} else {
+			# if cellId is not available, it should be set later
+			set cellId "?"
+		}
+		#Creation of the timers
+		set timernochannelid [tmrnew T_NOCHANNEL $glTnochannel]
+		set timerMMestid [tmrnew T_MMEST $glTMMest]
+		set timertermid [tmrnew T_TERM $glTterm]
+		set timerconnreq [tmrnew T_CONNREQ $glTconnreq]
+		DbCreateEntry $glGCCDb [list $msId Null_U0 ? 0 $groupIdList \
+			0 $cellId 0 0 0 \
+			0 0 0 $timernochannelid $timerMMestid \
+			$timertermid $timerconnreq ? ? ? \
+			? ? 0]
+
+	}
+}
+
+proc ActivateNoChannelTimer { gccDb currentMsId } {
+	set timerId [DbGet $gccDb $currentMsId Tnochannelid]
+	tmrstart $timerId 
+}
+
+proc GetGroupCallRef { grCallId grId } {
+	#return $_grId$_grCallId
+	return $grCallId$grId
+}
+
+proc GetGroupAreaIdByRefAndGroupId { grCallRef grId } {
+	set len1 [string length $grId]
+	set len2 [string length $grCallRef]
+	return [string range $grCallRef 0 [expr $len2 - $len1 - 1]]	
+}
+
+proc GetCallAreaIdByLACCellIdAndGrId { dlac dcellId grId groupInfoDb } {
+	set index $dlac
+	append index _
+	append index $dcellId
+	append index _
+	append index *
+	# log "GetCallAreaIdByLACCellIdAndGrId: index = $index"
+	set idxList [DbGetIndexList $groupInfoDb]
+	foreach idx $idxList {
+		if { [string match $index $idx] } {
+			#We have found the cell
+			set indexLen [string length $index]
+			set totLen [string length $idx]
+			set grCallRef [string range $idx [expr $indexLen - 1] \
+				[expr $totLen - 1]]
+			# log "GetCallAreaIdByLACCellIdAndGrId: grCallRef = $grCallRef"
+			set grIdPattern *$grId
+			if { [string match $grIdPattern $grCallRef] } {
+				set grIdLen [string length $grId]
+				set grCallRefLen [string length $grCallRef]
+				set grCallArea [string range $grCallRef 0 [expr $grCallRefLen - $grIdLen - 1]]
+				log "GetCallAreaIdByLACCellIdAndGrId: grCallArea = $grCallArea"
+				return $grCallArea
+			}
+		}
+	}
+}
+
+proc GetCallAreaIdByLACCellIdAndGrId1 { dlac dcellId grId bscdb } {
+
+	set grLen [string length $grId]
+	set idxList [DbGetIndexList $bscdb]
+	foreach idx $idxList {
+		#Get the Bsc Entry
+		set btsDbFileName [DbGet $bscdb $idx BtsDb]
+		log "btsDbFileName = $btsDbFileName"
+		set btsDbName [DbGetName $btsDbFileName]
+		log "btsDbName 	  = $btsDbName"
+		set btsIdxList [DbGetIndexList $btsDbName]
+
+		if { ![DbExists $btsDbName] } {
+			spawn_unsafe "common/dbscripts/DbCreate.tsm $btsDbName.csv" 
+		}
+
+		foreach btsIdx $btsIdxList {
+			set lac [DbGet $btsDbName $btsIdx LAC]
+			set cellId [DbGet $btsDbName $btsIdx CellId]
+			if { [string match $dcellId $cellId] && [string match $dlac $lac] } {
+				set grCallIdList [DbGet $btsDbName $btsIdx GroupCallReferenceIdList]
+				log "grCallIdList = $grCallIdList"
+				set grCallIdList [split $grCallIdList]
+				log "grCallIdList = $grCallIdList"
+				foreach grCallRefIdx $grCallIdList {
+					log "grCallRefIdx = $grCallRefIdx"
+					set grCallRefLen [string length $grCallRefIdx]
+					if { $grCallRefLen > $grLen } {
+						set grIdDb [string range $grCallRefIdx [expr $grCallRefLen - $grLen] \
+							[expr $grCallRefLen - 1]]
+						log "grIdDb = $grIdDb"
+						if { [string match $grIdDb $grId] } {
+							set grCallAreaId [string range $grCallRefIdx 0 [expr $grCallRefLen - $grLen -1]]
+							log "grCallAreaId = $grCallAreaId"
+							return $grCallAreaId 
+						}
+					}			
+				}
+			}
+		}
+	}
+	logscr "GroupId $grId not found in cellId = $dcellId lac = $dlac"
+	exit
+}
+
+proc CreateDatabase { dbName } {
+
+	global __net_side glGCCDb
+
+	log "Creating database: $dbName"
+
+	if [CnSide] {
+		lappend idxList [list CallReference Index]
+		lappend idxList [list State Normal Read/Write]
+		lappend idxList [list eMLPPriority Normal Read/Write]
+		lappend idxList [list Priority Normal Read/Write]
+		lappend idxList [list SendSeqNum Normal Read/Write]
+		lappend idxList [list UserPid Normal Read/Write]
+		lappend idxList [list DisId Normal Read/Write]
+		lappend idxList [list MsId Key Read/Write]
+		lappend idxList [list TalkerMsId Normal Read/Write]
+		lappend idxList [list OriginatorMsId Key Read/Write]
+		lappend idxList [list GroupId Normal Read/Write]
+		lappend idxList [list TalkerCellId Normal Read/Write]
+		lappend idxList [list TalkerLAC Normal Read/Write]
+		lappend idxList [list OriginatorPriority Normal Read/Write]
+		lappend idxList [list UplinkFreeDuringProceeding Normal Read/Write]
+	} else {
+		lappend idxList [list MsId Index]
+		lappend idxList [list State Normal Read/Write]
+		lappend idxList [list UserPid Normal Read/Write]
+		lappend idxList [list GroupCallReference Normal Read/Write]
+		lappend idxList [list GroupIdList Normal Read/Write]
+		lappend idxList [list SendSeqNum Normal Read/Write]
+		lappend idxList [list CellId Normal Read/Write]
+		lappend idxList [list Priority Normal Read/Write]
+		lappend idxList [list OrigToDispInfo Read/Write]
+		lappend idxList [list ORIG Normal Read/Write]
+		lappend idxList [list COMM Normal Read/Write]
+		lappend idxList [list D_ATT Normal Read/Write]
+		lappend idxList [list U_ATT Normal Read/Write]
+		lappend idxList [list Tnochannelid Normal Read/Write]
+		lappend idxList [list TMMestid Normal Read/Write]
+		lappend idxList [list Ttermid Normal Read/Write]
+		lappend idxList [list Tconnreqid Normal Read/Write] 
+		lappend idxList [list Res Normal Read/Write]
+		lappend idxList [list pduGroupCallReference Normal Read/Write]
+		lappend idxList [list VGCSCallGroupId Normal Read/Write]
+		lappend idxList [list BearerCap1 Normal Read/Write]
+		lappend idxList [list TerminationRequired Normal Read/Write]
+		lappend idxList [list DedicatedChannelLost Normal Read/Write]
+	}
+	
+	DbCreate $dbName $idxList
+	set glGCCDb $dbName
+}
+

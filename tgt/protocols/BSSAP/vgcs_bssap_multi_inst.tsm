@@ -1,0 +1,937 @@
+#**********************************************************************
+# Title:
+#----------------------------------------------------------------------
+# $URL: http://memo.prisma/svn/tm/scriptProt/BSSAP_COMBA/tags/BSSAP_COMBA-1.2.0/scripts/vgcs_bssap_multi_inst.tsm $
+#
+# $Author: roger $
+# $Date: 2012-07-19 15:19:13 +0200 (Thu, 19 Jul 2012) $
+#
+# $Rev: 53313 $
+#**********************************************************************
+
+proc RxSignalProc { } {
+
+	log "RxSignalProc:"
+	global _sig
+	
+	set primName [lindex $_sig 0]
+
+	switch -exact -- $primName {
+		"SCCP_CONNECT_ACK" { 
+			global glCurrentLinkDbName glCurrentInstanceIdx
+			SelectBssElementByReqRef
+			log "RxSignalProc: Instance selected: $glCurrentLinkDbName $glCurrentInstanceIdx"
+			LogDb $glCurrentLinkDbName
+		}
+		"SCCP_N_CONNECT_CNF" {
+			if { [string compare [SelectBssElementByCid] CidFound] } {
+				global _sig
+				NoInstanceSccpHdl [GetSpcStkIdCidBySig $_sig]
+				skipMsg
+			}
+		}
+		"BSSAP_CTL_VGCS_SETUP_REQ" {
+			set result [RcvBSSAPSetupReq]
+			if { $result != "GCRequestAccepted" } {
+				skipMsg
+				logscr "###### ERROR: VGCS Setup request unaccepted"
+				log "BSSAP_CTL_VGCS_SETUP_REQ skipped while: $result"
+			} else {
+				skipMsg
+			}
+		}
+		"SCCP_N_DATA_IND" {
+			if { [string compare [SelectBssElementByCid] CidFound] } {
+				global _sig
+				LogInputSig
+				NoInstanceSccpHdl [GetSpcStkIdCidBySig $_sig]
+				skipMsg
+			} else {
+				global glCurrentLinkDbName
+				LogDb $glCurrentLinkDbName
+			}
+		}
+		"BSSAP_CTL_VGCS_RELEASE_REQ" {
+			set result [RcvBSSAPReleaseReq]
+			if { $result != "GCReleaseReqAccepted" } {
+				skipMsg
+				logscr "BSSAP_CTL_VGCS_RELEASE_REQ skipped while: $result"
+			} else {
+				skipMsg
+			}
+		}
+		"BSSAPVGCS_RELEASE_LINK" {
+			SelectBssElementByReqRef
+		}
+		"BSSAPVGCS_GCCPID_ASSIGNMENT" {
+			global glGccPid _sig
+			set glGccPid [rd _sig GccPid]
+			skipMsg
+		}
+		"SCCP_N_UNITDATA_IND" {
+			global _sig
+			set result [DecSccpNUnitDataInd _sig]
+		}
+		"T_ASGREQEXPIRED" {
+			global _src _self glCallReferenceDb
+			set grCallRef [GetCallRefByAsgTmrId $_src]
+			if { ![string compare $grCallRef "InvalidTimerId"] } {
+				logscr "Invalid timer id!"
+				skipMsg
+			} else {
+				logscr "AsgReq timer expired (GroupCallRef=$grCallRef). The call will be released"
+				new BSSAP_CTL_VGCS_RELEASE_REQ s
+				set grId [DbGet $glCallReferenceDb $grCallRef GroupId]
+				wr s GroupId $grId
+				wr s GroupCallAreaId [GetGrCallAreaIdByRef $grCallRef $grId]
+				send s $_self
+				skipMsg
+			}
+		}
+		"BSSAP_CTL_VGCS_SEND_UPL_REL" {
+			global _sig
+			if { ![string compare [RcvBSSAPUplinkRelease] "Ok"] } {
+			} else {
+				logscr "####### ERROR: unknown group call reference"
+				skipMsg
+			}			
+		}
+		"BSSAP_CTL_VGCS_HOV_PERFD_IND" { RecvBssapCtlVgcsHovPerfInd }
+		"SCCP_N_DISCONNECT_IND" { RecvNDisconnectInd }
+		default {
+			Unexpected		
+		}
+	}
+}
+
+proc GetCallRefByAsgTmrId { src } {
+	global glCallReferenceDb
+	foreach idx [DbGetIndexList $glCallReferenceDb] {
+		set asgTmrId [DbGet $glCallReferenceDb $idx AsgReqTmrId]
+		if { $src == $asgTmrId } {
+			log "GetCallRefByAsgTmrId: Timer found = $src"
+			return $idx
+		}
+	}
+	logscr "GetCallRefByAsgTmrId: Timer not found src = $src"
+	return InvalidTimerId
+}
+proc DecSccpNUnitDataInd { signal } {
+	global _sigpdu _sig
+
+    # decoding BSSAP pdu
+    set bssapPdu [rd _sig Data]
+    if { [string compare $bssapPdu "?"] } {
+        bssapPduToSig bssapPdu
+    } else {
+        set _sigpdu "?"
+    }
+    # Store BSSAP pdu in _sig
+    set _sig $_sigpdu
+
+	RecGlobalBssapSig
+}
+
+#Function to handle messages that not are related to a single Cid/ReqRef
+
+proc RecGlobalBssapSig { } {
+	global _sig
+
+	set sigName [lindex $_sig 0]
+	switch $sigName {
+		"BLK" {
+			RecBlk
+		}
+		default {
+			logscr "Received unknown BSSAP signal"
+		}
+	}
+	#Anyway, skip the msg
+	skipMsg
+}
+
+#This proc is used when the received _sig contains an Res field to choose the Bss element
+
+proc SelectBssElementByReqRef { } {
+	global _sig glCurrentInstanceIdx glCurrentLinkDbName glCurrentGrCallRefIdx glCallReferenceDb
+
+	set reqRef [rd _sig ReqRef]
+	#Look for the db where the res is stored
+
+	set prevLinkDbName $glCurrentLinkDbName
+	log "SelectBssElementByReqRef: ****** previous Db = $prevLinkDbName"
+	set glCurrentLinkDbName [GetLinkDbByReqRef $reqRef]
+	log "SelectBssElementByReqRef: ****** selected Db = $glCurrentLinkDbName"
+	if { $glCurrentLinkDbName != "-1" } {
+		log "SelectBssElementByReqRef: reqRef = $reqRef"
+		#GetInstance $reqRef $glCurrentLinkDbName glCurrentInstanceIdx
+		GetInstanceMultiDb $reqRef $prevLinkDbName $glCurrentLinkDbName glCurrentInstanceIdx
+		#Retrieve the entry in the CallReference Db
+		set glCurrentGrCallRefIdx [DbGetIdx $glCallReferenceDb DbLinksName $glCurrentLinkDbName]
+	} else {
+		#The res does not match with any linkDb entry!
+		logscr "Error: Request Reference not found in BssElement database"
+		skipMsg
+	}
+}
+
+#This proc is used when the received _sig contains a Cid field to choose the Bss element
+
+proc SelectBssElementByCid { } {
+	global _sig glCurrentInstanceIdx glCurrentLinkDbName glCallReferenceDb
+	global glCurrentGrCallRefIdx
+
+	set cid [rd _sig Cid]
+	log "SelectBssElementByCid: cid = $cid"
+	set prevLinkDbName $glCurrentLinkDbName 
+	#log "SelectBssElementByCid: ****** previous Db = $prevLinkDbName"
+	#Look in the Db where the cid is stored
+	set linkDbName [GetLinkDbByCid $cid]
+	#log "SelectBssElementByCid: ****** selected Db = $glCurrentLinkDbName"
+	if { $linkDbName != "-1" } {
+		set glCurrentLinkDbName $linkDbName
+		set reqRef [GetReqRefByCid $glCurrentLinkDbName $cid]
+		if { $reqRef != "-1" } {
+			#GetInstance $reqRef $glCurrentLinkDbName glCurrentInstanceIdx
+			GetInstanceMultiDb $reqRef $prevLinkDbName $glCurrentLinkDbName glCurrentInstanceIdx
+			log "SelectBssElementByCid: Selected index = $glCurrentInstanceIdx"
+			set glCurrentGrCallRefIdx [DbGetIdx $glCallReferenceDb DbLinksName $glCurrentLinkDbName]
+			return CidFound
+		} else {
+			logscr "SelectBssElementByCid: Invalid Request Reference CidNotFound"
+			logscr "Cid Not found = $cid"
+			return CidNotFound
+		}
+	} else {
+		#logscr "SelectBssElementByCid: Invalid glCurrentDbName"
+	}
+}
+
+proc GetReqRefByCid { linkDbName cid } {
+	if { [DbKeyExists $linkDbName Cid $cid] } {
+		set reqRef [DbGetIdx $linkDbName Cid $cid]
+		return $reqRef
+	} else {
+		logscr "GetReqRefByCid: ReqRef not found in db: $_linkDbName"
+	}
+}
+
+proc RcvBSSAPReleaseReq { } {
+    global glBSSAPPid glBscDb glCallReferenceDb _sig
+	global _self
+	#Get the entry in the Db
+    set groupId [rd _sig GroupId]
+    set groupCallRef [rd _sig GroupCallAreaId]$groupId
+    log "groupCallRef=$groupCallRef"
+	LogDb $glCallReferenceDb
+	if { [DbEntryExists $glCallReferenceDb $groupCallRef] } {
+		#The call is in place, then remove all the links
+		set linkDbName [GetLinkDbName $groupCallRef]
+		foreach idx [DbGetIndexList $linkDbName] {
+			# Tell to all the BTS to release the link, except the one(s)
+			# that could be already clearing for some reason
+			set st [DbGet $linkDbName $idx State]
+			if { $st != "WaitForVgcsClrCmplt" } {		
+				new BSSAPVGCS_RELEASE_LINK s
+				wr s ReqRef $idx
+				wr s Cause CallReleased
+				send s $_self
+			}
+		}
+		return GCReleaseReqAccepted
+	} else {
+		return GCReleaseRequestUnknown
+	}
+}
+
+proc RcvBSSAPUplinkRelease { } {
+	global _sig glCallReferenceDb glCurrentInstanceIdx glCurrentLinkDbName glCurrentCallRefIdx
+	
+	set grCallRef [rd _sig GroupCallReference]	
+	if { [DbEntryExists $glCallReferenceDb $grCallRef] } {
+		set linkDbName [GetLinkDbName $grCallRef]	
+		set bscIdx [GetBscIdx $linkDbName]
+		set cid [DbGet $linkDbName $bscIdx Cid]
+		#Update the cid of the BSC, this field is written here while the GCC which sends the signal
+		#does not know the BSC cid
+		wr _sig Cid $cid
+		SelectBssElementByCid
+		return Ok
+	} else {
+		logscr "###### ERROR: UnknownGroupCallReference $grCallRef"
+		return GroupCallReferenceUnknown
+	}
+}
+ 
+proc GetBscIdx { linkDb } {
+	set idxList [DbGetIndexList $linkDb]
+	foreach idx $idxList {
+		set elemKind [DbGet $linkDb $idx BssElement]
+		if { ![string compare $elemKind "Bsc"] } {
+			return $idx
+		}
+	}
+	logscr "###### ERROR: the BSC element is not present in the link db = $linkDb "
+	LogDb $linkDb
+	exit
+}
+
+proc GetGroupCallReference { grCallAreaId grId } {
+	return $grCallAreaId$grId
+}
+
+proc RcvBSSAPSetupReq { } {
+	global glBSSAPPid glBscDb glCallReferenceDb glReqRefHiIndex _sig
+	global glBssapBscDb glGroupCallInfoDb
+
+	LogInputSig
+	set groupId [rd _sig GroupId]
+	#set groupCallRef [rd _sig GroupCallAreaId]$groupId
+	set groupCallRef [GetGroupCallReference [rd _sig GroupCallAreaId] $groupId]
+	set eMLPPriority [rd _sig eMLPPriority]
+	set bscPriority [rd _sig Priority]
+	#set assignmentReq [rd _sig AssignmentRequirement]
+	#set queueIdList [rd _sig QueueIdList]
+	set asgReqWaitTime [rd _sig BssapAsgReqWaitTime]
+	log "RcvBSSAPSetupReq: groupCallRef = $groupCallRef asgReqWaitTime = $asgReqWaitTime"
+	#Check in the Db if the CallReference is already in place
+	if { [DbEntryExists $glCallReferenceDb $groupCallRef] == 0 } {
+		#Create the db for the links
+		set linkDbName [GetLinkDbName $groupCallRef]
+		set idxList [GetLinkDbStructure]
+		DbCreate $linkDbName $idxList
+		#Start the timer for the call (only for dispathchers)
+		if { [string compare $asgReqWaitTime "?"] } {
+			set asgTmrId [tmrnew T_ASGREQEXPIRED $asgReqWaitTime]
+			tmrstart $asgTmrId
+		} else {
+			set asgTmrId ?
+		}
+		set dispatcherCall [rd _sig DispatcherCall]
+		set talkerLACCellId [rd _sig TalkerLACCellId]
+		set asgReqPriority [rd _sig TalkerAsgReqPriority]
+		if { $dispatcherCall } {
+			set uplinkFree 1
+		} else {
+			set uplinkFree 0
+		}
+		#Add a new entry to the CallReferenceDatabase
+		DbCreateEntry $glCallReferenceDb [list $groupCallRef "VgcsBssapIdle" \
+			? $linkDbName $glReqRefHiIndex $groupId ? \
+			? $eMLPPriority $asgTmrId $dispatcherCall $talkerLACCellId $asgReqPriority $uplinkFree ?] 
+		#Add all the necessary entry to the Links database
+		FillLinkDatabase $linkDbName $glBscDb $groupCallRef $glGroupCallInfoDb 
+		#Send all the messages to SCCP 
+		foreach idx [DbGetIndexList $linkDbName] {
+			set BssElem [DbGet $linkDbName $idx BssElement]
+			if { $BssElem == "Bsc" } {
+				#Create the BSSAP signal
+				set bscId [DbGet $linkDbName $idx BscId]
+				new VGCS_VBS_SETUP sig
+				wr sig group_call_ref $groupCallRef
+				wr sig acknowledge_flag 1
+				wr sig cyph_info 0
+				wr sig emlpp_priority $eMLPPriority
+				wr sig prio $bscPriority
+
+				SendSccpNConnectReq  $glBscDb $idx $bscId $sig
+			}
+		}
+		incr glReqRefHiIndex
+		
+		return GCRequestAccepted
+	} else {
+		LogDb $glCallReferenceDb
+		return GCRequestDuplicated
+	}
+}
+
+proc GetReqRefByIndexes { _CallRefDbIdx _BssElemDbIdx } {
+	return [expr $_CallRefDbIdx * 65536 + $_BssElemDbIdx ]
+}
+
+proc GetGrCallRefDbIndex { lac cellId grCallRef } {
+	set index $lac
+	append index _
+	append index $cellId
+	append index _
+	append index $grCallRef
+}
+
+proc GetGrCallRefList { bts btsDbName grCallInfoDb grCallRef } {
+	set lac [DbGet $btsDbName $bts LAC]
+	set cellId [DbGet $btsDbName $bts CellId]
+	set idx [GetGrCallRefDbIndex $lac $cellId $grCallref]
+
+}
+
+proc FillLinkDatabase { _LinkDbName _BscDb grCallRef grGroupCallInfoDb } {
+
+	global glDbDir _self glReqRefHiIndex glBssapBscDb __bsc_db
+	global glTrafficLinkDb
+
+	set d [DbGetIndexList $_BscDb]
+	set numBsc 0
+	set index 1
+
+	#Fill parameters for each Bsc in the list
+	foreach idx [DbGetIndexList $_BscDb ] {
+		#Read the Bts Db names
+		lappend BtsDb [DbGet $_BscDb $idx BtsDb]
+		set bscReqRef [GetReqRefByIndexes $glReqRefHiIndex $index]
+		lappend bscReqRefList $bscReqRef
+		lappend BscIds $idx
+		set bscDb [DbGetName $__bsc_db]
+	   	# Store Traffic Links Db
+	    set dbpath [DbGet $_BscDb $idx TrafficLinksDb]
+		set glTrafficLinkDb($idx) [DbGetName $dbpath]
+		log "BtsDb = $BtsDb"
+		log "bscReqRefList = $bscReqRefList"
+		log "BscIds = $BscIds"
+
+
+		if { 0 } {
+
+			#Get the Cic queue Id
+			set trLinkIdxList [DbGetIndexList $glTrafficLinkDb($idx)]
+			foreach trLinkIdx $trLinkIdxList {
+				set queueId [DbGet $glTrafficLinkDb($idx) $trLinkIdx QueueId]
+				logscr "glTrafficLinkDb(idx) = $glTrafficLinkDb($idx)"
+				logscr "queueId = $queueId"
+				#Was: $queueId >= 100
+				if { 1 } {
+				    set first_ts 1
+				    set last_ts 32
+					set pcmVal [DbGet $glTrafficLinkDb($idx) $trLinkIdx Pcm]
+					set poolType [DbGet $glTrafficLinkDb($idx) $trLinkIdx PoolType]
+		           # Insert all available cics
+    		        for { set ts $first_ts } { $ts < $last_ts} { incr ts } {
+        		        # building cic(ts) with pcm_val and ts
+            		    set cic($ts) [expr {$pcmVal * 32}]
+                		set cic($ts) [expr {$cic($ts) + $ts}]
+	            	}
+					#Remove all the blocked ones
+	    	        # unset cics listed in "TsBlocked"
+    	    	    foreach k [GetBlkTs [DbGet $glTrafficLinkDb($idx) $trLinkIdx BlkTs]] {
+        	    	    unset cic($k)
+	            	}
+   		    	    set queueId [DbGet $glTrafficLinkDb($idx) $trLinkIdx QueueId]
+	
+					set createCic [IsTrafficLinkDbCreated $glTrafficLinkDb($idx) ] 
+					log "createCic = $createCic"
+					if { [expr { ! $createCic }] } {
+						InsertTrafficLinkDb $glTrafficLinkDb($idx)
+					}
+						set cicKey [BuildCicKey $queueId $poolType $idx]
+			    	    for { set ts 1 } { $ts < $last_ts } { incr ts } {
+        		    	    if { [info exists cic($ts)]} {
+								if { [expr { ! $createCic }] } {
+									log "Creating cic"
+		        				    cicCreate $cicKey $cic($ts)
+								}
+								#Save the list of queueid for this Bsc
+								lappend queueIdList $queueId
+					      	}
+            		}
+				}
+			}		
+
+		} else {
+			set trLinkIdxList [DbGetIndexList $glTrafficLinkDb($idx)]
+			foreach trLinkIdx $trLinkIdxList {
+				set queueId [DbGet $glTrafficLinkDb($idx) $trLinkIdx QueueId]
+				#Save the list of queueid for this Bsc
+				lappend queueIdList $queueId
+			}
+		}
+		#Retrive BSSAP pars by database
+		set Spc [DbGet $glBssapBscDb $idx Spc]
+		set StkId [DbGet $glBssapBscDb $idx StkId]
+		DbCreateEntry $_LinkDbName [list $bscReqRef WaitForVgcsSetupConnAck ? Bsc\
+			 ? $idx $Spc $StkId ? $queueIdList ? ? 0]
+		incr numBsc
+		incr index
+	}
+	foreach idx $BtsDb reqRef $bscReqRefList bscId $BscIds {
+		#Create a Db for each Bts
+		#spawn  "common/dbscripts/DbCreate.tsm $idx.csv"
+		set BtsDbName [DbGetName $idx]
+		log "BtsDbName = $BtsDbName idx = $idx"
+		foreach Bts [DbGetIndexList $BtsDbName] {
+			set cellId [DbGet $BtsDbName $Bts CellId]
+			set lac [DbGet $BtsDbName $Bts LAC]
+			set grCallRefDbIdx [GetGrCallRefDbIndex $lac $cellId $grCallRef]
+			if { [DbEntryExists $grGroupCallInfoDb $grCallRefDbIdx] } {
+					set Spc [DbGet $glBssapBscDb $bscId Spc]
+					set StkId [DbGet $glBssapBscDb $bscId StkId]
+					#The Bts responds to this CallArea, insert it
+					set btsIndex [GetReqRefByIndexes $glReqRefHiIndex $index]
+					DbCreateEntry $_LinkDbName [list $btsIndex WaitForVgcsAssConnAck ? Bts\
+						 $reqRef $bscId $Spc $StkId $cellId ? ? $lac 0]
+					incr index		
+			}
+		}
+	}
+	#Now Remove Bsc that does not contains any Btss with that GroupCallId
+
+	#Display the filled db
+	LogDb $_LinkDbName
+}
+
+proc InsertTrafficLinkDb { trafficLinkDb } {
+	global glCreatedTrafficLinkDb
+
+	lappend glCreatedTrafficLinkDb [list $trafficLinkDb]
+
+}
+
+proc IsTrafficLinkDbCreated { trafficLinkDb } {
+	global glCreatedTrafficLinkDb
+	foreach idx $glCreatedTrafficLinkDb {
+		if { ![string compare $idx $trafficLinkDb] } {
+		return 1
+		}
+	}
+	return 0
+}
+
+proc BuildCicKey { queueId poolType bscId } {
+	#The cic key is creted in this way:
+    # 32 --------- 24 ---------- 16 --------- 8 --------- 0
+    #  |<- bsc id ->|             |                       |
+   	#  |            |<- pool id ->|                       |
+    #  |            |             |<---    queue id   --->|
+    set key $queueId
+   	set key [expr {$key + [expr {$poolType << 16}] }]
+    set key [expr {$key + [expr {$bscId << 24}] }]
+	return $key
+}
+
+#Build the structure for the CallReference Database
+
+proc CreateCallReferenceDatabase { dbName } {
+	global glCallReferenceDb
+	#Create the database for each Call Reference
+	lappend idxList [list CallReference Index]
+	lappend idxList [list State Normal Read/Write]
+	lappend idxList [list Priority Normal Read/Write]
+	lappend idxList [list DbLinksName Key Read/Write]
+	lappend idxList [list ReqRefHi Key Read/Write]
+	lappend idxList [list GroupId Normal Read/Write]
+	lappend idxList [list AssignmentRequirement Normal Read/Write]
+	lappend idxList [list QueueIdList Normal Read/Write]
+	lappend idxList [list eMLPPriority Normal Read/Write]
+	lappend idxList [list AsgReqTmrId Normal Read/Write]
+	lappend idxList [list DispatcherCall Normal Read/Write]
+	lappend idxList [list TalkerLACCellId Normal Read/Write]
+	lappend idxList [list TalkerAsgReqPriority Normal Read/Write]
+	lappend idxList [list UplinkFree Normal Read/Write]
+	lappend idxList [list FailCause Normal Read/Write]
+	DbCreate $dbName $idxList
+	set glCallReferenceDb $dbName
+}
+
+
+
+proc GetLinkDbName { index } {
+	return LinkDb_$index
+}
+
+proc GetLinkDbByReqRef { _reqRef } {
+	global glCallReferenceDb
+	#Search on every GroupCallReference
+	foreach idx [DbGetIndexList $glCallReferenceDb] {
+		set linkDbName [DbGet $glCallReferenceDb $idx DbLinksName]
+		#search in down into the Links db
+		if { [DbEntryExists $linkDbName $_reqRef] } {
+			return $linkDbName
+		} else {
+		}
+	} 
+	#The res has not been found, return an error
+	return "-1"
+}
+
+proc GetLinkDbByCid { _cid } {
+	global glCallReferenceDb
+	foreach idx [DbGetIndexList $glCallReferenceDb] {
+		set linkDbName [DbGet $glCallReferenceDb $idx DbLinksName]
+		foreach idx2 [DbGetIndexList $linkDbName] {
+			set cid [DbGet $linkDbName $idx2 Cid]
+			if { $cid == $_cid } {
+				return $linkDbName	
+			}
+		}
+	}
+	#Cid not found
+	logscr "Cid $_cid not found in BSSAPVGCS Db"
+	return "-1"
+}
+proc GetSpcStkIdCidByReqRef { dbLinkName dbLinkIdx } {
+	set stkId [DbGet $dbLinkName $dbLinkIdx StkId]
+	set spc [DbGet $dbLinkName $dbLinkIdx Spc]
+	set cid [DbGet $dbLinkName $dbLinkIdx Cid]
+	return $spc-$stkId-$cid	
+}
+
+proc GetSpcStkIdCidByCid { dbLinkName cid } {
+	if { [DbKeyExists $dbLinkName Cid $cid] } {
+		set dbLinkIdx [DbGetIdx $dbLinkName Cid $cid]
+		set stkId [DbGet $dbLinkName $dbLinkIdx StkId]
+		set spc [DbGet $dbLinkName $dbLinkIdx Spc]
+		set cid [DbGet $dbLinkName $dbLinkIdx Cid]
+		return $spc-$stkId-$cid
+	} else { 
+		logscr "GetSpcStkIdCidByCid: Cid = $cid not found in Db $dbName"
+	}
+}
+
+proc GetSpcStkIdCidBySig { signal } {
+	set spc [rd signal Spc]
+	set stkId [rd signal StkId]
+	set cid [rd signal Cid]
+
+	return 	$spc-$stkId-$cid
+}
+
+proc GetGrCallAreaIdByRef { groupCallReference groupId } {
+	set grIdLen [string length $groupId]
+	set totLen [string length $groupCallReference]
+	set grCallArea [string range $groupCallReference 0 [expr $totLen - $grIdLen - 1] ]
+
+	return $grCallArea
+}
+
+# GetVgcsCic will search for an available cic in all the provided queueListIds,
+# for a gived Bsc, and will return the cic if one is found, otherwise it will
+# return the string InvalidCic
+
+proc GetVgcsCic { queueIdList bscId } {
+	global glTrafficLinkDb
+	#Search for all QueueId and for each try all the possible entries
+	#Check if the bscId is represented with internal notaion
+	foreach idx $queueIdList {
+		set trafficLinkDbName $glTrafficLinkDb($bscId)
+		set trafficLinkDbIdxList [DbGetIndexList $trafficLinkDbName]
+		foreach idxTrLink $trafficLinkDbIdxList {
+			if { $idx == [DbGet $trafficLinkDbName $idxTrLink QueueId] } {
+				set poolType [DbGet $trafficLinkDbName $idxTrLink PoolType]
+				set cicKey [BuildCicKey $idx $poolType $bscId]
+				set cic [cicNext $cicKey]
+				if { $cic >= 0 } {
+				return $cic
+				}
+			}
+		}
+	}
+	log "GetVgcsCic: cic not found in any list provided!"
+	return InvalidCic
+	#return $cic
+}
+
+proc GetLinkDbStructure { } {
+	lappend idxList [list ReqRef Index]
+	lappend idxList [list State Normal Read/Write]
+	lappend idxList [list Cid Key Read/Write]
+	lappend idxList [list BssElement Normal Read/Write]
+	lappend idxList [list BscRef Normal Read/Write]
+	lappend idxList [list BscId Normal Read/Write]
+	lappend idxList [list Spc Normal Read/Write]
+	lappend idxList [list StkId Normal Read/Write]
+	lappend idxList [list CellId Normal Read/Write]
+	lappend idxList [list QueueIdList Normal Read/Write]
+	lappend idxList [list Cic Normal Read/Write]
+	lappend idxList [list LAC Normal Read/Write]
+	lappend idxList [list NumFailedBtsLinks Normal Read/Write]
+	return $idxList
+}
+
+#Convert the cic integer to hex
+
+proc GetHexCic { cic } {
+	set buf [uitoh $cic B]
+	set buf [string range $buf 4 7]
+	return $buf
+}
+
+#Coding of the CellId IE, only for the case CellId + LAC, discr = 0x01
+
+proc EncCellIdentifier { cellId lac } {
+	return 01$lac$cellId
+}
+
+# GetInstanceMultiDb
+# Used to change the state of a process when the instance index changes, 
+# but more than one Db is used.
+#	The current instance's state is saved only if the instance index is 
+# different from 0 (this case is used for initialization or special 
+# pourpose)
+# Parameters:
+# new_idx: index of the new instance
+# dbname: name of the instnces database 
+# curr_idx: reference of the var of index of the current instance
+# The existance of the new instance has to be tested before the call 
+# of this procedure.
+# If the new instance doesn't exist, _state will be set to an empty sting
+
+proc GetInstanceMultiDb { new_idx prevDbName currDbName curr_idx } {
+
+	# Global Variables
+	global _state 
+
+	log "GetInstanceMultiDb: prevDbName = $prevDbName, currDbName = $currDbName"
+	log "GetInstanceMultiDb: _state = $_state"
+
+	upvar 1 $curr_idx var 
+
+	set anotherDb [string compare $prevDbName $currDbName]
+
+
+	#Check if the previous Db exists again...
+	if { [IsDbAvailable $prevDbName] } {
+		set prevDbEntryExists [DbEntryExists $prevDbName $var]
+	} else {
+		set prevDbEntryExists 0
+	}
+	log "GetInstanceMultiDb: anotherDb = $anotherDb prevDbEntryExists = $prevDbEntryExists"
+	if { $new_idx != $var } {
+		if { $var != 0 && ($prevDbEntryExists || [DbEntryExists $currDbName $var]) } {
+			# save the state of the previous instance
+			if { $anotherDb } {
+				log "GetInstanceMultiDb: setting previous Db"
+				DbSet $prevDbName $var State $_state
+			} else {
+				log "GetInstanceMultiDb: Setting current Db"
+				DbSet $currDbName $var State $_state
+			}
+		} else {
+			log "!!!!!! Not saving the State in the db = $currDbName !!!!!!"
+			if { $var != 0 } {
+			log "!!!!!! While entry does not exist in the Db         !!!!!!"
+			}
+		}
+		# get the state of the new instance
+		set _state [DbGet $currDbName $new_idx State]
+		log "GetInstanceMultiDb: Setting _state to = $_state"
+	} 
+	
+	set var $new_idx
+}
+
+proc IsDbAvailable { dbName } {
+	#TODO: Remove this check with a C one!
+	global glCallReferenceDb
+	set idxList [DbGetIndexList $glCallReferenceDb]
+	foreach idx $idxList {
+		set linkDbName [DbGet $glCallReferenceDb $idx DbLinksName]
+		if { ![string compare $dbName $linkDbName] } {
+			return 1
+		}
+	}
+	return 0
+}
+
+proc GetGrCallRefByDbName { linkDbName } {
+	return [string range $linkDbName 7 end]
+}
+
+# DeactivateBsc:
+# Send the Clear Command to the Bsc, check if at least one Bsc is up, if not
+# the call is cleared and the GCC is informed
+# Parameters:
+# cause: internal cause for GCC
+
+proc DeactivateBsc { linkDbName currentInstanceIdx cause} {
+	set grCallRef [GetGrCallRefByDbName $linkDbName]
+	set spcStkIdCid [GetSpcStkIdCidByReqRef $linkDbName $currentInstanceIdx]
+	new CLR_CMD sig
+	wr sig cause 09 
+	SendSccpNDataReq $spcStkIdCid $sig  
+	#This is an "internal" cause does not deal with the CLR_CMD one
+	#Check if is the last BSC
+	return
+	#Currently removed, while the GCC will be informed later...
+	#if { ![IsABscActive $linkDbName $currentInstanceIdx] } {
+	#		InformGccCallDown $grCallRef $cause
+	#}
+}
+
+# InformGccCallDown:
+# Send to the GCC script the notification that the call is down
+
+proc InformGccCallDown { callRefIdx cause } {
+	global glGccPid
+
+	if { ![string compare $cause "?"] } {
+		logscr "InformGccCallDown: Cause missing!"
+	}
+
+	new BSSAP_CTL_VGCS_FAIL_IND s
+	wr s GroupCallReference $callRefIdx
+	wr s Cause $cause
+	
+	send s $glGccPid	
+}
+
+# CheckDbEmpty:
+# Check if the Db contains onlt Bscs, and the one it founds are in Null state.
+# it then consider the Db as empty (call terminated)
+
+proc IsLinkDbEmpty { dbLinkName currentLinkId } {
+	global _state
+	set idxList [DbGetIndexList $dbLinkName]
+	#Remove the calling element from list
+	set pos [lsearch $idxList $currentLinkId]
+	set idxList [lreplace $idxList $pos $pos]
+	foreach idx $idxList {
+		set bssElem [DbGet $dbLinkName $idx BssElement]
+		set state [DbGet $dbLinkName $idx State]
+		if { ![string compare $bssElem "Bts"] } {
+			LogDb $dbLinkName
+			#There is a Bts, the link isn't empty
+			return 0
+		} else {
+			if { [string compare $state "Null"] } {
+				LogDb $dbLinkName
+					#There more than 1 Bsc, and the state is not null, the link isn't empty
+					return 0
+			}
+		}
+	} 
+	#Check if the current element is the last
+	if { [DbEntryExists $dbLinkName $currentLinkId] } {
+		if { ![string compare [DbGet $dbLinkName $currentLinkId State] "WaitForVgcsClrCmplt"] } {
+			if { ![string compare $_state "Null"] } {
+				#The Bsc is the last and is in Null, state
+				return 1
+			}
+		}
+	}
+	#There aren't Btss and all the BSC are in Null state
+	return 1
+}
+
+# IsAnyCicAvailable:
+#Check if there is an available cic in the queueidlist provided
+
+proc IsAnyCicAvailable { queueIdList bscId } {
+	global glTrafficLinkDb
+	log "IsAnyCicAvailable: queueIdList = $queueIdList bscId = $bscId"
+	foreach idx $queueIdList {
+		set trafficLinkDbName $glTrafficLinkDb($bscId)
+		set trafficLinkDbIdxList [DbGetIndexList $trafficLinkDbName]
+		foreach idxTrLink $trafficLinkDbIdxList {
+			if { $idx == [DbGet $trafficLinkDbName $idxTrLink QueueId] } {
+				set poolType [DbGet $trafficLinkDbName $idxTrLink PoolType]
+				set cicKey [BuildCicKey $idx $poolType $bscId]
+				log "IsAnyCicAvailable: cicKey = $cicKey"
+				set num [cicAvail $cicKey]
+				if { $num > 0 } {
+					log "IsAnyCicAvailable: numCics = $num"
+					return 1
+				}
+			}
+		}
+	}
+	return 0
+}
+
+proc RecvBssapCtlVgcsHovPerfInd {} {
+	global _sig glGroupCallInfoDb glGccPid
+	#Look in the Db what GroupCall is available
+	set idxList [DbGetIndexList $glGroupCallInfoDb]
+	set lac [rd _sig Lac]
+	set cellId [rd _sig CellId]
+	foreach idx $idxList {
+		set indexList [split $idx "_"]
+		logscr "index = $idx indexList = $indexList"
+		if { $lac == [lindex $indexList 0] } {
+			if { $cellId == [lindex $indexList 1] } {
+				logscr "Found a group call info for this cell [lindex $indexList 2]"
+				lappend groupIdList [lindex $indexList 2]
+			}
+		}
+	}
+	if { [info exists groupIdList] } {
+		wr _sig GrCallRefIdList $groupIdList
+	} else {
+		wr _sig GrCallRefIdList "?" 
+	}
+
+	# Forward the signal to GCC
+	send _sig $glGccPid
+	skipMsg
+}
+
+proc ClearVGCSCall { grCallReference cause } {
+	global glCallReferenceDb
+	set linkDbName [GetLinkDbName $grCallReference]
+	DbDelete $linkDbName
+	DbRemEntry $glCallReferenceDb $grCallReference
+	InformGccCallDown $grCallReference $cause
+}
+
+proc RecvNDisconnectInd { } {
+	global _sig
+
+	set cid [rd _sig Cid]
+	set linkDbName [GetLinkDbByCid $cid]
+	set grCallRef [GetGrCallRefByDbName $linkDbName]
+	if { $linkDbName != -1 } {
+		if { [DbKeyExists $linkDbName Cid $cid] } {
+			set idx [DbGetIdx $linkDbName Cid $cid]
+			set bssElem [DbGet $linkDbName $idx BssElement]
+			set bscRef [DbGet $linkDbName $idx BscRef]
+			if { ![string compare $bssElem "Bts"] } {
+				log "RecvNDisconnectInd: Found a Bts link disconnecting: idx = $idx, removing the element"
+				ReleaseBtsCic $linkDbName $idx
+				DbRemEntry $linkDbName $idx
+				# Check if there are any other Bts in the Db
+				set btsNum [GetTotalBtsNumPerBsc $linkDbName $bscRef]
+				if { $btsNum == 0 } {
+					# Check if the Bsc if is still alive
+					if { [DbEntryExists $linkDbName $bscRef] } {
+						logscr "RecvNDisconnectInd: found 0 Btss for the Bsc = $bscRef, releasing the Bsc"
+						# Check if BSC is not in Null state (in this case it is immediatly released)
+						set bscState [DbGet $linkDbName $bscRef State]
+						if { ![string compare $bscState "Null"] } {
+							ClearVGCSCall $grCallRef "Call released"
+						} else {
+							SendReleaseLink $bscRef "SCCP Failure"	
+						}
+					}
+				}	
+				skipMsg
+			} else {
+				log "RecvNDisconnectInd: The SCCP link for the BSC is down, removing all Bts"
+				# Check if the Bsc is the last one for the call
+				if { ![IsABscActive $linkDbName $bscRef] } {
+					global glCallReferenceDb
+					set grCallRef [GetCallRefByLinkDbName $linkDbName]
+					ClearVGCSCall $grCallRef BscSCCPDisconnect
+				}
+			}
+		} else {
+			log "RecvNDisconnectInd: Cid not found: cid = $cid (perhaps the BSC has send before the SCCP DISCONNECT)"
+			skipMsg
+		}
+	} else {
+		log "RecvNDisconnectInd: Unknown link Db: cid = $cid (perhaps the BSC has send before the SCCP DISCONNECT)"
+		skipMsg
+	}
+}
+
+proc GetCallRefByLinkDbName { linkDbName } {
+	set len [string length $linkDbName]
+	incr len -1
+	logscr "GetCallRefByLinkDbName: [string range $linkDbName 7 $len]"
+	return [string range $linkDbName 7 $len]	
+}
+
+proc SendReleaseLink { linkIdx cause } {
+	global _self
+	new BSSAPVGCS_RELEASE_LINK s
+	wr s ReqRef $linkIdx
+	wr s Cause $cause
+	send s $_self
+}

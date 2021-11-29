@@ -1,0 +1,122 @@
+
+
+ASN1C Compiler, Version 6.1.4
+Copyright (c) 1997-2008 Objective Systems, Inc. All Rights Reserved.
+
+Registered to: PRISMA Engineering S.r.l.
+Parsing config file 'asn1_hnbap.cfg'..
+Parsing ASN.1 definitions..
+WARNING: Module HNBAP-IEs, Prod Access_stratum_release_indicator: enum name changed to 'rel_4'
+
+WARNING: Module HNBAP-IEs, Prod Access_stratum_release_indicator: enum name changed to 'rel_5'
+
+WARNING: Module HNBAP-IEs, Prod Access_stratum_release_indicator: enum name changed to 'rel_6'
+
+WARNING: Module HNBAP-IEs, Prod Access_stratum_release_indicator: enum name changed to 'rel_7'
+
+WARNING: Module HNBAP-IEs, Prod Access_stratum_release_indicator: enum name changed to 'rel_8'
+
+WARNING: Module HNBAP-IEs, Prod CauseRadioNetwork: enum name changed to 'unauthorised_Location'
+
+WARNING: Module HNBAP-IEs, Prod CauseRadioNetwork: enum name changed to 'unauthorised_HNB'
+
+WARNING: Module HNBAP-IEs, Prod CauseRadioNetwork: enum name changed to 'hNB_parameter_mismatch'
+
+WARNING: Module HNBAP-IEs, Prod CauseRadioNetwork: enum name changed to 'invalid_UE_identity'
+
+WARNING: Module HNBAP-IEs, Prod CauseRadioNetwork: enum name changed to 'uE_not_allowed_on_this_HNB'
+
+WARNING: Module HNBAP-IEs, Prod CauseRadioNetwork: enum name changed to 'uE_unauthorised'
+
+WARNING: Module HNBAP-IEs, Prod CauseRadioNetwork: enum name changed to 'connection_with_UE_lost'
+
+WARNING: Module HNBAP-IEs, Prod CauseRadioNetwork: enum name changed to 'ue_RRC_telease'
+
+WARNING: Module HNBAP-IEs, Prod CauseRadioNetwork: enum name changed to 'hNB_not_registered'
+
+WARNING: Module HNBAP-IEs, Prod CauseRadioNetwork: enum name changed to 'uE_relocated'
+
+WARNING: Module HNBAP-IEs, Prod CauseRadioNetwork: enum name changed to 'ue_registered_in_another_HNB'
+
+WARNING: Module HNBAP-IEs, Prod CauseTransport: enum name changed to 'transport_resource_unavailable'
+
+WARNING: Module HNBAP-IEs, Prod CauseTransport: enum name changed to 'unspecified_1'
+
+WARNING: Module HNBAP-IEs, Prod CauseProtocol: enum name changed to 'transfer_syntax_error'
+
+WARNING: Module HNBAP-IEs, Prod CauseProtocol: enum name changed to 'abstract_syntax_error_reject'
+
+WARNING: Module HNBAP-IEs, Prod CauseProtocol: enum name changed to 'abstract_syntax_error_ignore_and_notify'
+
+WARNING: Module HNBAP-IEs, Prod CauseProtocol: enum name changed to 'message_not_compatible_with_receiver_state'
+
+WARNING: Module HNBAP-IEs, Prod CauseProtocol: enum name changed to 'semantic_error'
+
+WARNING: Module HNBAP-IEs, Prod CauseProtocol: enum name changed to 'unspecified_2'
+
+WARNING: Module HNBAP-IEs, Prod CauseProtocol: enum name changed to 'abstract_syntax_error_falsely_constructed_message'
+
+WARNING: Module HNBAP-IEs, Prod CauseMisc: enum name changed to 'processing_overload'
+
+WARNING: Module HNBAP-IEs, Prod CauseMisc: enum name changed to 'hardware_failure'
+
+WARNING: Module HNBAP-IEs, Prod CauseMisc: enum name changed to 'o_and_m_intervention'
+
+WARNING: Module HNBAP-IEs, Prod CauseMisc: enum name changed to 'unspecified_3'
+
+WARNING: Module HNBAP-IEs, Prod CSG_Indicator: enum name changed to 'csg_capable'
+
+WARNING: Module HNBAP-IEs, Prod CSG_Indicator: enum name changed to 'not_csg_capable'
+
+WARNING: Module HNBAP-IEs, Prod CN_DomainIndicator: enum name changed to 'cs_domain'
+
+WARNING: Module HNBAP-IEs, Prod CN_DomainIndicator: enum name changed to 'ps_domain'
+
+WARNING: Module HNBAP-IEs, Prod Registration_Cause: enum name changed to 'emergency_call'
+
+WARNING: Module HNBAP-IEs, Prod Registration_Cause: enum name changed to 'normal_1'
+
+WARNING: Module HNBAP-IEs, Prod TypeOfError: enum name changed to 'not_understood'
+
+WARNING: Module HNBAP-CommonDataTypes, Prod TriggeringMessage: enum name changed to 'initiating_message'
+
+WARNING: Module HNBAP-CommonDataTypes, Prod TriggeringMessage: enum name changed to 'successful_outcome'
+
+WARNING: Module HNBAP-CommonDataTypes, Prod TriggeringMessage: enum name changed to 'unsuccessful_outcome'
+
+
+Writing C type definitions to file ./C/HNBAP-PDU-Descriptions.h..
+Writing C common definitions/functions to file ./C/HNBAP-PDU-Descriptions.c..
+Writing C encode functions to file ./C/HNBAP-PDU-DescriptionsEnc.c..
+Writing C decode functions to file ./C/HNBAP-PDU-DescriptionsDec.c..
+Writing C global variables to file ./C/HNBAP-PDU-Descriptions.c..
+Writing C print functions to file ./C/HNBAP-PDU-DescriptionsPrint.c..
+Writing C type definitions to file ./C/HNBAP-PDU-Contents.h..
+Writing C common definitions/functions to file ./C/HNBAP-PDU-Contents.c..
+Writing C encode functions to file ./C/HNBAP-PDU-ContentsEnc.c..
+Writing C decode functions to file ./C/HNBAP-PDU-ContentsDec.c..
+Writing C global variables to file ./C/HNBAP-PDU-Contents.c..
+Writing C print functions to file ./C/HNBAP-PDU-ContentsPrint.c..
+Writing C type definitions to file ./C/HNBAP-IEs.h..
+Writing C common definitions/functions to file ./C/HNBAP-IEs.c..
+Writing C encode functions to file ./C/HNBAP-IEsEnc.c..
+Writing C decode functions to file ./C/HNBAP-IEsDec.c..
+Writing C global variables to file ./C/HNBAP-IEs.c..
+Writing C print functions to file ./C/HNBAP-IEsPrint.c..
+Writing C type definitions to file ./C/HNBAP-CommonDataTypes.h..
+Writing C common definitions/functions to file ./C/HNBAP-CommonDataTypes.c..
+Writing C encode functions to file ./C/HNBAP-CommonDataTypesEnc.c..
+Writing C decode functions to file ./C/HNBAP-CommonDataTypesDec.c..
+Writing C global variables to file ./C/HNBAP-CommonDataTypes.c..
+Writing C print functions to file ./C/HNBAP-CommonDataTypesPrint.c..
+Writing C type definitions to file ./C/HNBAP-Constants.h..
+Writing C common definitions/functions to file ./C/HNBAP-Constants.c..
+Writing C encode functions to file ./C/HNBAP-ConstantsEnc.c..
+Writing C decode functions to file ./C/HNBAP-ConstantsDec.c..
+Writing C print functions to file ./C/HNBAP-ConstantsPrint.c..
+Writing C type definitions to file ./C/HNBAP-Containers.h..
+Writing C common definitions/functions to file ./C/HNBAP-Containers.c..
+Writing C encode functions to file ./C/HNBAP-ContainersEnc.c..
+Writing C decode functions to file ./C/HNBAP-ContainersDec.c..
+Writing C global variables to file ./C/HNBAP-Containers.c..
+Writing C print functions to file ./C/HNBAP-ContainersPrint.c..

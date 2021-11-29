@@ -1,0 +1,3895 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/tstmUtils/LSUSIM/tags/LSUSIM-1.8.1/scripts/lsu_sim_mng.tsm $
+#
+# $Author: carlom $
+#
+# Description: support process to manage LSU SIM
+#
+#
+# $Rev: 34122 $
+#
+# $Date: 2010-06-16 19:48:41 +0200 (Wed, 16 Jun 2010) $
+##############################################################
+
+include "lsu_sim_defs.tsm"
+include "L3Utils.tsm"
+include "generalUtils.tsm"
+
+proc Init { cfg { testBoard ? } } {
+	global _HandleRxSignalProc
+
+	set _HandleRxSignalProc LsuSimMngMultiInstHnd
+
+	# Uplevel Configuration File
+    set cfgfile $cfg
+    uplevel #0 include $cfgfile
+
+	global glSimBoardTest
+	if { ![IsVoid $testBoard] } {
+        set glSimBoardTest 1
+        logscr "Init: LSUSIM BOARD Test Session"
+    } else {
+        set glSimBoardTest 0
+    }
+
+	global glClientInstInitState
+	set glClientInstInitState Idle
+
+	CreateLsuSimMngDb
+
+	global glSimPosKey
+	set glSimPosKey "MAIN_INST"
+
+	register LSU_SIM_SRV_SIM
+
+	# --- Signals towards MM or GMM stack protocol ---
+	# General rules:
+	# Error field is set only in case of error. It is void in case of success.
+
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {HEXSTR RxLen} {HEXSTR Apdu}
+			LSU_SIM_SEND_APDU_REQ}
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {STRING Error} {BINSTR UsbPayload}	
+			LSU_SIM_SEND_APDU_RES}
+
+	# LSU_SIM_CONFIG_SIM_REQ: check if SIM is present. If present, configure it.
+
+	# CheckAtr = TRUE enables setting of voltage starting from 1.8V and checking
+	# ATR to understand if the voltage is correct (see spec. TS 102.221 chapter
+	# 6.2 "Supply voltage switching").
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {BOOL CheckAtr}
+			LSU_SIM_CONFIG_SIM_REQ}
+
+	# SimPresent is TRUE or FALSE. In case of FALSE value, Cause field specify
+	# the reason because the SIM card is considered not present.
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {BOOL SimPresent} {STRING Cause}
+			LSU_SIM_CONFIG_SIM_ACK}
+
+	# LSU_SIM_READ_ATR: use command 'A' to retrieve the SIM ATR message
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos}
+			LSU_SIM_READ_ATR_REQ}
+
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {HEXSTR AtrMsg}
+			LSU_SIM_READ_ATR_RES}
+
+	# LSU_SIM_PIN_STATUS_CHECK_REQ: check if PIN is enabled.
+	# Also supported voltage is checked and modified SIM configuration if needed.
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {UCHAR CardType}
+			LSU_SIM_PIN_STATUS_CHECK_REQ}
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {UCHAR PinStatus}
+			LSU_SIM_PIN_STATUS_CHECK_RES}
+
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos}
+			LSU_SIM_READ_IMSI_REQ}
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {STRING Error}
+				{HEXSTR Imsi}
+			LSU_SIM_READ_IMSI_RES}
+
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {HEXSTR Rand} {HEXSTR Autn} {UCHAR CardType}
+			LSU_SIM_AUTH_REQ}
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {STRING Error}
+				{HEXSTR Sres} {HEXSTR ExtRes} {HEXSTR Kc} {HEXSTR Ki}
+			LSU_SIM_AUTH_RES}
+
+	# LSU_SIM_PIN_VERIFY_REQ: verify PIN, that is, insert PIN
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {STRING Pin}
+			LSU_SIM_PIN_VERIFY_REQ}
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {BOOL Success}
+			LSU_SIM_PIN_VERIFY_RES}
+
+	# LSU_SIM_READ_LOCI_REQ: read EFLoci's content (TMSI, LAI, TMSI TIME, Location update status)
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos}
+			LSU_SIM_READ_LOCI_REQ}
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {STRING Error}
+				{HEXSTR Tmsi} {HEXSTR Lai} {HEXSTR TmsiTime}
+				{HEXSTR LocUpStatus}
+			LSU_SIM_READ_LOCI_RES}
+
+	# LSU_SIM_WRITE_LOCI_REQ: write on EFLoci one or more fields.
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {HEXSTR Tmsi} {HEXSTR Lai}
+				{HEXSTR TmsiTime} {HEXSTR LocUpStatus}
+			LSU_SIM_WRITE_LOCI_REQ}
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {STRING Error}
+			LSU_SIM_WRITE_LOCI_RES}
+
+	# LSU_SIM_READ_LOCIGPRS_REQ: read EFLociGprs's content (P-TMSI, P-TMSI signature value, RAI, Routing Area update status)
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos}
+			LSU_SIM_READ_LOCIGPRS_REQ}
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {STRING Error}
+				{HEXSTR Ptmsi} {HEXSTR PtmsiSignature} {HEXSTR Rai}
+				{HEXSTR RoutAreaUpStatus}
+			LSU_SIM_READ_LOCIGPRS_RES}
+
+	# LSU_SIM_WRITE_LOCIGPRS_REQ: write on EFLociGprs one or more fields.
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {HEXSTR Ptmsi}
+				{HEXSTR PtmsiSignature} {HEXSTR Rai} {HEXSTR RoutAreaUpStatus}
+			LSU_SIM_WRITE_LOCIGPRS_REQ}
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {STRING Error}
+			LSU_SIM_WRITE_LOCIGPRS_RES}
+
+	# LSU_SIM_READ_KC_REQ: read EFKc's content (Kc, Ciphering key sequence number n)
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos}
+			LSU_SIM_READ_KC_REQ}
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {STRING Error}
+				{HEXSTR Kc} {HEXSTR CipKeySeqNum}
+			LSU_SIM_READ_KC_RES}
+
+	# LSU_SIM_WRITE_KC_REQ: write on EFKc one or more fields.
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {HEXSTR Kc} {HEXSTR CipKeySeqNum}
+			LSU_SIM_WRITE_KC_REQ}
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {STRING Error}
+			LSU_SIM_WRITE_KC_RES}
+
+	# LSU_SIM_READ_KCGPRS_REQ: read EFKcGprs's content (Ciphering key KcGPRS, Ciphering key sequence number n for GPRS)
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos}
+			LSU_SIM_READ_KCGPRS_REQ}
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {STRING Error}
+				{HEXSTR KcGprs} {HEXSTR CipKeySeqNumGprs}
+			LSU_SIM_READ_KCGPRS_RES}
+
+	# LSU_SIM_WRITE_KCGPRS_REQ: write on EFKcGprs one or more fields.
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {HEXSTR KcGprs} {HEXSTR CipKeySeqNumGprs}
+			LSU_SIM_WRITE_KCGPRS_REQ}
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {STRING Error}
+			LSU_SIM_WRITE_KCGPRS_RES}
+
+	# LSU_SIM_READ_SMSC_ADDR_REQ: read the SMS-Center Address.
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos}
+			LSU_SIM_READ_SMSC_ADDR_REQ}
+
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {HEXSTR SmscAddr}
+			LSU_SIM_READ_SMSC_ADDR_RES}
+
+	# LSU_SIM_READ_APN_REQ: read the APN.
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos}
+			LSU_SIM_READ_APN_REQ}
+
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {HEXSTR Apn}
+			LSU_SIM_READ_APN_RES}
+
+	typedef {STRUCT
+				{UCHAR BoardId} {UCHAR SimPos} {UINT ErrCd}
+			LSU_SIM_ERR_IND}
+
+
+
+	# Set to FALSE if you want to send "S" command to LSU SIM board.
+	# Sim server (version sim.srv-1.3.3 and later) sends by itself the 
+	# command "S", therefore glAsyncConfDone is set to TRUE.
+	global glAsyncConfDone
+	set glAsyncConfDone TRUE
+
+	nextstate Idle
+}
+
+
+##############################################
+# MULTI-INSTANCE MANAGEMENT
+##############################################
+
+proc LsuSimMngMultiInstHnd {} {
+	global _sig  
+
+	switch -exact -- [lindex $_sig 0] {
+		"LSUSIM_SIM_LOCK_ACK"			-
+		"LSUSIM_SIM_LOCK_NAK"			-
+		"LSUSIM_SIM_CMD_ACK"			-
+		"LSUSIM_SIM_CMD_NAK"			LsusimSimCmdPrep
+
+		"TMR_ATR_MSG"					TmrPrep
+
+		"LSU_SIM_SEND_APDU_REQ"			-
+		"LSU_SIM_CONFIG_SIM_REQ"		-
+		"LSU_SIM_READ_ATR_REQ"			-
+		"LSU_SIM_PIN_STATUS_CHECK_REQ"	-
+		"LSU_SIM_READ_IMSI_REQ"			-
+		"LSU_SIM_AUTH_REQ"				-
+		"LSU_SIM_PIN_VERIFY_REQ"		-
+		"LSU_SIM_READ_LOCI_REQ"			-
+		"LSU_SIM_WRITE_LOCI_REQ"		-
+		"LSU_SIM_READ_LOCIGPRS_REQ"		-
+		"LSU_SIM_WRITE_LOCIGPRS_REQ"	-
+		"LSU_SIM_READ_KC_REQ"			-
+		"LSU_SIM_WRITE_KC_REQ"			-
+		"LSU_SIM_READ_KCGPRS_REQ"		-
+		"LSU_SIM_WRITE_KCGPRS_REQ"		-
+		"LSU_SIM_READ_SMSC_ADDR_REQ"	-
+		"LSU_SIM_READ_APN_REQ"			LsuSimClientMsgPrep
+
+        default 				{
+			exit "LsuSimMngMultiInstHnd: unexpected _sig=$_sig"
+		}
+	}
+
+	global glSimPosKey _state
+	log "lsu_sim_mng: glSimPosKey $glSimPosKey, state $_state"
+}
+
+proc LsusimSimCmdPrep {} {
+
+	global _sig glSimPosKey
+
+	set inst [CreateSimPosKey [rd _sig usbFd] [rd _sig usbSim]]
+
+	if {![DbEntryExists LsuSimMngDb $inst]} {
+		# SIMSRV-70
+		exit "LsusimSimCmdPrep: WARNING: SIM $inst not present in LsuSimMngDb --> probable error in LSUSIM_SIM_CMD_NAK returned by SIMSRV"
+	} else {
+
+		GetInstance	$inst LsuSimMngDb glSimPosKey
+	}
+}
+
+proc LsuSimClientMsgPrep {} {
+
+	global _sig glSimPosKey
+
+	set inst [CreateSimPosKey [rd _sig BoardId] [rd _sig SimPos]]
+
+	global glClientInstInitState
+	# I avoid multiple commands for the same SIM
+	if {[DbEntryExists LsuSimMngDb $inst]} {
+		if {![string eq [DbGet LsuSimMngDb $inst State] $glClientInstInitState]} {
+			exit "LsuSimClientMsgPrep: trying to use SIM $inst already busy for another procedure"
+		}
+	} else {
+		DbCreateDefEntry LsuSimMngDb $inst
+
+		DbSet LsuSimMngDb $inst State $glClientInstInitState
+		DbSet LsuSimMngDb $inst simTestNumb 0 
+	}
+
+	global _src
+	DbSet LsuSimMngDb $inst ClientPid $_src
+
+	GetInstance	$inst LsuSimMngDb glSimPosKey
+}
+
+proc TmrPrep {} {
+	global glSimPosKey
+
+	GetInstanceFromTimer LsuSimMngDb glSimPosKey
+}
+
+proc CreateLsuSimMngDb {} {
+	lappend dbDescr [list LsuSimPosKey Index]; #see CreateSimPosKey
+	lappend dbDescr State
+	lappend dbDescr ClientPid
+	lappend dbDescr RAND
+	lappend dbDescr AUTN
+	lappend dbDescr CardType
+	lappend dbDescr [list TMR_ATR_MSGid Key]
+	lappend dbDescr FileName; #as defined in lsu_sim_defs.tsm for glFileId
+	lappend dbDescr UpdateList
+	lappend dbDescr UpdateListIdx
+	lappend dbDescr Chv1Status
+	lappend dbDescr MainProcedure
+	lappend dbDescr Voltage
+	lappend dbDescr VoltageAlreadyApplied
+	lappend dbDescr readPinNotOk_attempsNumber
+	lappend dbDescr simTestNumb; #LSUSIM BOARD TEST SESSION
+
+	# EF IMSI
+	lappend dbDescr Imsi
+
+	# EF LOCI
+	lappend dbDescr Tmsi
+	lappend dbDescr Lai
+	lappend dbDescr TmsiTime
+	lappend dbDescr LocUpStatus
+
+	# EF LOCIGPRS
+	lappend dbDescr Ptmsi
+	lappend dbDescr PtmsiSignature
+	lappend dbDescr Rai
+	lappend dbDescr RoutAreaUpStatus
+
+	# EF Kc
+	lappend dbDescr Kc
+	lappend dbDescr CipKeySeqNum
+
+	# EF KcGprs
+	lappend dbDescr KcGprs
+	lappend dbDescr CipKeySeqNumGprs
+
+	# EF SMSP
+	lappend dbDescr rxApduLenExp
+
+	DbCreate LsuSimMngDb $dbDescr
+
+	DbCreateDefEntry LsuSimMngDb "MAIN_INST"
+}
+
+# usbPayload: BINSTR
+# return APDU as HEXSTR
+proc getApduFromUsbPayload {usbPayload} {
+	if {[binary scan $usbPayload ccH* txLen rxLen apdu] == 3} {
+		return $apdu
+	} else {
+		return ""
+	}
+}
+
+proc remInsFromApdu {apdu} {
+	# apdu[0] INS
+	return [string range $apdu 2 end]
+}
+
+proc getImsiFromApdu {apdu} {
+	global glEfFieldOffset glEfFieldEndOffset
+
+	# apdu[0] INS
+	# apdu[1] IMSI len
+	set fileData [remInsFromApdu $apdu]
+	set imsiLen [htouc [hocts $fileData $glEfFieldOffset(ImsiLen) $glEfFieldEndOffset(ImsiLen)]]
+
+	if {($imsiLen >= 1) && ($imsiLen <= 8)} {
+		set imsiEndOffset [expr {$glEfFieldOffset(Imsi) + $imsiLen - 1}]
+		return [hocts $fileData $glEfFieldOffset(Imsi) $imsiEndOffset]
+	} else {
+		logscr "getImsiFromApdu: unexpected imsiLen=$imsiLen"
+		return -1
+	}
+
+}
+
+proc getLociFromApdu {apdu} {
+	# apdu[0] INS
+	return [hocts $apdu 1 11]
+}
+
+proc getLociGprsFromApdu {apdu} {
+	# apdu[0] INS
+	return [hocts $apdu 1 14]
+}
+
+proc GetFieldFromFileData {fileData fld} {
+	global glEfFieldOffset glEfFieldEndOffset
+
+	return [hocts $fileData $glEfFieldOffset($fld) $glEfFieldEndOffset($fld)]
+}
+
+# Create proc to read fields from data read on EF files
+foreach fld [array names glEfFieldOffset] {
+
+	log "CreateProc: fld=$fld"
+
+	proc ${fld}FromFileData {fileData} "
+		GetFieldFromFileData \$fileData $fld
+	"
+}
+
+# apdu: HEXSTR
+#return last byte of HEXSTR as UCHAR
+proc getFirstByte {apdu} {
+    return [hgetb $apdu 0]
+}
+
+# apdu: HEXSTR
+#return last byte of HEXSTR as UCHAR
+proc getLastByte {apdu} {
+	set apduLen [hByteLen $apdu]
+	return [hgetb $apdu [expr {$apduLen-1}]]
+}
+
+# apdu: HEXSTR
+#return SW1 as UCHAR
+proc getApduSw1 {apdu} {
+	set apduLen [hByteLen $apdu]
+	if { [expr {$apduLen-2}] >= 0 } {
+		return [hgetb $apdu [expr {$apduLen-2}]]
+	} else {
+		log "getApduSw1: BEWARE: apduLen=$apduLen --> (apduLen-2)=[expr {$apduLen-2}]"; #cDEBUG
+		return -1
+	}
+}
+
+# apdu: HEXSTR
+#return SW2 as UCHAR
+proc getApduSw2 {apdu} {
+	set apduLen [hByteLen $apdu]
+	#hgetb indexing of hexstr starts from 0
+	return [hgetb $apdu [expr {$apduLen-1}]]
+}
+
+# apdu: HEXSTR
+# return SW1 and SW2 in an ushort big endian
+proc getApduSw1_2 {apdu} {
+	set apduLen [hByteLen $apdu]
+	return [htous [hocts $apdu [expr {$apduLen-2}] [expr {$apduLen-1}]] B]
+}
+
+# apdu: HEXSTR
+# return SRES in HEXSTR format
+proc getApduSres {apdu} {
+	return [hocts $apdu 1 4]
+}
+
+# apdu: HEXSTR
+# return EXTENDED RES in HEXSTR format (UMTS case)
+proc getApduExtRes {apdu} {
+	return [hocts $apdu 5 8]
+}
+
+# apdu: HEXSTR
+# return Kc in HEXSTR format
+proc getKcFromApdu { apdu } {
+	return [hocts $apdu 5 12]
+}
+
+# apdu: HEXSTR
+# return Ki in HEXSTR format
+proc getKiFromApdu { apdu } {
+	return [hocts $apdu 13 20]
+}
+
+# apdu: HEXSTR
+# return Kc in HEXSTR format for USIM
+proc getKcFromUsimApdu { apdu } {
+	return [hocts $apdu 8 15]
+}
+
+# apdu: HEXSTR
+# return Ki in HEXSTR format for USIM
+proc getKiFromUsimApdu { apdu } {
+	return [hocts $apdu 16 23]
+}
+
+# apdu: HEXSTR
+# return msb of the first byte of HEXSTR
+proc GetChv1Bit { apdu } {
+	global glLsuSimDefs
+
+	set dirChar [hgetb $apdu $glLsuSimDefs(FileCharactPos)]
+	set res [expr {($dirChar >> 7) & 0x01}] 
+
+	log "GetChv1Bit: dirChar=[format 0x%02X $dirChar] --> CHV1=$res "; #debug
+
+	return $res
+}
+
+# apdu: HEXSTR
+# return msb of the first byte of HEXSTR
+proc GetVoltageIndication { apdu } {
+	global glLsuSimDefs
+
+	set dirChar [hgetb $apdu $glLsuSimDefs(FileCharactPos)]
+	set res [expr {($dirChar >> 4) & 0x07}]
+
+	log "GetVoltageIndication: dirChar=[format 0x%02X $dirChar], Supply voltage indication (3GPP value)=$res"; #debug
+
+	return $res
+}
+
+
+proc GetChv1Status {chv1Bit} {
+	global glLsuSimPinStatus
+
+	if {!$chv1Bit} {
+		return $glLsuSimPinStatus(Enabled)
+	} else {
+		return $glLsuSimPinStatus(Disabled)
+	}
+}
+
+#return third from last byte of HEXSTR as UCHAR
+proc getRecordLength {apdu} {
+    set apduLen [hByteLen $apdu]
+    return [hocts $apdu [expr {$apduLen-2}]]
+}
+
+#return Service Center Address in the 24008 3gpp format
+proc getSmscAddressApdu {apdu rxApduLen y} {
+
+	set alpha_id [htoui $y]
+	set rxApdu_Len [htoui $rxApduLen]
+	log "getSmscAddressApdu: alpha_id=$alpha_id; rxApdu_Len=$rxApdu_Len"	
+
+	# Smsc Address OffSet
+	set smscAddrOffSet [expr {$rxApdu_Len - $alpha_id}]; # Service Center Address: initial first byte position in the record (without the Alpha-Identifier)
+
+	log "getSmscAddressApdu: smscAddrOffSet=$smscAddrOffSet"
+
+    set scAddr_label [expr {$y + $smscAddrOffSet}]; # Service Center Address: effective initial first byte position in the record
+
+	log "getSmscAddressApdu: scAddr_label=$scAddr_label; return=[hocts $apdu $scAddr_label [expr {$scAddr_label+5}]]"; #cDEBUG
+    return [hocts $apdu $scAddr_label [expr {$scAddr_label+5}]]
+}
+
+#return Sms Coding Scheme
+proc getSmsCodingSchemeApdu {apdu rxApduLen y} {
+
+	set alpha_id [htoui $y]
+	set rxApdu_Len [htoui $rxApduLen]
+
+	# Smsc Coding Scheme OffSet
+	set smscCodSchOffSet [expr {$rxApdu_Len - $alpha_id}]; # initial first byte position in the record (without the Alpha-Identifier)
+	
+	set initcodScheme_OffSet 2
+
+    set codScheme_label [expr {$y + $smscCodSchOffSet - $initcodScheme_OffSet}]
+	
+	log "getSmsCodingSchemeApdu: codScheme_label=$codScheme_label; return=[hocts $apdu $codScheme_label [expr {$codScheme_label}]]"; #cDEBUG
+    return [hocts $apdu $codScheme_label [expr {$codScheme_label}]]
+}
+
+proc ComputingAid { } {
+
+	global _sig glSimPosKey
+
+	# AID = RID + PIX
+	set rid_type "3GPP"; # Carlo BEWARE ... HARDCODED!
+
+	set pix [ComputingPix]
+	
+	if { $pix != -1 } {
+		log "ComputingAid: pix=$pix"
+	} else {
+		log "ComputingAid: AID inconsistent"
+		return -1
+	}
+
+	if { [string equal $rid_type "3GPP"] } {
+		set aid A000000087
+	} elseif { [string equal $rid_type "ETSI"] } {
+		set aid A000000009
+	} else {
+		log "ComputingAid: WARNING: only '3GPP' or 'ETSI' are possible type values for the RID"
+		return -1
+	}
+
+	append aid $pix
+
+	log "ComputingAid: aid=$aid"; #cDEBUG
+
+	return $aid
+}
+
+proc ComputingPix { } {
+
+	global _sig glSimPosKey glAPid glCCid glAPCid glAPFid
+
+	set imsi [DbGet LsuSimMngDb $glSimPosKey Imsi]	
+
+	log "ComputingPix: imsi=$imsi"; #cDEBUG
+
+	if { ![IsVoid $imsi] } {
+		if { [GetPlmnFromHumanImsi $imsi] == "22201" } {
+			set op "TIM_ITALY"
+		} elseif { [GetPlmnFromHumanImsi $imsi] == "22210" } {
+			set op "VDF_ITALY"
+		} elseif { [GetPlmnFromHumanImsi $imsi] == "00101" } {
+			# Carlo: it uses usim of Gemalto
+			set op "TEST_NETWORK"
+		} else {
+			set op "?"
+			log "ComputingPix: mobile network at the moment isn't supported"
+		}
+	} else {
+		global __mcc __mnc
+		
+		if { $__mcc == "222" } {
+			if { $__mnc == "01" } {
+				set op "TIM_ITALY"
+			} elseif { $mnc == "10" } {
+				set op "VDF_ITALY"
+			} else {
+				log "ComputingPix: italian mobile network not supported"
+			}
+		} elseif { $__mcc == "001" } {
+			if { $__mnc == "01" } {
+				set op "TEST_NETWORK"
+			} else {
+				set op "?"
+			}
+		} else {
+			set op "?"
+			log "ComputingPix: Mobile Network at the moment isn't supported"
+		}
+	}
+
+	if { ![IsVoid $op] } {
+		set    pix	$glAPid($op)
+		append pix  $glCCid($op)
+		append pix  $glAPCid($op)
+		append pix  $glAPFid($op)
+
+		log "ComputingPix: op=$op; pix=$pix"; #cDEBUG
+	} else {
+		log "ComputingPix: operator not managed"
+		return -1
+	}
+
+	return $pix
+}
+
+proc CheckStatusWords { Apdu } {
+
+	global glStatusCond
+
+	set sw1 	[getApduSw1 $Apdu]
+	set hexSw1	[format %02X $sw1]
+
+	log "CheckStatusWords: sw1=$sw1 --> hexSw1=$hexSw1"; #cDEBUG
+
+	if {$sw1 != $glStatusCond(RespWithVarLen) \
+		 && $sw1 != $glStatusCond(UsimResponseOk1) \
+		 && $sw1 != $glStatusCond(UsimResponseOk2)} {
+	
+		set sw2		[getApduSw2 $Apdu]
+		set hexSw2	[format %02X $sw2]	
+
+		set errCode $hexSw1$hexSw2
+	
+		log "CheckStatusWords: errCode=$errCode"; #cDEBUG
+
+		if {$errCode == $glStatusCond(FileNotFound) } {
+			SendLsuSimErrorInd $errCode
+			return -1
+		} else {
+			logscr "CheckStatusWords: unexpected sw1=0x$hexSw1"
+			return 0
+		}
+	} else {
+		return 1
+	}
+}
+
+##############################################
+# PROCEDURES TO SEND PRIMITIVES
+##############################################
+
+proc SendSimLock {fd simPos} {
+	new LSUSIM_SIM_LOCK sig
+	wr sig usbFd	$fd
+	wr sig usbSim	$simPos
+	LogOutputMsg $sig
+	send sig
+}
+
+proc SendLsusimSimS {usbFd usbSim} {
+
+	global glLsuSimCmdS
+
+	new LSUSIM_SIM_CMD s
+	wr s usbFd		$usbFd
+	wr s usbSim		$usbSim
+	wr s usbCommand	$glLsuSimCmdS
+	wr s usbPayload	[binary format H* 01]
+	LogOutputPrim $s
+	send s
+}
+
+proc SendLsusimSimCheckPres {usbFd usbSim} {
+
+	global glLsuSimCmds
+
+	new LSUSIM_SIM_CMD s
+	wr s usbFd		$usbFd
+	wr s usbSim		$usbSim
+	wr s usbCommand	$glLsuSimCmds
+	wr s usbPayload	[binary format H* 00]; #dummy value
+	LogOutputPrim $s
+	send s
+}
+
+proc SendLsusimSimChipReset {usbFd usbSim} {
+
+	global glLsuSimCmdr
+
+	new LSUSIM_SIM_CMD s
+	wr s usbFd		$usbFd
+	wr s usbSim		$usbSim
+	wr s usbCommand	$glLsuSimCmdr
+	wr s usbPayload	[binary format H* 00]; #dummy value
+	LogOutputPrim $s
+	send s
+}
+
+proc SendLsusimSimResetSig {usbFd usbSim} {
+
+	global glLsuSimCmdm
+
+	new LSUSIM_SIM_CMD s
+	wr s usbFd		$usbFd
+	wr s usbSim		$usbSim
+	wr s usbCommand	$glLsuSimCmdm
+	wr s usbPayload	[binary format H* 00]; #dummy value
+	LogOutputPrim $s
+	send s
+}
+
+# voltage: HEXSTR
+proc SendLsusimSimSetVoltage {usbFd usbSim voltage} {
+	global glLsuSimCmdSetVoltage
+
+
+	new LSUSIM_SIM_CMD s
+	wr s usbFd		$usbFd
+	wr s usbSim		$usbSim
+	wr s usbCommand	$glLsuSimCmdSetVoltage
+	wr s usbPayload	[binary format H* $voltage]
+	LogOutputPrim $s
+	send s
+}
+
+# interf: HEXSTR
+proc SendLsusimSimSetInterf {usbFd usbSim interf} {
+
+	global glLsuSimCmdSetInterface
+
+	new LSUSIM_SIM_CMD s
+	wr s usbFd		$usbFd
+	wr s usbSim		$usbSim
+	wr s usbCommand	$glLsuSimCmdSetInterface
+	wr s usbPayload	[binary format H* $interf]
+	LogOutputPrim $s
+	send s
+}
+
+proc SendReadAtr {usbFd usbSim} {
+
+	global glLsuSimCmdA
+
+	new LSUSIM_SIM_CMD s
+	wr s usbFd		$usbFd
+	wr s usbSim		$usbSim
+	wr s usbCommand	$glLsuSimCmdA
+	LogOutputPrim $s
+	send s
+}
+# interf: HEXSTR
+proc SendLsusimSimSetInterf {usbFd usbSim interf} {
+
+	global glLsuSimCmdSetInterface
+
+	new LSUSIM_SIM_CMD s
+	wr s usbFd		$usbFd
+	wr s usbSim		$usbSim
+	wr s usbCommand	$glLsuSimCmdSetInterface
+	wr s usbPayload	[binary format H* $interf]
+	LogOutputPrim $s
+	send s
+}
+
+# usbFd UINT, usbSim UCHAR
+# rxLen and apdu: HEXSTR
+proc SendLsusimSimw {usbFd usbSim rxLen apdu} {
+	global glLsuSimCmdWrite
+
+	# delay due to firmware constraint
+	#after 10
+
+	new LSUSIM_SIM_CMD s
+	wr s usbFd		$usbFd
+	wr s usbSim		$usbSim
+	wr s usbCommand	$glLsuSimCmdWrite
+
+	set apduLen [uctoh [hByteLen $apdu]]
+	set usbPayload ${apduLen}${rxLen}${apdu}
+	log "SendLsusimSimw: usbPayload=$usbPayload"
+
+	wr s usbPayload	[binary format H* $usbPayload]
+	LogOutputPrim $s
+	send s
+}
+
+########################
+# w COMMANDS
+########################
+
+#naming convension: see ETSI ts_102.221 par. 10.1
+# CLA	= Class of instruction
+# INS	= Instruction code
+# P1	= Instruction parameter 1
+# P2	= Instruction parameter 2
+# Lc	= Number of bytes in the command data field
+# Data	= Command data string
+
+proc SendLsuSimApduStatus { usbFd usbSim } {
+
+	global _sig glInsId glLsuSimDefs
+
+	set CLA "a0"
+	set INS $glInsId(STATUS)
+	set P1 "00"
+	set P2 "00"
+	set Le [uctoh $glLsuSimDefs(LeStatus)]
+
+	set apdu ${CLA}${INS}${P1}${P2}${Le}
+	set rxLen [uctoh [expr {[htouc $Le] + $glLsuSimDefs(ApduNumOfCtrlBytes)}]]
+
+	SendLsusimSimw $usbFd $usbSim $rxLen $apdu
+}
+
+# Select MF
+proc SendLsusimApduSelMf {usbFd usbSim } {
+	global glFileId
+
+	SendLsusimApduSelect $usbFd $usbSim $glFileId(Mf)
+}
+
+# Select Generic DF
+proc SendLsusimApduSelDf {usbFd usbSim idDf} {
+
+	global glFileId
+
+	SendLsusimApduSelect $usbFd $usbSim $idDf
+}
+
+# Select DF GSM
+proc SendLsusimApduSelDfGsm {usbFd usbSim} {
+	global glFileId
+
+	SendLsusimApduSelect $usbFd $usbSim $glFileId(DfGsm)
+}
+
+#  --- USIM EXTENSION ---  #
+proc SendLsuSimApduUsimStatus {usbFd usbSim} {
+
+	global _sig glInsId glLsuSimDefs
+
+	set CLA "00"
+	#set CLA "80"
+	set INS "f2"
+	set P1  "00"
+	set P2 	"00"
+	#set Le [uctoh $glLsuSimDefs(LeStatus)]
+	set Le 	"00"
+
+	set apdu ${CLA}${INS}${P1}${P2}${Le}
+	set rxLen [uctoh [expr {2 + $glLsuSimDefs(ApduNumOfCtrlBytes)}]]
+
+	SendLsusimSimw $usbFd $usbSim $rxLen $apdu
+}
+
+# Select by ADF UMTS
+proc SendLsusimAdpuSelByUmtsAdf {usbFd usbSim} {
+	
+	global glStatusCond glSimPosKey
+
+	set aid [ComputingAid]
+
+	log "Select by UMTS ADF: aid=$aid"; #cDEBUG
+
+	if { $aid != -1 } {
+		set cardType [DbGet LsuSimMngDb $glSimPosKey CardType]
+		
+		log "SendLsusimAdpuSelByUmtsAdf: glSimPosKey=$glSimPosKey; cardType=$cardType; aid=$aid"; #cDEBUG
+	
+		SendLsusimApduUsimADFSelect $usbFd $usbSim $aid
+	} else {
+		log "SendLsusimAdpuSelByUmtsAdf: WARNING ... procedure of 'Select by AID' isn't executable!"
+
+		set errCode $glStatusCond(FileNotFound) 
+
+		log "SendLsusimAdpuSelByUmtsAdf: errCode=$errCode"; #cDEBUG
+
+		SendLsuSimErrorInd $errCode
+	}
+}
+
+#Syncronization USIM: (80,f2,00,00,00 -- 80,f2,00,00,00 -- 80,f2,00,00,2b)
+proc SendLsusimApduStatusUsim { usbFd usbSim } {
+
+	global glClassType glInsId glLsuSimDefs
+
+	set CLA 	$glClassType(USIM_SYNC)
+	set INS 	$glInsId(STATUS)
+	set P1 		"00"
+	set P2 		"00"
+	sel Le		[uctoh $glLsuSimDefs(LeStatus)]
+
+	set apdu ${CLA}${INS}${P1}${P2}${Le}
+	set rxLen [uctoh [expr {[htouc $Le] + $glLsuSimDefs(ApduNumOfCtrlBytes)}]]
+
+	SendLsusimSimw $usbFd $usbSim $rxLen $apdu
+}
+
+
+#Select ADFusim (with Activation)
+proc SendLsusimApduUsimADFSelect { usbFd usbSim fileId } {
+
+	global glInsId glLsuSimDefs glClassType
+
+	set CLA $glClassType(USIM)
+	set INS $glInsId(SELECT)
+	set P1 "04"
+	set P2 "00"
+	set Data $fileId
+	set Lc [uctoh [hByteLen $Data]]
+
+	log "SendLsusimApduUsimADFSelect: Data=$fileId"; #cDEBUG
+
+	set apdu ${CLA}${INS}${P1}${P2}${Lc}$Data
+	set rxLen [uctoh $glLsuSimDefs(ApduNumOfCtrlBytes)]
+
+	SendLsusimSimw $usbFd $usbSim $rxLen $apdu
+}
+
+# Select DF AUTH UMTS
+proc SendLsusimApduSelDfAuthUmts {usbFd usbSim} {
+	global glFileId
+
+	log "SendLsusimApduSelDfAuthUmts: glFileId(DfUmts)=$glFileId(DfUmts)"; #cDEBUG
+
+	SendLsusimApduSelect $usbFd $usbSim $glFileId(DfUmts)
+}
+
+# Select Transparent EF
+proc SendLsusimApduSelTranspEf {usbFd usbSim} {
+	global glFileId glSimPosKey
+
+	SendLsusimApduSelect $usbFd $usbSim $glFileId([DbGet LsuSimMngDb $glSimPosKey FileName])
+}
+
+# Select Linear Record EF
+proc SendLsusimApduSelLinearEf {usbFd usbSim idEf} {
+
+	global glFileId glSimPosKey
+
+	SendLsusimApduSelect $usbFd $usbSim $idEf
+}
+
+#fileId: HEXSTR
+proc SendLsusimApduSelect { usbFd usbSim fileId } {
+	global glInsId glFileId glLsuSimDefs glSelectType glClassType
+	global glSimPosKey glAid
+
+	if { ![IsVoid [DbGet LsuSimMngDb $glSimPosKey CardType]] && [DbGet LsuSimMngDb $glSimPosKey CardType] } {
+		set classType  $glClassType(USIM)
+		if { $fileId == "7fff" } {
+			log "SendLsusimApduSelect: Application Selection: case of Select AID=USIM"	
+			set selectType $glSelectType(SIM); # Select AID=USIM where P2='00'
+		} else {
+			set selectType $glSelectType(USIM)
+		}
+		log "SendLsusimApduSelect: USIM case: classType=$classType; selectType=$selectType"; #cDEBUG
+	} else {
+		# SIM
+		set classType  $glClassType(SIM)
+		set selectType $glSelectType(SIM)
+	}
+
+	if { $fileId == "7fff" } {
+		log "SendLsusimApduSelect: Select by AID=USIM --> p1=04"	
+		set p1 "04"; # refere to 11.1.1.2 3gpp-31.101
+		set data $glAid(TEST_NETWORK) 
+	} else {
+		set p1 "00"
+		set data $fileId
+	}
+
+	set CLA $classType
+	set INS $glInsId(SELECT)
+	set P1 $p1
+	set P2 $selectType
+	set Data $data
+	set Lc [uctoh [hByteLen $Data]]
+
+	log "SendLsusimApduSelect: Data=$fileId"; #cDEBUG
+
+	set apdu ${CLA}${INS}${P1}${P2}${Lc}$Data
+	set rxLen [uctoh $glLsuSimDefs(ApduNumOfCtrlBytes)]
+
+	SendLsusimSimw $usbFd $usbSim $rxLen $apdu
+}
+
+# le: uchar
+proc SendLsusimApduGetResp {usbFd usbSim le} {
+
+	global glInsId glSimPosKey glClassType
+
+	if { ![IsVoid [DbGet LsuSimMngDb $glSimPosKey CardType]] && [DbGet LsuSimMngDb $glSimPosKey CardType] } {
+		set classType  $glClassType(USIM)
+		log "SendLsusimApduGetResp: USIM case: classType=$classType"; #cDEBUG
+	} else {
+		# SIM
+		set classType  $glClassType(SIM)
+	}
+
+	set CLA $classType
+	set INS $glInsId(GET_RESP)
+	set P1 "00"
+	set P2 "00"
+	set Le [uctoh $le]
+
+	set apdu ${CLA}${INS}${P1}${P2}${Le}
+	set rxLen [uctoh [expr {$le + 2}]]; #INS + le + SW1
+
+	SendLsusimSimw $usbFd $usbSim $rxLen $apdu
+}
+
+proc SendLsuSimApduTranspReadBin { usbFd usbSim } {
+	global glFileBinLen glSimPosKey
+
+	SendLsuSimApduReadBinary $usbFd $usbSim $glFileBinLen([DbGet LsuSimMngDb $glSimPosKey FileName])
+}
+
+# le: byte as HEXSTR
+proc SendLsuSimApduReadBinary { usbFd usbSim le} {
+
+	global _sig glInsId glLsuSimDefs
+
+	set CLA "a0"
+	set INS $glInsId(READ_BINARY)
+	set P1 "00"
+	set P2 "00"
+	set Le $le
+
+	set apdu ${CLA}${INS}${P1}${P2}${Le}
+	set rxLen [uctoh [expr {[htouc $Le] + $glLsuSimDefs(ApduNumOfCtrlBytes)}]]
+
+	SendLsusimSimw $usbFd $usbSim $rxLen $apdu
+}
+
+proc GetEfLociUpdateDataAndOffset {simPosKey} {
+
+	set fldList [list Tmsi Lai TmsiTime LocUpStatus]
+
+	return [PrepareUpdateDataAndOffset $simPosKey $fldList]
+}
+
+proc GetEfLociGprsUpdateDataAndOffset {simPosKey} {
+
+	set fldList [list Ptmsi PtmsiSignature Rai RoutAreaUpStatus]
+
+	return [PrepareUpdateDataAndOffset $simPosKey $fldList]
+}
+
+proc GetEfKcUpdateDataAndOffset {simPosKey} {
+
+	set fldList [list Kc CipKeySeqNum]
+
+	return [PrepareUpdateDataAndOffset $simPosKey $fldList]
+}
+
+proc GetEfKcGprsUpdateDataAndOffset {simPosKey} {
+
+	set fldList [list KcGprs CipKeySeqNumGprs]
+
+	return [PrepareUpdateDataAndOffset $simPosKey $fldList]
+}
+
+# Check which fields have to be updated in EF.
+# Prepare a list of data to be written in EF together with offset from the
+# starting point of file.
+# Values of contiguous fields are put together to reduce interaction with SIM.
+# return value: a list whose elements are the couple of values {offset data}
+proc PrepareUpdateDataAndOffset {simPosKey fldList} {
+	global glEfFieldOffset
+
+	for {set fldIdx 0} {$fldIdx < [llength $fldList]} {incr fldIdx} {
+
+		set fldName [lindex $fldList $fldIdx]
+
+		set fldVal [DbGet LsuSimMngDb $simPosKey $fldName]
+
+		if {![IsVoid $fldVal]} {
+			# fld present
+			set offset $glEfFieldOffset($fldName)
+			set data $fldVal
+
+			for {incr fldIdx} {$fldIdx < [llength $fldList]} {incr fldIdx} {
+				# add to data the value of consecutive fields
+
+				set fldName [lindex $fldList $fldIdx]
+
+				set fldVal [DbGet LsuSimMngDb $simPosKey $fldName]
+
+				if {![IsVoid $fldVal]} {
+					append data $fldVal
+				} else {
+					# previous fld was the last present
+					# store {offset data} in returned list
+
+					break
+				}
+			}
+
+			lappend retList [list $offset $data]
+		}
+
+		# fld not present: check next fld
+	}
+
+	log "PrepareUpdateDataAndOffset: retList=$retList"; #debug
+	return $retList
+}
+
+proc StartUpdateBinary { usbFd usbSim } {
+	global glFileBinLen glSimPosKey
+
+	switch -exact [DbGet LsuSimMngDb $glSimPosKey FileName] {
+		"EfLoci" {
+
+			DbSet LsuSimMngDb $glSimPosKey UpdateList \
+				[GetEfLociUpdateDataAndOffset $glSimPosKey]
+
+		}
+		"EfLociGprs" {
+
+			DbSet LsuSimMngDb $glSimPosKey UpdateList \
+				[GetEfLociGprsUpdateDataAndOffset $glSimPosKey]
+
+		}
+
+		"EfKc" {
+
+			DbSet LsuSimMngDb $glSimPosKey UpdateList \
+				[GetEfKcUpdateDataAndOffset $glSimPosKey]
+
+		}
+
+		"EfKcGprs" {
+
+			DbSet LsuSimMngDb $glSimPosKey UpdateList \
+				[GetEfKcGprsUpdateDataAndOffset $glSimPosKey]
+
+		}
+
+		default {
+			exit "StartUpdateBinary: unexpected FileName [DbGet LsuSimMngDb $glSimPosKey FileName]"
+		}
+	}
+
+	StartSendUpdatingBinary $usbFd $usbSim
+}
+
+proc StartSendUpdatingBinary {usbFd usbSim} {
+	global glSimPosKey
+
+	DbSet LsuSimMngDb $glSimPosKey UpdateListIdx 0
+
+	UpdateBinary $usbFd $usbSim
+}
+
+proc NextUpdateBinary {usbFd usbSim} {
+	global glSimPosKey
+
+	if {[DbIncrFld LsuSimMngDb $glSimPosKey UpdateListIdx] < \
+		[llength [DbGet LsuSimMngDb $glSimPosKey UpdateList]]} {
+
+		UpdateBinary $usbFd $usbSim
+
+	} else {
+		# updated EF file with all data
+
+		TranspWritePositiveRes[DbGet LsuSimMngDb $glSimPosKey FileName]
+	}
+
+}
+
+proc UpdateBinary {usbFd usbSim} {
+	global glSimPosKey
+
+	set updatListIdx [DbGet LsuSimMngDb $glSimPosKey UpdateListIdx]
+	log "UpdateBinary: updatListIdx=$updatListIdx"; #debug
+
+	set upList [DbGet LsuSimMngDb $glSimPosKey UpdateList]
+
+	lassign {offset data} [lindex $upList $updatListIdx]
+
+	SendApduUpdateBinary $usbFd $usbSim $offset $data
+}
+
+# offset: INT
+# data: HEXSTR
+proc SendApduUpdateBinary {usbFd usbSim offset data} {
+
+	global _sig glInsId glLsuSimDefs
+
+	log "SendApduUpdateBinary: offset=$offset, data=$data"; #debug
+
+	set CLA "a0"
+	set INS $glInsId(UPDATE_BINARY)
+	set P1 "00"
+
+	if {$offset > 255} {
+		exit "SendApduUpdateBinary: offset exceeds 255. Not supported"
+	}
+	set P2 [uctoh $offset]
+	set Lc [uctoh [hByteLen $data]]
+	set Le ""
+
+	set apdu ${CLA}${INS}${P1}${P2}${Lc}$data$Le
+	set rxLen [uctoh $glLsuSimDefs(ApduNumOfCtrlBytes)]
+
+	SendLsusimSimw $usbFd $usbSim $rxLen $apdu
+}
+
+# le: byte as HEXSTR
+proc SendLsuSimApduReadRecord { usbFd usbSim recordNum recordReadRule le} {
+
+    global _sig glInsId glLsuSimDefs
+
+    set CLA "a0"
+    set INS $glInsId(READ_RECORD)
+    set P1 $recordNum
+    set P2 $recordReadRule
+    set Le $le
+
+    set apdu ${CLA}${INS}${P1}${P2}${Le}
+    set rxLen [uctoh [expr {[htouc $Le] + $glLsuSimDefs(ApduNumOfCtrlBytes)}]]
+
+    SendLsusimSimw $usbFd $usbSim $rxLen $apdu
+}
+
+proc SendLsusimApduRunGsmAlgo {usbFd usbSim} {
+
+	global glInsId glLsuSimDefs glSimPosKey
+
+	set CLA "a0"
+	set INS $glInsId(RUN_GSM_ALGO)
+	set P1 "00"
+	set P2 "00"
+	set Data [DbGet LsuSimMngDb $glSimPosKey RAND]
+	set Lc [uctoh [hByteLen $Data]]
+
+	set apdu ${CLA}${INS}${P1}${P2}${Lc}$Data
+	set rxLen [uctoh $glLsuSimDefs(ApduNumOfCtrlBytes)]
+
+	SendLsusimSimw $usbFd $usbSim $rxLen $apdu
+}
+
+proc SendLsusimApduAuthenticate {usbFd usbSim} {
+
+	global glInsId glLsuSimDefs glSimPosKey
+
+	set CLA "00"
+	set INS $glInsId(RUN_GSM_ALGO)
+	set P1 "00"
+	set P2 "81"; # Specific reference data (3G context)
+
+	set dataRand 		[DbGet LsuSimMngDb $glSimPosKey RAND]
+	set lRand 	[uctoh [hByteLen $dataRand]]
+
+	set dataAutn 		[DbGet LsuSimMngDb $glSimPosKey AUTN]
+	set lAutn 	[uctoh [hByteLen $dataAutn]]
+
+	set Data $lRand
+	append Data [DbGet LsuSimMngDb $glSimPosKey RAND]
+	append Data $lAutn
+	append Data [DbGet LsuSimMngDb $glSimPosKey AUTN]
+	set Lc [uctoh [hByteLen $Data]]
+
+	log "SendLsusimApduAuthenticate: AUTN=[DbGet LsuSimMngDb $glSimPosKey AUTN]"; #cDEBUG
+	log "SendLsusimApduAuthenticate: lRand=$lRand; lAutn=$lAutn; Lc=$Lc"; #cDEBUG
+
+	set apdu ${CLA}${INS}${P1}${P2}${Lc}${lRand}$dataRand${lAutn}$dataAutn
+	set rxLen [uctoh $glLsuSimDefs(ApduNumOfCtrlBytes)]
+
+	SendLsusimSimw $usbFd $usbSim $rxLen $apdu
+}
+
+proc SendLsuSimApduVerifyPin { usbFd usbSim usbPin } {
+
+	global _sig glInsId glLsuSimDefs glSimPosKey glClassType glCheckPin
+
+	set standardPinLen 8; # see TS 151.011 chap 9.2.9
+	
+	log "SendLsuSimApduVerifyPin: usbPin=$usbPin"
+
+	if { ![IsVoid [DbGet LsuSimMngDb $glSimPosKey CardType]] && [DbGet LsuSimMngDb $glSimPosKey CardType] } {
+		set classType	$glClassType(USIM)
+		set checkPin	$glCheckPin(USIM)
+	} else {
+		set classType	$glClassType(SIM)
+		set checkPin	$glCheckPin(SIM)
+	}
+
+	log "SendLsuSimApduVerifyPin: classType=$classType; checkPin=$checkPin"; #cDEBUG
+
+	set CLA $classType
+	set INS $glInsId(VERIFY_CHV)
+	set P1 "00"
+	set P2	$checkPin
+	set Data [hpad [atoh $usbPin] $standardPinLen ff]
+	set Lc [uctoh $standardPinLen]
+	
+	set apdu ${CLA}${INS}${P1}${P2}${Lc}$Data
+
+	set rxLen [uctoh $glLsuSimDefs(ApduNumOfCtrlBytes)]
+
+	SendLsusimSimw $usbFd $usbSim $rxLen $apdu
+}
+
+proc SendLsusimTest {usbFd usbSim} {
+
+	global glLsuSimCmdTest
+
+	new LSUSIM_SIM_CMD s
+	wr s usbFd		$usbFd
+	wr s usbSim		$usbSim
+	wr s usbCommand	$glLsuSimCmdTest
+	wr s usbPayload	[binary format H* 00]; #dummy value
+	LogOutputPrim $s
+	send s
+}
+
+
+##############################################
+# EVENT HANDLING PROC
+##############################################
+
+proc SendApduReqHnd {} {
+	global _sig
+
+	LogInputSig
+
+	SendLsusimSimw \
+		[rd _sig BoardId] [rd _sig SimPos] [rd _sig RxLen] [rd _sig Apdu]
+
+	nextstate WaitForApduSimCmdAck
+}
+
+proc WaitForApdu_LsuSimCmdAckHnd {} {
+	global glSimPosKey _sig
+
+	LogInputPrim $_sig
+
+	new LSU_SIM_SEND_APDU_RES s
+	wr s BoardId	[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos		[SimPosFromSimPosKey $glSimPosKey]
+	wr s UsbPayload	[rd _sig usbPayload]
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+proc WaitForApdu_LsuSimCmdNakHnd {} {
+	LogInputSig
+
+	global glSimPosKey
+
+	new LSU_SIM_SEND_APDU_RES s
+	wr s BoardId	[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos		[SimPosFromSimPosKey $glSimPosKey]
+	wr s Error		"Error"
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+
+################################################################################
+# HND procedures used in state machine for LSU_SIM_CONFIG_SIM_REQ
+################################################################################
+
+proc ConfigSimHnd {} {
+	global _sig glSimPosKey glLsuSimVoltage
+
+	LogInputSig
+
+	set checkAtr [rd _sig CheckAtr]
+	if {![IsVoid $checkAtr] && $checkAtr} {
+		DbSet LsuSimMngDb $glSimPosKey MainProcedure CONFIG_SIM_CHECKING_ATR
+		set voltage $glLsuSimVoltage(1V8)
+	} else {
+		DbSet LsuSimMngDb $glSimPosKey MainProcedure CONFIG_SIM
+		set voltage $glLsuSimVoltage(3V)
+	}
+
+	DbSet LsuSimMngDb $glSimPosKey Voltage $voltage
+	DbLappend LsuSimMngDb $glSimPosKey VoltageAlreadyApplied $voltage
+
+	DbSet LsuSimMngDb $glSimPosKey readPinNotOk_attempsNumber 0; #Initialization
+
+	global glSimBoardTest
+	if { $glSimBoardTest } {
+	# LSUSIM BOARD TEST SESSION
+		global glAsyncConfDone
+	
+		set simTestNumb	[DbGet LsuSimMngDb $glSimPosKey simTestNumb]
+
+		if { $simTestNumb == 0 } {
+			if {$glAsyncConfDone} {
+				SendSimLock [rd _sig BoardId] [rd _sig SimPos]
+				incr simTestNumb
+				DbSet LsuSimMngDb $glSimPosKey simTestNumb $simTestNumb
+				nextstate WaitLsuSimLockSimAck
+			} else {
+				abort "ConfigSimHnd: glAsyncConfDone=$glAsyncConfDone ... glAsyncConfDone have to be equal to 'TRUE' !"
+			}
+		} elseif { $simTestNumb == 1 } {
+			SendLsusimSimCheckPres [rd _sig BoardId] [rd _sig SimPos]
+			nextstate WaitLsuSimCheckPresAck
+		} else {
+			log "ConfigSimHnd: BEWARE: simTestNumb=$simTestNumb have to be equal to 0 or 1"
+		}
+	} else {
+
+		SendSimLock [rd _sig BoardId] [rd _sig SimPos]
+	
+		nextstate WaitLsuSimLockSimAck
+	}
+}
+
+proc SimLockAckHnd {} {
+
+	global _sig
+
+	LogInputSig
+
+	global glAsyncConfDone
+	if {$glAsyncConfDone} {
+
+		SendLsusimSimCheckPres [rd _sig usbFd] [rd _sig usbSim]
+
+		nextstate WaitLsuSimCheckPresAck
+
+	} else {
+
+		SendLsusimSimS [rd _sig usbFd] [rd _sig usbSim]
+
+		nextstate WaitLsuSimSAck
+	}
+
+}
+
+proc WaitLsuSimSAck_CmdAckHnd {} {
+	global _sig glLsuSimCmdS
+
+	LogInputPrim $_sig
+
+	if {[rd _sig usbCommand] != $glLsuSimCmdS} {
+		logscr "WaitLsuSimSAck_CmdAckHnd: unexpected cmd [rd _sig usbCommand]"
+	}
+
+	global glAsyncConfDone
+	set glAsyncConfDone TRUE
+
+	SendLsusimSimCheckPres [rd _sig usbFd] [rd _sig usbSim]
+
+	nextstate WaitLsuSimCheckPresAck
+
+}
+
+proc SimCheckPresNak { } {
+
+	global _sig glLsuSimCmds glSimPosKey
+
+	LogInputPrim $_sig
+
+	set boardId		[BoardIdFromSimPosKey $glSimPosKey]
+	set simPos		[SimPosFromSimPosKey $glSimPosKey]
+
+
+	log "SimCheckPresNak: WARNING: Sim $simPos on the board $boardId would seem not present! --> TO CHECK SIM/USIM in LSUSIM board"
+
+	EndOfSimConfig FALSE "RESPONSE_ERROR"
+}
+
+proc WaitLsuSimCheckPresAck_CmdAckHnd {} {
+	global _sig glLsuSimCmds
+
+	LogInputPrim $_sig
+
+	if {[rd _sig usbCommand] != $glLsuSimCmds} {
+		logscr "WaitLsuSimCheckPresAck_CmdAckHnd: unexpected cmd [rd _sig usbCommand]"
+	}
+
+	binary scan [rd _sig usbPayload] H* data
+	log "WaitLsuSimCheckPresAck_CmdAckHnd: data=$data"
+
+	global gl_sPayloadLen
+	if {[hByteLen $data] != $gl_sPayloadLen} {
+		logscr "ERROR WaitLsuSimCheckPresAck_CmdAckHnd: unexpected data len"
+
+		EndOfSimConfig FALSE "RESPONSE_ERROR"
+
+		return
+	}
+
+	set status [hgetb $data 0]
+	log "WaitLsuSimCheckPresAck_CmdAckHnd: status=$status"
+	set pres [expr {$status & 0x20}]
+	log "WaitLsuSimCheckPresAck_CmdAckHnd: pres=$pres"
+
+	if {$pres} {
+
+		SendLsusimSimChipReset [rd _sig usbFd] [rd _sig usbSim]
+
+		nextstate WaitLsuSimChipResetAck
+	} else {
+		EndOfSimConfig FALSE "ABSENT"
+	}
+}
+
+proc EndOfSimConfig {simPres {cause ?}} {
+	global glSimPosKey
+
+	new LSU_SIM_CONFIG_SIM_ACK s
+	wr s BoardId	[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos		[SimPosFromSimPosKey $glSimPosKey]
+	wr s SimPresent	$simPres
+	wr s Cause		$cause
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	
+	log "***********************************************"
+	log "EndOfSimConfig: LSUSIM SLOTS CONFIGURATION DONE"
+	log "***********************************************"
+
+	ClientSessionEnd
+}
+
+
+################################################################################
+# HND procedures used in state machine for LSU_SIM_READ_ATR_REQ
+################################################################################
+
+proc ReadAtrReqHnd {} {
+	global _sig glSimPosKey glLsuSimVoltage
+
+	LogInputSig
+
+	SendReadAtr [rd _sig BoardId] [rd _sig SimPos]
+
+	nextstate WaitLsuSimReadAtrRes
+}
+
+proc WaitLsuSimReadAtrRes_CmdAckHnd {} {
+	global _sig glSimPosKey glLsuSimCmdA
+
+	LogInputPrim $_sig
+
+	if {[rd _sig usbCommand] != $glLsuSimCmdA} {
+		logscr "WaitLsuSimReadAtrRes_CmdAckHnd: unexpected cmd [rd _sig usbCommand]"
+	}
+
+	set atrMsg [GetAtrMsgFromPayload [rd _sig usbPayload]]
+	ParseAtrMsg $atrMsg; #optional
+
+	new LSU_SIM_READ_ATR_RES s
+	wr s BoardId	[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos		[SimPosFromSimPosKey $glSimPosKey]
+	wr s AtrMsg 	$atrMsg
+
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+proc GetAtrMsgFromPayload {payload} {
+	binary scan $payload H* data
+
+	set atrMsgLen [hgetb $data 0]
+	log "GetAtrMsgFromPayload: atrMsgLen=$atrMsgLen"
+
+	return [string range $data 2 end]
+}
+
+proc WaitLsuSimReadAtrRes_CmdNakHnd {} {
+	global _sig glSimPosKey
+
+	LogInputPrim $_sig
+
+	new LSU_SIM_READ_ATR_RES s
+	wr s BoardId	[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos		[SimPosFromSimPosKey $glSimPosKey]
+	#wr s AtrMsg 	$atrMsg
+
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+# ATR message structure is specified in TS 100.977
+# return value: 0 if successful, !=0 if unsuccessful
+proc ParseAtrMsg {atrMsg} {
+	log "ParseAtrMsg: atrMsg=$atrMsg"
+
+	set TS [hgetb $atrMsg 0]
+
+	if {$TS == 0x3b} {
+		log "ParseAtrMsg: direct convension"
+	} elseif {$TS == 0x3f} {
+		log "ParseAtrMsg: inverse convension"
+	} else {
+		logscr "ParseAtrMsg: unexpected TS=$TS"
+		return 1
+	}
+
+	set T0 [hgetb $atrMsg 1]
+
+	set Tx1List ""
+
+	# check presence of following bytes
+	foreach mask {0x10 0x20 0x40 0x80} letter {A B C D} {
+		if {[expr {$T0 & $mask}]} {lappend Tx1List T${letter}1}
+	}
+	log "ParseAtrMsg: Tx1List=$Tx1List"
+
+	set histBytesNum [expr {$T0 & 0x0F}]
+	log "ParseAtrMsg: histBytesNum=$histBytesNum"
+
+	return 0
+}
+
+################################################################################
+# HND procedures used in state machine for SIM RESET
+################################################################################
+
+proc WaitLsuSimChipResetAck_CmdAckHnd {} {
+	global _sig glLsuSimCmdr glSimPosKey
+
+	LogInputPrim $_sig
+
+	if {[rd _sig usbCommand] != $glLsuSimCmdr} {
+		logscr "WaitLsuSimResetAck_CmdAckHnd: unexpected cmd [rd _sig usbCommand]"
+	}
+
+	set mCommandWorks FALSE
+	if {$mCommandWorks} {
+		SendLsusimSimResetSig [rd _sig usbFd] [rd _sig usbSim]
+
+		nextstate WaitLsuSimResetSigAck
+	} else {
+
+		SendLsusimSimSetVoltage [rd _sig usbFd] [rd _sig usbSim] \
+			[DbGet LsuSimMngDb $glSimPosKey Voltage]
+
+		nextstate WaitLsuSimSetVoltageAck
+	}
+}
+
+proc WaitLsuSimResetSigAck_CmdAckHnd {} {
+	global _sig glLsuSimCmdm glSimPosKey
+
+	LogInputPrim $_sig
+
+	if {[rd _sig usbCommand] != $glLsuSimCmdm} {
+		logscr "WaitLsuSimResetAck_CmdAckHnd: unexpected cmd [rd _sig usbCommand]"
+	}
+
+	SendLsusimSimSetVoltage [rd _sig usbFd] [rd _sig usbSim] \
+		[DbGet LsuSimMngDb $glSimPosKey Voltage]
+
+	nextstate WaitLsuSimSetVoltageAck
+}
+
+proc WaitLsuSimSetVoltageAck_CmdAckHnd {} {
+	global _sig glLsuSimCmdSetVoltage
+
+	LogInputPrim $_sig
+
+	if {[rd _sig usbCommand] != $glLsuSimCmdSetVoltage} {
+		logscr "WaitLsuSimSetVoltageAck_CmdAckHnd: unexpected cmd [rd _sig usbCommand]"
+	}
+
+	SendLsusimSimSetInterf [rd _sig usbFd] [rd _sig usbSim] 00
+
+	nextstate WaitLsuSimSetInterfAck
+}
+
+proc WaitLsuSimSetInterfAck_CmdAckHnd {} {
+	global _sig glLsuSimCmdSetInterface
+
+	LogInputPrim $_sig
+
+	if {[rd _sig usbCommand] != $glLsuSimCmdSetInterface} {
+		logscr "WaitLsuSimSetInterfAck_CmdAckHnd: unexpected cmd [rd _sig usbCommand]"
+	}
+
+	# Toggle CRST signal
+	SendLsusimSimSetInterf [rd _sig usbFd] [rd _sig usbSim] 10
+
+	nextstate WaitLsuSimSetInterfCrstAck
+}
+
+proc WaitLsuSimSetInterfCrstAck_CmdAckHnd {} {
+	global _sig glLsuSimCmdSetInterface glSimPosKey
+
+	LogInputPrim $_sig
+
+	if {[rd _sig usbCommand] != $glLsuSimCmdSetInterface} {
+		logscr "WaitLsuSimSetInterfCrstAck_CmdAckHnd: unexpected cmd [rd _sig usbCommand]"
+	}
+
+	# Timer used to wait for completion of ATR message reception
+	set tmrId [tmrnew TMR_ATR_MSG 1000]
+	DbSet LsuSimMngDb $glSimPosKey TMR_ATR_MSGid $tmrId
+	tmrstart $tmrId
+
+}
+
+proc WaitLsuSimSetInterfCrstAck_TmrAtrHnd {} {
+	global glSimPosKey
+
+	set mainProc [DbGet LsuSimMngDb $glSimPosKey MainProcedure]
+	switch -exact $mainProc {
+		PIN_STATUS_CHECK_DONE		{
+			SendPinStatusResp [DbGet LsuSimMngDb $glSimPosKey Chv1Status]
+		}
+
+		PIN_STATUS_CHECK_TO_BE_DONE {
+
+			if { [IsVoid [DbGet LsuSimMngDb $glSimPosKey CardType]] || ![DbGet LsuSimMngDb $glSimPosKey CardType] } {
+				# initialize position inside SIM file system to MF
+				SendLsusimApduSelMf \
+ 					[BoardIdFromSimPosKey $glSimPosKey] \
+					[SimPosFromSimPosKey $glSimPosKey]
+
+			} else {
+				# initialize position inside USIM file system to ADF
+				SendLsusimAdpuSelByUmtsAdf \
+ 					[BoardIdFromSimPosKey $glSimPosKey] \
+					[SimPosFromSimPosKey $glSimPosKey]
+			}
+
+			nextstate PinStatusCheck_WaitForCommonSelAck
+		}
+
+		CONFIG_SIM					{EndOfSimConfig TRUE}
+
+		CONFIG_SIM_CHECKING_ATR		{
+			SendReadAtr \
+				[BoardIdFromSimPosKey $glSimPosKey] \
+				[SimPosFromSimPosKey $glSimPosKey]
+
+			nextstate Config_WaitForReadAtrRes
+		}
+
+		default {exit "WaitLsuSimSetInterfCrstAck_TmrAtrHnd: unexpected mainProc=$mainProc"}
+	}
+}
+
+proc Config_WaitForReadAtrRes_CmdAckHnd {} {
+	global _sig glSimPosKey glLsuSimCmdA
+
+	LogInputPrim $_sig
+
+	if {[rd _sig usbCommand] != $glLsuSimCmdA} {
+		logscr "Config_WaitForReadAtrRes_CmdAckHnd: unexpected cmd [rd _sig usbCommand]"
+		return
+	}
+
+	if {[ParseAtrMsg [GetAtrMsgFromPayload [rd _sig usbPayload]]]} {
+		logscr "Config_WaitForReadAtrRes_CmdAckHnd: WRONG ATR"
+
+		set volt [GetNewVoltage $glSimPosKey]
+		if {[IsVoid $volt]} {
+			logscr "Config_WaitForReadAtrRes_CmdAckHnd: unexpected voltage"
+			EndOfSimConfig FALSE "RESPONSE_ERROR"
+		}
+
+		log "Config_WaitForReadAtrRes_CmdAckHnd: let's try voltage $volt"
+		DbSet LsuSimMngDb $glSimPosKey Voltage $volt
+		DbLappend LsuSimMngDb $glSimPosKey VoltageAlreadyApplied $volt
+
+		SendLsusimSimChipReset [rd _sig usbFd] [rd _sig usbSim]
+
+		nextstate WaitLsuSimChipResetAck
+
+	} else {
+		EndOfSimConfig TRUE
+	}
+
+}
+
+proc ClientSessionEnd {} {
+	global glSimPosKey _state
+
+	set clientInst $glSimPosKey
+	GetInstance "MAIN_INST" LsuSimMngDb glSimPosKey
+	log "ClientSessionEnd: glSimPosKey $glSimPosKey, state $_state"
+
+	ResetClientInst $clientInst
+}
+
+proc ResetClientInst {clientInst} {
+	global glClientInstInitState
+
+	DbSet LsuSimMngDb $clientInst State $glClientInstInitState
+	DbSet LsuSimMngDb $clientInst ClientPid "?"
+	DbSet LsuSimMngDb $clientInst MainProcedure "?"
+}
+
+proc RemClientInst {clientInst} {
+	set tmrAtrId [DbGet LsuSimMngDb $clientInst TMR_ATR_MSGid]
+	if {![IsVoid $tmrAtrId]} {
+		tmrfree $tmrAtrId
+	}
+	DbRemEntry LsuSimMngDb $clientInst
+}
+
+################################################################################
+# HND procedures used in state machine for PIN VERIFY
+################################################################################
+
+proc PrePinCheck { } {
+
+	global _sig glSimPosKey
+
+	LogInputSig
+
+	if { ![IsVoid [rd _sig CardType]] } {
+		DbSet LsuSimMngDb $glSimPosKey CardType [rd _sig CardType]
+		log "PrePinCheck: CardType=[DbGet LsuSimMngDb $glSimPosKey CardType]"; #cDEBUG
+	}
+
+	if { [IsVoid [DbGet LsuSimMngDb $glSimPosKey CardType]] || ![DbGet LsuSimMngDb $glSimPosKey CardType] } {
+		# SIM case
+		PinStatusCheckHnd
+	} else {
+		# USIM case
+		ReadCardApplListReqHnd
+
+		#-------------#
+		#Carlo PROVA: ATR message sent to understand if SELECT by AID supported
+		#ReadAtrReqHnd
+		#-------------#
+	}
+}
+
+proc PinStatusCheckAgainHnd { } {
+	
+	global glSimPosKey
+
+	set boardId		[BoardIdFromSimPosKey $glSimPosKey]
+	set simPos		[SimPosFromSimPosKey $glSimPosKey]
+
+	log "PinStatusCheckAgainHnd: glSimPosKey=$glSimPosKey; boardId=$boardId; simPos=$simPos"; #cDEBUG
+
+	if { [IsVoid [DbGet LsuSimMngDb $glSimPosKey CardType]] || ![DbGet LsuSimMngDb $glSimPosKey CardType] } {
+		# initialize position inside SIM file system to MF
+		SendLsusimApduSelMf $boardId $simPos
+	} else {
+		# initialize position inside USIM file system to ADF
+		SendLsusimAdpuSelByUmtsAdf $boardId $simPos
+	}
+			
+	nextstate PinStatusCheck_WaitForCommonSelAck
+}
+
+proc PinStatusCheckHnd { } {
+	global _sig glSimPosKey
+
+	if { [IsVoid [DbGet LsuSimMngDb $glSimPosKey CardType]] || ![DbGet LsuSimMngDb $glSimPosKey CardType] } {
+		# initialize position inside SIM file system to MF
+		SendLsusimApduSelMf [rd _sig BoardId] [rd _sig SimPos]
+	} else {
+		LogInputSig
+		# initialize position inside USIM file system to ADF
+		SendLsusimAdpuSelByUmtsAdf [rd _sig BoardId] [rd _sig SimPos]
+	}
+
+	nextstate PinStatusCheck_WaitForCommonSelAck
+}
+
+proc PinStatusCheck_WaitForCommonSelect_SimCmdAckHnd { } {
+
+	global glSimPosKey
+
+	if { ![IsVoid [DbGet LsuSimMngDb $glSimPosKey CardType]] && [DbGet LsuSimMngDb $glSimPosKey CardType] } {
+		# USIM case
+		#PinStatusCheck_WaitForSelByAdfAck_SimCmdAckHnd; #Carlo ... NN FZ ! considero come SIM
+		
+		PinStatusCheck_WaitForSelMf_SimCmdAckHnd
+	} else {
+		# SIM case
+		PinStatusCheck_WaitForSelMf_SimCmdAckHnd
+	}
+}
+
+proc PinStatusCheck_WaitForSelByAdfAck_SimCmdAckHnd { } {
+
+	global _sig
+
+	LogInputSig
+
+	SendLsuSimApduUsimStatus [rd _sig usbFd] [rd _sig usbSim]
+
+	nextstate PinStatusCheck_WaitForStatusAnswer
+}
+
+proc PinStatusCheck_WaitForSelMf_SimCmdAckHnd {} {
+	global _sig glSimPosKey
+
+	LogInputSig
+
+	SendLsusimApduSelDfGsm [rd _sig usbFd] [rd _sig usbSim]
+
+	nextstate PinStatusCheck_WaitForSelDfGsm
+}
+
+proc PinStatusCheck_WaitForSelDfGsm_SimCmdAckHnd {} {
+	
+	global _sig glSimPosKey
+
+	LogInputSig
+
+	SendLsuSimApduStatus [rd _sig usbFd] [rd _sig usbSim]
+
+	nextstate PinStatusCheck_WaitForStatusAnswer
+}
+
+proc LsuSimStatusAnswer { } {
+
+	global _sig glStatusCond glLsuSimDefs glLsuSimPinStatus glSimPosKey
+
+	LogInputPrim $_sig
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+	log "LsuSimStatusAnswer: apdu=$apdu"
+
+	set resLen [hByteLen $apdu]
+	if {$resLen !=
+		[expr $glLsuSimDefs(LeStatus) + $glLsuSimDefs(ApduNumOfCtrlBytes)]} {
+		logscr "LsuSimStatusAnswer: unexpected response len $resLen"	
+
+		# in case of unexpected response, result is "Disabled" to avoid
+		# block on client process. Usually SIM are disabled.
+		SendPinStatusResp $glLsuSimPinStatus(Disabled)
+		return
+	}
+
+	global glInsId
+	if {[hocts $apdu 0] != $glInsId(STATUS)} {
+		logscr "LsuSimStatusAnswer: unexpected first byte [hocts $apdu 0]"
+
+		if {[string eq $apdu 00000000000000000000000000000000000000000000000000]} {
+			# probably the voltage is wrong: let's try another voltage
+			DbSet LsuSimMngDb $glSimPosKey MainProcedure PIN_STATUS_CHECK_TO_BE_DONE
+
+			set volt [GetNewVoltage $glSimPosKey]
+			if {[IsVoid $volt]} {
+				exit "LsuSimStatusAnswer: unexpected voltage"
+			}
+
+			log "LsuSimStatusAnswer: let's try voltage $volt"
+			DbSet LsuSimMngDb $glSimPosKey Voltage $volt
+			DbLappend LsuSimMngDb $glSimPosKey VoltageAlreadyApplied $volt
+
+			SendLsusimSimChipReset [rd _sig usbFd] [rd _sig usbSim]
+
+			nextstate WaitLsuSimChipResetAck
+
+			return
+		}
+
+		# in case of unexpected response, result is "Disabled" to avoid
+		# block on client process. Usually SIMs are disabled.
+		SendPinStatusResp $glLsuSimPinStatus(Disabled)
+		return
+	}
+
+	set sw1 [getApduSw1 $apdu]
+	set sw2 [getApduSw2 $apdu]
+
+	if {($sw1 == $glStatusCond(Sw1NormalEndOfCmd)) &&
+		$sw2 == $glStatusCond(Sw2NormalEndOfCmd)} {
+
+		set chv1Status [GetChv1Status [GetChv1Bit $apdu]]
+
+		set volt [3GPPToLsusimVolt [GetVoltageIndication $apdu]]
+
+		set currVoltage [DbGet LsuSimMngDb $glSimPosKey Voltage]
+		if {$volt != $currVoltage} {
+			log "LsuSimStatusAnswer:SIM voltage $volt != current voltage $currVoltage"
+
+			DbSet LsuSimMngDb $glSimPosKey MainProcedure PIN_STATUS_CHECK_DONE
+
+			# save Chv1Status to be used after voltage setting
+			DbSet LsuSimMngDb $glSimPosKey Chv1Status $chv1Status
+			
+			DbSet LsuSimMngDb $glSimPosKey Voltage $volt
+			DbLappend LsuSimMngDb $glSimPosKey VoltageAlreadyApplied $volt
+
+			SendLsusimSimChipReset [rd _sig usbFd] [rd _sig usbSim]
+
+			nextstate WaitLsuSimChipResetAck
+
+			return
+		}
+
+		SendPinStatusResp $chv1Status
+
+	} else {
+
+		SendPinStatusResp $glLsuSimPinStatus(Error)
+	}
+}
+
+proc PinStatusCheck_SimCmdNakHnd { } {
+
+	global _sig glLsuSimPinStatus glSimPosKey
+
+	LogInputSig
+
+	set attempsNumb [DbGet LsuSimMngDb $glSimPosKey readPinNotOk_attempsNumber]
+	log "PinStatusCheck_SimCmdNakHnd: attempsNumber_alreadyDone=$attempsNumb"; #cDEBUG
+
+	incr attempsNumb
+
+	if { $attempsNumb > 2  } {
+		DbSet LsuSimMngDb $glSimPosKey readPinNotOk_attempsNumber 0; #Initialization to 0
+		SendPinStatusResp $glLsuSimPinStatus(Error)
+	} else {
+		# try again the pin status check
+		DbSet LsuSimMngDb $glSimPosKey readPinNotOk_attempsNumber $attempsNumb
+		PinStatusCheckAgainHnd
+	}
+}
+
+proc SendPinStatusResp {pinStatus} {
+	global glSimPosKey
+
+	new LSU_SIM_PIN_STATUS_CHECK_RES s
+	wr s BoardId	[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos		[SimPosFromSimPosKey $glSimPosKey]
+	wr s PinStatus	$pinStatus
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+proc LsusimTo3GPPVolt {lsusimVolt} {
+	global glLsuSimVoltage gl3GPPVolt
+
+	switch $lsusimVolt {
+		$glLsuSimVoltage(1V8)	{return $gl3GPPVolt(1V8)}
+		$glLsuSimVoltage(3V)	{return $gl3GPPVolt(3V)}
+		$glLsuSimVoltage(5V)	{return $gl3GPPVolt(5V)}
+		default {
+			exit "LsusimTo3GPPVolt: unexpected lsusimVolt=$lsusimVolt"
+		}
+	}
+}
+
+proc 3GPPToLsusimVolt {lsusimVolt} {
+	global glLsuSimVoltage gl3GPPVolt
+
+	switch $lsusimVolt \
+		$gl3GPPVolt(1V8)	{return $glLsuSimVoltage(1V8)}	\
+		$gl3GPPVolt(3V)		{return $glLsuSimVoltage(3V)}	\
+		$gl3GPPVolt(5V)		{return $glLsuSimVoltage(5V)}	\
+		default {
+			exit "3GPPToLsusimVolt: unexpected lsusimVolt=$lsusimVolt"
+		}
+}
+
+# Choose a voltage not already tried.
+# Choose the higher voltage available, because with low voltage the SIM
+# doesn't work at all.
+proc GetNewVoltage {simPosKey} {
+	global glLsuSimAvailVoltage glLsuSimVoltage
+
+	set voltageL [DbGet LsuSimMngDb $simPosKey VoltageAlreadyApplied]
+	log "GetNewVoltage: voltageL=$voltageL"
+
+	foreach voltName $glLsuSimAvailVoltage {
+		if {[lsearch $voltageL $glLsuSimVoltage($voltName)] == -1} {
+			# voltage not already used
+			return $glLsuSimVoltage($voltName)
+		}
+	}
+
+	logscr "GetNewVoltage: all voltages already used for SIM $simPosKey"
+	return "?"
+}
+
+################################################################################
+# HND COMMON procedures used to read Linear RECORD MF and DF
+################################################################################
+
+# starting common procedure
+proc CommonSelectMf { } {
+
+	global _sig
+
+	# initialize position inside SIM file system to MF
+	SendLsusimApduSelMf [rd _sig BoardId] [rd _sig SimPos]
+}
+
+proc CommonSelectDf { idDf } {
+
+	global _sig glFileId
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+	log "CommonSelectDf: apdu=$apdu"
+
+	SendLsusimApduSelDf [rd _sig usbFd] [rd _sig usbSim] $idDf
+}
+
+################################################################################
+# HND procedures used in state machine for IMSI READING
+################################################################################
+
+# starting procedure for IMSI READING
+proc ReadImsiHnd {} {
+	global _sig glSimPosKey
+
+	LogInputSig
+
+	DbSet LsuSimMngDb $glSimPosKey FileName "EfImsi"
+
+	StartTranspReading [rd _sig BoardId] [rd _sig SimPos]
+}
+
+proc ReadDataAndConcludeProcEfImsi {apdu} {
+	global glSimPosKey
+
+	# imsi is in 24.008 format
+	set imsi [getImsiFromApdu $apdu]
+
+	log "ReadDataAndConcludeProcEfImsi: imsi=$imsi"
+
+	if {$imsi == -1} {
+
+		new LSU_SIM_READ_IMSI_RES s
+		wr s BoardId	[BoardIdFromSimPosKey $glSimPosKey]
+		wr s SimPos		[SimPosFromSimPosKey $glSimPosKey]
+		wr s Error		"Invalid IMSI"
+		#wr s Imsi
+		LogOutputMsg $s
+		send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	} else {
+
+		log "ReadDataAndConcludeProcEfImsi: human imsi=[GetImsiFrom24008Format $imsi]"
+
+		DbSet LsuSimMngDb $glSimPosKey Imsi [GetImsiFrom24008Format $imsi]
+
+		new LSU_SIM_READ_IMSI_RES s
+		wr s BoardId	[BoardIdFromSimPosKey $glSimPosKey]
+		wr s SimPos		[SimPosFromSimPosKey $glSimPosKey]
+		wr s Imsi		$imsi
+		LogOutputMsg $s
+		send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+	}
+
+	ClientSessionEnd
+}
+
+#sw1: HEXSTR
+proc TranspReadNegativeEndEfImsi {sw1 {sw2 ?}} {
+	global glSimPosKey
+
+	new LSU_SIM_READ_IMSI_RES s
+	wr s BoardId	[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos		[SimPosFromSimPosKey $glSimPosKey]
+	wr s Error		"SW1=$sw1, SW2=$sw2"
+	#wr s Imsi
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+################################################################################
+# HND procedures used in state machine for EF DIR ('2F00')
+################################################################################
+
+proc ReadCardApplListReqHnd { } {
+
+	global _sig glSimPosKey glFileId
+
+	set boardId		[BoardIdFromSimPosKey $glSimPosKey]
+	set simPos		[SimPosFromSimPosKey $glSimPosKey]
+
+	log "ReadCardApplListReqHnd: glSimPosKey=$glSimPosKey; boardId=$boardId; simPos=$simPos"; #cDEBUG
+
+	DbSet LsuSimMngDb $glSimPosKey FileName "EfDir"
+
+# Carlo PATCH 04/06/2010
+	# Carlo : attenzione : il EFDir è un File Lineare non Trasparente
+#	SendLsusimApduSelLinearEf $boardId $simPos $glFileId(EfDir)
+
+	SendLsusimApduSelLinearEf $boardId $simPos $glFileId(ADF)
+
+	nextstate ReadingEfDir_WaitResponse
+}
+
+proc GetEfDirData { } {
+
+	global _sig glLsuSimCmdWrite glStatusCond
+
+	LogInputPrim $_sig
+
+	if { [rd _sig usbCommand] != $glLsuSimCmdWrite } {
+		logscr "GetEfDirData: unexpected usbCommand [rd _sig usbCommand]"
+		return
+	}
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+	log "GetEfDirData: apdu=$apdu"
+
+	set sw1 [getApduSw1 $apdu]
+	set sw2 [getApduSw2 $apdu]
+
+	if { [CheckStatusWords $apdu] == -1 } {
+		#error
+		return
+	} elseif { [CheckStatusWords $apdu] == 0 } {
+		set sw1 	[getApduSw1 $apdu]
+		set hexSw1	[format %02X $sw1]
+		AuthNegativeEnd $hexSw1
+		return
+	} else {
+		
+		SendLsusimApduGetResp [rd _sig usbFd] [rd _sig usbSim] $sw2
+
+		nextstate TranspRead_WaitForGetResponseAck
+	}
+}
+
+################################################################################
+# HND procedures used in state machine for EF LOCI READING
+################################################################################
+
+proc ReadLociReqHnd {} {
+	global _sig
+
+	LogInputSig
+
+	global glSimPosKey
+	DbSet LsuSimMngDb $glSimPosKey FileName "EfLoci"
+
+	StartTranspReading [rd _sig BoardId] [rd _sig SimPos]
+}
+
+proc ReadDataAndConcludeProcEfLoci {apdu} {
+
+	set loci [getLociFromApdu $apdu]
+	log "ReadDataAndConcludeProcEfLoci: loci=$loci"
+
+	global glSimPosKey
+
+	new LSU_SIM_READ_LOCI_RES s
+	wr s BoardId		[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos			[SimPosFromSimPosKey $glSimPosKey]
+	wr s Tmsi			[TmsiFromFileData $loci]
+	wr s Lai			[LaiFromFileData $loci]
+	wr s TmsiTime		[TmsiTimeFromFileData $loci]
+	wr s LocUpStatus	[LocUpStatusFromFileData $loci]
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+proc TranspReadNegativeEndEfLoci {sw1 {sw2 ?}} {
+	global glSimPosKey
+
+	new LSU_SIM_READ_LOCI_RES s
+	wr s BoardId		[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos			[SimPosFromSimPosKey $glSimPosKey]
+	wr s Error			"SW1=$sw1, SW2=$sw2"
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+
+################################################################################
+# HND procedures used in state machine for EF LOCIGPRS READING
+################################################################################
+
+proc ReadLociGprsReqHnd {} {
+	global _sig
+
+	LogInputSig
+
+	global glSimPosKey
+	DbSet LsuSimMngDb $glSimPosKey FileName "EfLociGprs"
+
+	StartTranspReading [rd _sig BoardId] [rd _sig SimPos]
+}
+
+proc ReadDataAndConcludeProcEfLociGprs {apdu} {
+
+	set loci [getLociGprsFromApdu $apdu]
+	log "ReadDataAndConcludeProcEfLociGprs: loci=$loci"
+
+	global glSimPosKey
+
+	new LSU_SIM_READ_LOCIGPRS_RES s
+	wr s BoardId			[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos				[SimPosFromSimPosKey $glSimPosKey]
+	wr s Ptmsi				[PtmsiFromFileData $loci]
+	wr s PtmsiSignature		[PtmsiSignatureFromFileData $loci]
+	wr s Rai				[RaiFromFileData $loci]
+	wr s RoutAreaUpStatus	[RoutAreaUpStatusFromFileData $loci]
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+proc TranspReadNegativeEndEfLociGprs {sw1 {sw2 ?}} {
+	global glSimPosKey
+
+	new LSU_SIM_READ_LOCIGPRS_RES s
+	wr s BoardId		[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos			[SimPosFromSimPosKey $glSimPosKey]
+	wr s Error			"SW1=$sw1, SW2=$sw2"
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+
+################################################################################
+# HND procedures used in state machine for EF Kc READING
+################################################################################
+
+proc ReadKcReqHnd {} {
+	global _sig
+
+	LogInputSig
+
+	global glSimPosKey
+	DbSet LsuSimMngDb $glSimPosKey FileName "EfKc"
+
+	StartTranspReading [rd _sig BoardId] [rd _sig SimPos]
+}
+
+proc ReadDataAndConcludeProcEfKc {apdu} {
+
+	set kcData [remInsFromApdu $apdu]
+	log "ReadDataAndConcludeProcEfKc: kcData=$kcData"
+
+	global glSimPosKey
+
+	new LSU_SIM_READ_KC_RES s
+	wr s BoardId			[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos				[SimPosFromSimPosKey $glSimPosKey]
+	wr s Kc					[KcFromFileData $kcData]
+	wr s CipKeySeqNum		[CipKeySeqNumFromFileData $kcData]
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+proc TranspReadNegativeEndEfKc {sw1 {sw2 ?}} {
+	global glSimPosKey
+
+	new LSU_SIM_READ_KC_RES s
+	wr s BoardId		[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos			[SimPosFromSimPosKey $glSimPosKey]
+	wr s Error			"SW1=$sw1, SW2=$sw2"
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+
+################################################################################
+# HND procedures used in state machine for EF KcGPRS READING
+################################################################################
+
+proc ReadKcGprsReqHnd {} {
+	global _sig
+
+	LogInputSig
+
+	global glSimPosKey
+	DbSet LsuSimMngDb $glSimPosKey FileName "EfKcGprs"
+
+	StartTranspReading [rd _sig BoardId] [rd _sig SimPos]
+}
+
+proc ReadDataAndConcludeProcEfKcGprs {apdu} {
+
+	set kcGprsData [remInsFromApdu $apdu]
+	log "ReadDataAndConcludeProcEfKcGprs: kcGprsData=$kcGprsData"
+
+	global glSimPosKey
+
+	new LSU_SIM_READ_KCGPRS_RES s
+	wr s BoardId			[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos				[SimPosFromSimPosKey $glSimPosKey]
+	wr s KcGprs				[KcGprsFromFileData $kcGprsData]
+	wr s CipKeySeqNumGprs	[CipKeySeqNumGprsFromFileData $kcGprsData]
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+proc TranspReadNegativeEndEfKcGprs {sw1 {sw2 ?}} {
+	global glSimPosKey
+
+	new LSU_SIM_READ_KCGPRS_RES s
+	wr s BoardId		[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos			[SimPosFromSimPosKey $glSimPosKey]
+	wr s Error			"SW1=$sw1, SW2=$sw2"
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+proc TranspReadNegativeEndEfDir {Error} {
+
+	global glLsuSimPinStatus
+
+	SendPinStatusResp $glLsuSimPinStatus(Error)
+
+	ClientSessionEnd
+}
+
+################################################################################
+# HND procedures used in state machine for TRANSPARENT EF READING
+################################################################################
+
+proc StartTranspReading {boardId simPos} {
+	
+	global glSimPosKey
+
+	if { [IsVoid [DbGet LsuSimMngDb $glSimPosKey CardType]] || ![DbGet LsuSimMngDb $glSimPosKey CardType] } {
+		# initialize position inside SIM file system to MF
+		SendLsusimApduSelMf $boardId $simPos
+	} else {
+		# initialize position inside USIM file system to ADF
+		#SendLsusimAdpuSelByUmtsAdf $boardId $simPos ; #Carlo sembra nn fz..uso settaggi sim
+
+		SendLsusimApduSelMf $boardId $simPos
+	}
+
+	nextstate TranspRead_WaitForCommonSelAck
+}
+
+proc TranspRead_WaitForCommonSelAck_SimCmdHnd { } {
+
+	global glSimPosKey
+
+	if { ![IsVoid [DbGet LsuSimMngDb $glSimPosKey CardType]] && [DbGet LsuSimMngDb $glSimPosKey CardType] } {
+		# USIM case
+		TranspRead_WaitForSelByAdfAck_SimCmdAckHnd
+	} else {
+		# SIM case
+		TranspRead_WaitForSelMfAck_SimCmdAckHnd
+	}
+}
+
+proc TranspRead_WaitForSelByAdfAck_SimCmdAckHnd { } {
+
+	global _sig
+	
+	LogInputPrim $_sig
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+	log "TranspRead_WaitForSelByAdfAck_SimCmdAckHnd: apdu=$apdu"
+
+	SendLsusimApduSelTranspEf [rd _sig usbFd] [rd _sig usbSim]
+
+	nextstate TranspRead_WaitForSelTranspEfAck
+}
+
+proc TranspRead_WaitForSelMfAck_SimCmdAckHnd { } {
+	
+	global _sig
+
+	LogInputPrim $_sig
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+	log "TranspRead_WaitForSelMfAck_SimCmdAckHnd: apdu=$apdu"
+
+	SendLsusimApduSelDfGsm [rd _sig usbFd] [rd _sig usbSim]
+
+	nextstate TranspRead_WaitForSelDfGsmAck
+}
+
+proc TranspRead_WaitForSelDfGsmAck_SimCmdAckHnd { } {
+
+	global _sig
+	
+	LogInputPrim $_sig
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+	log "TranspRead_WaitForSelDfGsmAck_SimCmdAckHnd: apdu=$apdu"
+
+	SendLsusimApduSelTranspEf [rd _sig usbFd] [rd _sig usbSim]
+
+	nextstate TranspRead_WaitForSelTranspEfAck
+}
+
+proc TranspRead_WaitForSelTranspEfAck_SimCmdAckHnd { } {
+
+	global _sig glLsuSimCmdWrite glStatusCond glSimPosKey
+
+	LogInputPrim $_sig
+
+	if { [rd _sig usbCommand] != $glLsuSimCmdWrite } {
+		logscr "TranspRead_WaitForSelTranspEfAck_SimCmdAckHnd: unexpected usbCommand [rd _sig usbCommand]"
+		return
+	}
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+	log "TranspRead_WaitForSelTranspEfAck_SimCmdAckHnd: apdu=$apdu"
+
+	set sw1 [getApduSw1 $apdu]
+	set sw2 [getApduSw2 $apdu]
+
+	if {$sw1 != $glStatusCond(RespWithVarLen)} {
+		# error
+
+		set hexSw1 [format %02X $sw1]
+		set hexSw2 [format %02X $sw2]
+
+		logscr "TranspRead_WaitForSelTranspEfAck_SimCmdAckHnd: ERROR selecting EF sw1=0x$hexSw1, sw2=0x$hexSw2"
+
+		TranspReadNegativeEnd[DbGet LsuSimMngDb $glSimPosKey FileName] $hexSw1 $hexSw2
+		return
+	}
+
+	SendLsusimApduGetResp [rd _sig usbFd] [rd _sig usbSim] $sw2
+
+	nextstate TranspRead_WaitForGetResponseAck
+}
+
+proc TranspRead_WaitForGetResponseAck_SimCmdAckHnd { } {
+
+	global _sig
+
+	LogInputPrim $_sig
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+	log "TranspRead_WaitForGetResponseAck_SimCmdAckHnd: apdu=$apdu"
+
+	SendLsuSimApduTranspReadBin [rd _sig usbFd] [rd _sig usbSim]
+
+	nextstate TranspRead_WaitForReadBinAck
+}
+
+proc TranspRead_WaitForGetResponseAck_SimCmdNakHnd {} {
+
+	global _sig glLsuSimDefs
+
+	LogInputPrim $_sig
+
+	set error [rd _sig Err]
+	switch $error \
+		$glLsuSimDefs(lsusimPrimSIMTIMEOUT) \
+		{
+			global glSimPosKey
+			TranspReadNegativeEnd[DbGet LsuSimMngDb $glSimPosKey FileName] $error
+		} \
+		default "TranspRead_WaitForGetResponseAck_SimCmdNakHnd: unexpected error=$error"
+
+}
+
+proc TranspRead_WaitForReadBinAck_SimCmdAckHnd { } {
+
+	global _sig glLsuSimCmdWrite
+
+	LogInputPrim $_sig
+
+	if { [rd _sig usbCommand] != $glLsuSimCmdWrite } {
+		logscr "TranspRead_WaitForReadBinAck_SimCmdAckHnd: unexpected usbCommand"
+		return
+	}
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+	log "TranspRead_WaitForReadBinAck_SimCmdAckHnd: apdu=$apdu"
+
+	set sw1 [getApduSw1 $apdu]
+
+	global glStatusCond
+	if {$sw1 != $glStatusCond(Sw1NormalEndOfCmd)} {
+		# Reading error
+
+		set hexSw1 [format %02X $sw1]
+		logscr "TranspRead_WaitForReadBinAck_SimCmdAckHnd: reading error sw1=0x$hexSw1"
+
+		switch $sw1 \
+			\
+			$glStatusCond(SecurMngmnent) {
+				logscr "TranspRead_WaitForReadBinAck_SimCmdAckHnd: probable PIN locked"
+			} \
+			default {
+				logscr "TranspRead_WaitForReadBinAck_SimCmdAckHnd: unexpected sw1=$sw1"
+			}
+
+		global glSimPosKey
+		TranspReadNegativeEnd[DbGet LsuSimMngDb $glSimPosKey FileName] $hexSw1
+		return
+	}
+
+	global glSimPosKey
+	ReadDataAndConcludeProc[DbGet LsuSimMngDb $glSimPosKey FileName] $apdu
+}
+
+
+################################################################################
+# HND procedures used in state machine for EF LOCI WRITING
+################################################################################
+
+proc WriteLociReqHnd {} {
+	global _sig
+
+	LogInputSig
+
+	global glSimPosKey
+	DbSet LsuSimMngDb $glSimPosKey FileName "EfLoci"
+
+	DbSet LsuSimMngDb $glSimPosKey Tmsi 		[rd _sig Tmsi]
+	DbSet LsuSimMngDb $glSimPosKey Lai			[rd _sig Lai]
+	DbSet LsuSimMngDb $glSimPosKey TmsiTime		[rd _sig TmsiTime]
+	DbSet LsuSimMngDb $glSimPosKey LocUpStatus	[rd _sig LocUpStatus]
+
+	StartTranspWriting [rd _sig BoardId] [rd _sig SimPos]
+}
+
+proc TranspWritePositiveResEfLoci {} {
+	global glSimPosKey
+
+	new LSU_SIM_WRITE_LOCI_RES s
+	wr s BoardId	[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos		[SimPosFromSimPosKey $glSimPosKey]
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+proc TranspWriteNegativeEndEfLoci {sw1} {
+	global glSimPosKey
+
+	new LSU_SIM_WRITE_LOCI_RES s
+	wr s BoardId	[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos		[SimPosFromSimPosKey $glSimPosKey]
+	wr s Error		$sw1
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+################################################################################
+# HND procedures used in state machine for EF LOCIGPRS WRITING
+################################################################################
+
+proc WriteLociGprsReqHnd {} {
+	global _sig
+
+	LogInputSig
+
+	global glSimPosKey
+	DbSet LsuSimMngDb $glSimPosKey FileName "EfLociGprs"
+
+	DbSet LsuSimMngDb $glSimPosKey Ptmsi 			[rd _sig Ptmsi]
+	DbSet LsuSimMngDb $glSimPosKey PtmsiSignature	[rd _sig PtmsiSignature]
+	DbSet LsuSimMngDb $glSimPosKey Rai				[rd _sig Rai]
+	DbSet LsuSimMngDb $glSimPosKey RoutAreaUpStatus	[rd _sig RoutAreaUpStatus]
+
+	StartTranspWriting [rd _sig BoardId] [rd _sig SimPos]
+}
+
+proc TranspWritePositiveResEfLociGprs {} {
+	global glSimPosKey
+
+	new LSU_SIM_WRITE_LOCIGPRS_RES s
+	wr s BoardId	[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos		[SimPosFromSimPosKey $glSimPosKey]
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+proc TranspWriteNegativeEndEfLociGprs {sw1} {
+	global glSimPosKey
+
+	new LSU_SIM_WRITE_LOCIGPRS_RES s
+	wr s BoardId	[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos		[SimPosFromSimPosKey $glSimPosKey]
+	wr s Error		"SW1=$sw1"
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+
+################################################################################
+# HND procedures used in state machine for EF Kc WRITING
+################################################################################
+
+proc WriteKcReqHnd {} {
+	global _sig
+
+	LogInputSig
+
+	global glSimPosKey
+	DbSet LsuSimMngDb $glSimPosKey FileName "EfKc"
+
+	DbSet LsuSimMngDb $glSimPosKey Kc 			[rd _sig Kc]
+	DbSet LsuSimMngDb $glSimPosKey CipKeySeqNum	[rd _sig CipKeySeqNum]
+
+	StartTranspWriting [rd _sig BoardId] [rd _sig SimPos]
+}
+
+proc TranspWritePositiveResEfKc {} {
+	global glSimPosKey
+
+	new LSU_SIM_WRITE_KC_RES s
+	wr s BoardId	[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos		[SimPosFromSimPosKey $glSimPosKey]
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+proc TranspWriteNegativeEndEfKc {sw1} {
+	global glSimPosKey
+
+	new LSU_SIM_WRITE_KC_RES s
+	wr s BoardId	[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos		[SimPosFromSimPosKey $glSimPosKey]
+	wr s Error		"SW1=$sw1"
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+
+################################################################################
+# HND procedures used in state machine for EF KcGPRS WRITING
+################################################################################
+
+proc WriteKcGprsReqHnd {} {
+	global _sig
+
+	LogInputSig
+
+	global glSimPosKey
+	DbSet LsuSimMngDb $glSimPosKey FileName "EfKcGprs"
+
+	DbSet LsuSimMngDb $glSimPosKey KcGprs 			[rd _sig KcGprs]
+	DbSet LsuSimMngDb $glSimPosKey CipKeySeqNumGprs	[rd _sig CipKeySeqNumGprs]
+
+	StartTranspWriting [rd _sig BoardId] [rd _sig SimPos]
+}
+
+proc TranspWritePositiveResEfKcGprs {} {
+	global glSimPosKey
+
+	new LSU_SIM_WRITE_KCGPRS_RES s
+	wr s BoardId	[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos		[SimPosFromSimPosKey $glSimPosKey]
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+proc TranspWriteNegativeEndEfKcGprs {sw1} {
+	global glSimPosKey
+
+	new LSU_SIM_WRITE_KCGPRS_RES s
+	wr s BoardId	[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos		[SimPosFromSimPosKey $glSimPosKey]
+	wr s Error		"SW1=$sw1"
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+
+################################################################################
+# HND procedures used in state machine for TRANSPARENT EF WRITING
+################################################################################
+
+proc StartTranspWriting {boardId simPos} {
+	# initialize position inside SIM file system to MF
+	SendLsusimApduSelMf $boardId $simPos
+
+	nextstate TranspWrite_WaitForSelMfAck
+}
+
+proc TranspWrite_WaitForSelMfAck_SimCmdAckHnd { } {
+	global _sig
+
+	LogInputPrim $_sig
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+	log "TranspWrite_WaitForSelMfAck_SimCmdAckHnd: apdu=$apdu"
+
+	SendLsusimApduSelDfGsm [rd _sig usbFd] [rd _sig usbSim]
+
+	nextstate TranspWrite_WaitForSelDfGsmAck
+}
+
+proc TranspWrite_WaitForSelDfGsmAck_SimCmdAckHnd { } {
+
+	global _sig
+	
+	LogInputPrim $_sig
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+	log "TranspWrite_WaitForSelDfGsmAck_SimCmdAckHnd: apdu=$apdu"
+
+	SendLsusimApduSelTranspEf [rd _sig usbFd] [rd _sig usbSim]
+
+	nextstate TranspWrite_WaitForSelTranspEfAck
+}
+
+proc TranspWrite_WaitForSelTranspEfAck_SimCmdAckHnd { } {
+
+	global _sig glLsuSimCmdWrite
+	
+	LogInputPrim $_sig
+
+	if { [rd _sig usbCommand] != $glLsuSimCmdWrite } {
+		logscr "TranspWrite_WaitForSelTranspEfAck_SimCmdAckHnd: unexpected usbCommand [rd _sig usbCommand]"
+		return
+	}
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+	log "TranspWrite_WaitForSelTranspEfAck_SimCmdAckHnd: apdu=$apdu"
+
+	set sw1 [getApduSw1 $apdu]
+
+	global glStatusCond
+	if {$sw1 != $glStatusCond(RespWithVarLen)} {
+		# error
+
+		set hexSw1 [format %02X $sw1]
+		logscr "TranspWrite_WaitForSelTranspEfAck_SimCmdAckHnd: ERROR selecting EF sw1=0x$hexSw1"
+
+		global glSimPosKey
+		TranspWriteNegativeEnd[DbGet LsuSimMngDb $glSimPosKey FileName] $hexSw1
+		return
+	}
+
+	StartUpdateBinary [rd _sig usbFd] [rd _sig usbSim]
+
+	nextstate TranspWrite_WaitForUpBinAck
+}
+
+proc TranspWrite_WaitForUpBinAck_SimCmdAckHnd {} {
+	global _sig glLsuSimCmdWrite
+	
+	LogInputPrim $_sig
+
+	if { [rd _sig usbCommand] != $glLsuSimCmdWrite } {
+		logscr "TranspWrite_WaitForUpBinAck_SimCmdAckHnd: unexpected usbCommand [rd _sig usbCommand]"
+		return
+	}
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+	log "TranspWrite_WaitForUpBinAck_SimCmdAckHnd: apdu=$apdu"
+
+	set sw1 [getApduSw1 $apdu]
+
+	global glStatusCond
+	if {$sw1 != $glStatusCond(Sw1NormalEndOfCmd)} {
+		# error
+
+		set hexSw1 [format %02X $sw1]
+		logscr "TranspWrite_WaitForUpBinAck_SimCmdAckHnd: ERROR updating EF sw1=0x$hexSw1"
+
+		global glSimPosKey
+		TranspWriteNegativeEnd[DbGet LsuSimMngDb $glSimPosKey FileName] $hexSw1
+		return
+	}
+
+	NextUpdateBinary [rd _sig usbFd] [rd _sig usbSim]
+}
+
+################################################################################
+# HND procedures used in state machine for AUTHENTICATION PROCEDURE
+################################################################################
+
+proc LsusimCommonAuth { } {
+
+	global _sig glSimPosKey
+
+	LogInputSig
+
+	DbSet LsuSimMngDb $glSimPosKey RAND [rd _sig Rand]
+
+	if { ![IsVoid [rd _sig CardType]] && [rd _sig CardType] == 1 } {
+		DbSet LsuSimMngDb $glSimPosKey AUTN [rd _sig Autn]
+		DbSet LsuSimMngDb $glSimPosKey CardType [rd _sig CardType]
+
+		log "LsusimCommonAuth: USIM case --> Select by ADF"; #cDEBUG
+
+		LsusimUsimSync
+
+		nextstate UsimSyncrDone_WaitForAuthStart
+	} else {
+		LsusimAuthStart
+	}
+}
+
+# ----------------------------- #
+# Syncronization phase for USIM #
+# ----------------------------- #
+proc LsusimUsimSync { } {
+
+	global _sig
+
+	SendLsusimApduStatusUsim [rd _sig BoardId] [rd _sig SimPos]
+}
+
+###################################################
+
+proc LsusimAuthStart { } {
+
+	global _sig glSimPosKey
+
+	LogInputSig
+
+	DbSet LsuSimMngDb $glSimPosKey RAND [rd _sig Rand]
+
+	if { ![IsVoid [rd _sig CardType]] && [rd _sig CardType] == 1 } {
+
+		log "LsusimAuthStart: USIM case --> Select by ADF"; #cDEBUG
+
+		# initialize position inside USIM file system to ADF
+		SendLsusimAdpuSelByUmtsAdf [rd _sig BoardId] [rd _sig SimPos]
+	} else {
+	
+	#%%%%%%%%% Carlo PATCH 27/05/2010 %%%
+		 #initialize position inside SIM file system to MF
+		### Comando CORRETTO ###
+		SendLsusimApduSelMf [rd _sig BoardId] [rd _sig SimPos]
+
+
+		# I comandi seguenti sono da cancellare
+		#DbSet LsuSimMngDb $glSimPosKey AUTN [rd _sig Autn]
+		#DbSet LsuSimMngDb $glSimPosKey CardType 1
+		#log ">>>>>>>> CardType=[DbGet LsuSimMngDb $glSimPosKey CardType] <<<<<<<"; #cDEBUG
+		#SendLsusimAdpuSelByUmtsAdf [rd _sig BoardId] [rd _sig SimPos]
+	# %%%%%%%%%%%
+
+	}
+	nextstate Auth_WaitForCommonSelAck
+}
+
+proc Auth_WaitForCommonSelAck_SimCmdHnd { } {
+
+	global glSimPosKey
+
+	log "Auth_WaitForCommonSelAck_SimCmdHnd: CardType=[DbGet LsuSimMngDb $glSimPosKey CardType]"; #cDEBUG
+
+	if { ![IsVoid [DbGet LsuSimMngDb $glSimPosKey CardType]] && [DbGet LsuSimMngDb $glSimPosKey CardType] } {
+		# USIM case
+		Auth_WaitForSelByAdfAck_SimCmdHnd
+	} else {
+		# SIM case
+		Auth_WaitForSelMfAck_SimCmdHnd
+	}
+}
+
+proc Auth_WaitForSelByAdfAck_SimCmdHnd { } {
+
+	global _sig glLsuSimCmdWrite
+
+	LogInputPrim $_sig
+
+	if {[rd _sig usbCommand] != $glLsuSimCmdWrite} {
+		logscr "Auth_WaitForSelByAdfAck_SimCmdHnd: unexpected usbCommand"
+		return
+	}
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+
+	log "<------ STATUS RESPONSE in USIM: apdu=$apdu"
+
+	set checkSw [CheckStatusWords $apdu]
+
+	if { $checkSw == -1 } {
+		#error
+		return
+	} elseif { $checkSw == 0 } {
+		set sw1 	[getApduSw1 $apdu]
+		set hexSw1	[format %02X $sw1]
+		AuthNegativeEnd $hexSw1
+		return
+	} else {
+		
+		SendLsusimApduSelDfAuthUmts [rd _sig usbFd] [rd _sig usbSim]
+		global _state
+		nextstate Auth_WaitForSelDfUmtsAck
+	}
+}
+
+proc Auth_WaitForSelDfUmtsAck_SimCmdHnd { } {
+
+	global _sig glLsuSimCmdWrite glStatusCond
+
+	LogInputPrim $_sig
+
+	if {[rd _sig usbCommand] != $glLsuSimCmdWrite} {
+		logscr "Auth_WaitForSelDfUmtsAck_SimCmdHnd: unexpected usbCommand"
+		return
+	}
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+
+	log "<------ SELECT RESPONSE in USIM: apdu=$apdu"
+
+	if { [CheckStatusWords $apdu] == -1 } {
+		#error
+		return
+	} elseif { [CheckStatusWords $apdu] == 0 } {
+		set sw1 	[getApduSw1 $apdu]
+		set hexSw1	[format %02X $sw1]
+		AuthNegativeEnd $hexSw1
+		return
+	} else {
+		
+		SendLsusimApduAuthenticate [rd _sig usbFd] [rd _sig usbSim]
+		global _state
+		nextstate Auth_WaitForAuthenticateAck
+	}
+}
+
+proc Auth_WaitForAuthenticateAck_SimCmdHnd { } {
+
+	global _sig glLsuSimCmdWrite
+
+	LogInputPrim $_sig
+
+	if {[rd _sig usbCommand] != $glLsuSimCmdWrite} {
+		logscr "Auth_WaitForAuthenticateAck_SimCmdHnd: unexpected usbCommand"
+		return
+	}
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+	log "Auth_WaitForAuthenticateAck_SimCmdHnd: apdu=$apdu"
+
+	set sw1 [getApduSw1 $apdu]
+
+	global glStatusCond
+	if {$sw1 != $glStatusCond(UsimResponseOk1)} {
+		# error if Sw1!=97 --> hexSw1!=61
+
+		set hexSw1 [format %02X $sw1]
+		logscr "Auth_WaitForAuthenticateAck_SimCmdHnd: authentication error sw1=0x$hexSw1"
+
+		switch $sw1 \
+			\
+			$glStatusCond(SecurMngmnent) {
+				logscr "Auth_WaitForAuthenticateAck_SimCmdHnd: problem with security level"
+			} \
+			default {
+				logscr "Auth_WaitForAuthenticateAck_SimCmdHnd: unexpected sw1=$sw1"
+			}
+
+		set errCode $glStatusCond(MACfailure) 
+
+		log "Auth_WaitForAuthenticateAck_SimCmdHnd: errCode=$errCode"; #cDEBUG
+
+		SendLsuSimErrorInd $errCode
+	
+		return
+	}
+
+	SendLsusimApduGetResp [rd _sig usbFd] [rd _sig usbSim] [getApduSw2 $apdu]
+
+	global _state
+	nextstate Auth_WaitForApduGetRespAck
+}
+
+proc Auth_WaitForSelMfAck_SimCmdHnd {} {
+	global _sig glLsuSimCmdWrite
+
+	LogInputPrim $_sig
+
+	if {[rd _sig usbCommand] != $glLsuSimCmdWrite} {
+		logscr "Auth_WaitForSelMfAck_SimCmdHnd: unexpected usbCommand"
+		return
+	}
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+
+	log "<------ STATUS response apdu=$apdu"
+
+	SendLsusimApduSelDfGsm [rd _sig usbFd] [rd _sig usbSim]
+
+	global _state
+	nextstate Auth_WaitForSelDfGsmAck
+}
+
+proc Auth_WaitForSelDfGsmAck_SimCmdHnd {} {
+	global _sig glLsuSimCmdWrite
+
+	LogInputPrim $_sig
+
+	if {[rd _sig usbCommand] != $glLsuSimCmdWrite} {
+		logscr "Auth_WaitForSelDfGsmAck_SimCmdHnd: unexpected usbCommand"
+		return
+	}
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+
+	log "<------ SELECT response apdu=$apdu"
+
+	set sw1 [getApduSw1 $apdu]
+
+	global glStatusCond
+	if {$sw1 != $glStatusCond(RespWithVarLen)} {
+		# error
+
+		set hexSw1 [format %02X $sw1]
+		logscr "Auth_WaitForSelDfGsmAck_SimCmdHnd: unexpected sw1=0x$hexSw1"
+		AuthNegativeEnd $hexSw1
+		return
+	}
+
+	SendLsusimApduRunGsmAlgo [rd _sig usbFd] [rd _sig usbSim]
+
+	global _state
+	nextstate Auth_WaitForRunGsmAlgoAck
+}
+
+proc Auth_WaitForRunGsmAlgoAck_SimCmdHnd {} {
+	global _sig glLsuSimCmdWrite
+
+	LogInputPrim $_sig
+
+	if {[rd _sig usbCommand] != $glLsuSimCmdWrite} {
+		logscr "Auth_WaitForRunGsmAlgoAck_SimCmdHnd: unexpected usbCommand"
+		return
+	}
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+	log "Auth_WaitForRunGsmAlgoAck_SimCmdHnd: apdu=$apdu"
+
+	set sw1 [getApduSw1 $apdu]
+
+	global glStatusCond
+	if {$sw1 != $glStatusCond(RespWithVarLen)} {
+		# error
+
+		set hexSw1 [format %02X $sw1]
+		logscr "Auth_WaitForRunGsmAlgoAck_SimCmdHnd: authentication error sw1=0x$hexSw1"
+
+		switch $sw1 \
+			\
+			$glStatusCond(SecurMngmnent) {
+				logscr "Auth_WaitForRunGsmAlgoAck_SimCmdHnd: problem with security level"
+			} \
+			default {
+				logscr "Auth_WaitForRunGsmAlgoAck_SimCmdHnd: unexpected sw1=$sw1"
+			}
+
+		AuthNegativeEnd $hexSw1
+		return
+	}
+
+	SendLsusimApduGetResp [rd _sig usbFd] [rd _sig usbSim] [getApduSw2 $apdu]
+
+	global _state
+	nextstate Auth_WaitForApduGetRespAck
+}
+
+proc Auth_WaitForApduGetRespAck_SimCmdHnd {} {
+	global _sig glLsuSimCmdWrite glSimPosKey
+
+	LogInputPrim $_sig
+
+	if {[rd _sig usbCommand] != $glLsuSimCmdWrite} {
+		logscr "Auth_WaitForApduGetRespAck_SimCmdHnd: unexpected usbCommand"
+		return
+	}
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+	log "Auth_WaitForApduGetRespAck_SimCmdHnd: apdu=$apdu"
+
+	# response has only SW1 as last byte
+	set sw1 [getLastByte $apdu]
+
+	global glStatusCond
+	if {$sw1 != $glStatusCond(Sw1NormalEndOfCmd)} {
+		# error
+
+		set hexSw1 [format %02X $sw1]
+		logscr "Auth_WaitForApduGetRespAck_SimCmdHnd: unexpected sw1=0x$hexSw1"
+		AuthNegativeEnd $hexSw1
+		return
+	}
+
+	new LSU_SIM_AUTH_RES s
+	wr s BoardId	[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos		[SimPosFromSimPosKey $glSimPosKey]
+	wr s Sres		[getApduSres $apdu]
+
+	if { ![IsVoid [DbGet LsuSimMngDb $glSimPosKey CardType]] && [DbGet LsuSimMngDb $glSimPosKey CardType] } {
+	
+		wr s ExtRes		[getApduExtRes $apdu]
+		wr s Kc			[getKcFromUsimApdu $apdu]
+		wr s Ki			[getKiFromUsimApdu $apdu]
+	} else {
+
+		wr s Kc			[getKcFromApdu $apdu]
+		wr s Ki			[getKiFromApdu $apdu]
+	}
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+# sw1: HEXSTR
+proc AuthNegativeEnd {sw1} {
+	global glSimPosKey
+
+	new LSU_SIM_AUTH_RES s
+	wr s BoardId	[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos		[SimPosFromSimPosKey $glSimPosKey]
+	wr s Error		"SW1=$sw1"
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+################################################################################
+# HND procedures used in state machine for PIN VERIFICATION PROCEDURE
+################################################################################
+
+proc PinVerifyReqHnd {} {
+	global _sig
+
+	LogInputSig
+
+	SendLsuSimApduVerifyPin [rd _sig BoardId] [rd _sig SimPos] [rd _sig Pin]
+
+	nextstate WaitForVerifyPinAck
+}
+
+proc VerifyPinAck_SimCmdHnd { } {
+	global _sig glStatusCond glLsuSimDefs
+
+	LogInputPrim $_sig
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+	log "VerifyPinAck_SimCmdHnd: apdu=$apdu"
+
+	set apduLen [hByteLen $apdu]
+	set expectedLen [uctoh $glLsuSimDefs(ApduNumOfCtrlBytes)]
+
+	if {$apduLen != $expectedLen} {
+		logscr "VerifyPinAck_SimCmdHnd: unexpected apduLen=$apduLen"
+
+		if {$apduLen < $expectedLen} {
+			# stop the procedure because sw1 and sw2 aren't present
+			set res 0
+
+			SendPinVerifyRes $res
+
+			ClientSessionEnd
+			return
+		}
+	}
+
+
+	set sw1 [getApduSw1 $apdu]
+	set sw2 [getApduSw2 $apdu]
+	log "VerifyPinAck_SimCmdHnd: sw1=[uctoh $sw1]; sw2=[uctoh $sw2]"
+
+	if {($sw1 == $glStatusCond(Sw1NormalEndOfCmd)) &&
+		($sw2 == $glStatusCond(Sw2NormalEndOfCmd))} {
+		log "VerifyPinAck_SimCmdHnd: PIN SUCCESSFULLY VERIFIED"
+		set res 1
+
+	} elseif { $sw1 == $glStatusCond(SecurMngmnent)} { 
+		logscr "BAD VALUE of PIN"
+
+		set res 0
+	} else {
+		log "VerifyPinAck_SimCmdHnd: Pin verification was not successfull"
+
+		set res 0
+	}
+
+	# res means "procedure sucessfully executed"
+
+	SendPinVerifyRes $res
+
+	ClientSessionEnd
+}
+
+proc SendPinVerifyRes {res} {
+	global glSimPosKey
+
+	new LSU_SIM_PIN_VERIFY_RES s
+	wr s BoardId	[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos		[SimPosFromSimPosKey $glSimPosKey]
+	wr s Success	$res
+	LogOutputMsg $s
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+}
+
+################################################################################
+# HND procedures used in state machine for SMSC Address READING
+################################################################################
+
+proc ReadSmscAddrHnd { } {
+
+	LogInputSig
+
+	CommonSelectMf	
+
+	nextstate SmscAddrReading_WaitForSelMfAck
+}
+
+proc SmscAddr_WaitForSelMfAck_SimCmdAckHnd { } {
+
+	global _sig glFileId
+
+	LogInputSig
+
+	set idDedFile $glFileId(DfTelecom)
+
+	CommonSelectDf $idDedFile
+	
+	nextstate SmscAddrReading_WaitForSelDfTelecomAck
+}
+
+proc SmscAddr_WaitForSelDfTelecomAck_SimCmdAckHnd { } {
+
+	global _sig glFileId
+	
+	LogInputSig
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+	log "SmscAddr_WaitForSelDfTelecomAck_SimCmdAckHnd: apdu=$apdu"
+
+	set IdEfSmsParameters $glFileId(EfSmsP)
+
+	log "SmscAddr_WaitForSelDfTelecomAck_SimCmdAckHnd: IdEfSmsParameters=$IdEfSmsParameters"; #cDEBUG
+
+	SendLsusimApduSelLinearEf [rd _sig usbFd] [rd _sig usbSim] $IdEfSmsParameters
+
+	nextstate SmscAddrReading_WaitForSelEfSmsParAck
+}
+
+proc SmscAddr_WaitForSelEfSmsParAck_SimCmdAckHnd { } {
+
+	global _sig glLsuSimCmdWrite
+	
+	LogInputSig
+
+	if { [rd _sig usbCommand] != $glLsuSimCmdWrite } {
+		logscr "SmscAddr_WaitForSelEfSmsParAck_SimCmdAckHnd: unexpected usbCommand"
+		return
+	}
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+	log "SmscAddr_WaitForSelEfSmsParAck_SimCmdAckHnd: apdu=$apdu"
+
+	set sw1 [getApduSw1 $apdu]
+
+	global glStatusCond
+	if {$sw1 != $glStatusCond(RespWithVarLen)} {
+		logscr "SmscAddr_WaitForSelEfSmsParAck_SimCmdAckHnd: ERROR reading SMS Parameters sw1=[format 0x%02X $sw1]"
+
+		ReturnErrorReadingSmsc
+		return; #TODO: add error management
+	}
+
+	set sw2 [getApduSw2 $apdu]
+
+	SendLsusimApduGetResp [rd _sig usbFd] [rd _sig usbSim] $sw2
+
+	nextstate SmscAddr_WaitForGetResponseAck
+}
+
+proc SmscAddr_WaitForGetResponseAck_SimCmdAckHnd { } {
+
+	global _sig glSimPosKey
+
+	LogInputSig
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+	log "SmscAddr_WaitForGetResponseAck_SimCmdAckHnd: apdu=$apdu"
+
+	set rxLenExpected [getRecordLength $apdu]; # total record length
+	log "rxLenExpected=$rxLenExpected"; #cDEBUG
+
+	# Save the rxLenExpected in the LsuSimMngDb
+	DbSet LsuSimMngDb $glSimPosKey rxApduLenExp $rxLenExpected
+
+	set recordNumber "01"; # first record
+	set recordReadingRule "04"; # record absolute addressing
+
+	SendLsuSimApduReadRecord [rd _sig usbFd] [rd _sig usbSim] $recordNumber $recordReadingRule $rxLenExpected
+
+	nextstate SmscAddr_WaitForReadRecordAck
+}
+
+proc SmscAddr_WaitForReadRecordAck_SimCmdAckHnd { } {
+
+	global _sig glLsuSimCmdWrite glStatusCond glSimPosKey
+
+	LogInputSig
+
+	if { [rd _sig usbCommand] != $glLsuSimCmdWrite } {
+		logscr "SmscAddr_WaitForReadRecordAck_SimCmdAckHnd: unexpected usbCommand"
+		return
+	}
+
+	set apdu [getApduFromUsbPayload [rd _sig usbPayload]]
+	log "SmscAddr_WaitForReadRecordAck_SimCmdAckHnd: apdu=$apdu"
+
+	set sw1 [getApduSw1 $apdu]
+
+	if {$sw1 != $glStatusCond(Sw1NormalEndOfCmd)} {
+		logscr "SmscAddr_WaitForReadrecordAck_SimCmdAckHnd: reading SMSC ADDRESS error sw1=[format 0x%02X $sw1]"
+
+		ReturnErrorReadingSmsc
+		return; #TODO: add error management
+	}
+
+	# Alpha-Identifier
+	set alphaId 24
+	
+	# Retrieve the Received Apdu Length Expected
+	set rxApduLen [DbGet LsuSimMngDb $glSimPosKey rxApduLenExp]
+
+	# smsc address is in 24.008 format
+	set smscAddr [getSmscAddressApdu $apdu $rxApduLen $alphaId]
+
+	# smsc addres in human format
+	set human_smscAddr [GetCompleteHumanInternationalNumberFrom24008 $smscAddr]
+
+	# TP-Data Coding Scheme
+	set dataCodingScheme [getSmsCodingSchemeApdu $apdu $rxApduLen $alphaId] 
+
+	log "SmscAddr_WaitForReadRecordAck_SimCmdAckHnd: smscAddr=$smscAddr --> human_smscAddr=$human_smscAddr"
+	log "SmscAddr_WaitForReadRecordAck_SimCmdAckHnd: dataCodingScheme=$dataCodingScheme"
+
+	# Answer to the OM layer
+	new LSU_SIM_READ_SMSC_ADDR_RES s
+	wr s BoardId	[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos		[SimPosFromSimPosKey $glSimPosKey]
+	wr s SmscAddr	$human_smscAddr
+	
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+	LogOutputMsg $s
+
+	ClientSessionEnd
+}
+
+proc ReturnErrorReadingSmsc { {codeError ?} } {
+
+	global glSimPosKey
+
+	# Answer to the OM layer
+    new LSU_SIM_READ_SMSC_ADDR_RES s
+    wr s BoardId    [BoardIdFromSimPosKey $glSimPosKey]
+    wr s SimPos     [SimPosFromSimPosKey $glSimPosKey]
+    wr s SmscAddr   ?
+	#wr s SmscAddr   $codeError; #TODO management
+    
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+    LogOutputMsg $s
+
+    ClientSessionEnd
+}
+
+################################################################################
+# HND procedures used in state machine for APN READING
+################################################################################
+
+proc ReadApnHnd { } {
+
+	LogInputSig
+
+	CommonSelectMf	
+
+	nextstate ApnReading_WaitForSelMfAck
+}
+
+proc Apn_WaitForSelMfAck_SimCmdAckHnd { } {
+
+	global _sig glFileId
+
+	LogInputSig
+
+	set idDedFile $glFileId(DfTelecom)
+
+	CommonSelectDf $idDedFile
+	
+	nextstate ApnReading_WaitForSelDfTelecomAck
+}
+
+
+# Carlo TODO ... to complete
+
+
+################################################################################
+# ERROR PROCEDURE
+################################################################################
+
+proc SendLsuSimErrorInd { codeError } {
+
+	global _sig glSimPosKey
+	
+	new LSU_SIM_ERR_IND s
+
+	wr s BoardId    [BoardIdFromSimPosKey $glSimPosKey]
+    wr s SimPos     [SimPosFromSimPosKey $glSimPosKey]
+
+	wr s ErrCd $codeError
+	
+	LogOutputMsg $s
+	
+	send s [DbGet LsuSimMngDb $glSimPosKey ClientPid]
+
+	ClientSessionEnd
+}
+
+##############################################
+# STATE MACHINE
+##############################################
+
+state Idle {
+	LSU_SIM_CONFIG_SIM_REQ			ConfigSimHnd
+	LSU_SIM_READ_ATR_REQ			ReadAtrReqHnd
+	LSU_SIM_PIN_STATUS_CHECK_REQ 	PrePinCheck
+	LSU_SIM_READ_IMSI_REQ			ReadImsiHnd
+	LSU_SIM_AUTH_REQ				LsusimAuthStart
+	LSU_SIM_PIN_VERIFY_REQ			PinVerifyReqHnd
+	LSU_SIM_READ_LOCI_REQ			ReadLociReqHnd
+	LSU_SIM_WRITE_LOCI_REQ			WriteLociReqHnd
+	LSU_SIM_READ_LOCIGPRS_REQ		ReadLociGprsReqHnd
+	LSU_SIM_WRITE_LOCIGPRS_REQ		WriteLociGprsReqHnd
+	LSU_SIM_READ_KC_REQ				ReadKcReqHnd
+	LSU_SIM_WRITE_KC_REQ			WriteKcReqHnd
+	LSU_SIM_READ_KCGPRS_REQ			ReadKcGprsReqHnd
+	LSU_SIM_WRITE_KCGPRS_REQ		WriteKcGprsReqHnd
+	LSU_SIM_READ_SMSC_ADDR_REQ		ReadSmscAddrHnd
+	LSU_SIM_READ_APN_REQ			ReadApnHnd
+
+	LSU_SIM_SEND_APDU_REQ			SendApduReqHnd
+
+	default					Any
+}
+
+state WaitLsuSimLockSimAck {
+	LSUSIM_SIM_LOCK_ACK		SimLockAckHnd
+
+	LSUSIM_SIM_LOCK_NAK		{
+		EndOfSimConfig FALSE "LOCKED"
+
+		return
+	}
+
+	default					Any
+}
+
+state WaitLsuSimSAck {
+
+	LSUSIM_SIM_CMD_ACK		WaitLsuSimSAck_CmdAckHnd
+
+	default					Any
+}
+
+state WaitLsuSimCheckPresAck {
+
+	LSUSIM_SIM_CMD_ACK		WaitLsuSimCheckPresAck_CmdAckHnd
+	LSUSIM_SIM_CMD_NAK	   	SimCheckPresNak
+
+	default					Any
+}
+
+##############################################
+# CONFIG_SIM state machine
+##############################################
+
+state WaitLsuSimReadAtrRes {
+	LSUSIM_SIM_CMD_ACK		WaitLsuSimReadAtrRes_CmdAckHnd
+	LSUSIM_SIM_CMD_NAK		WaitLsuSimReadAtrRes_CmdNakHnd
+
+	default					Any
+}
+
+
+##############################################
+# SIM RESET state machine
+##############################################
+
+state WaitLsuSimChipResetAck {
+
+	LSUSIM_SIM_CMD_ACK		WaitLsuSimChipResetAck_CmdAckHnd
+
+	default					Any
+}
+
+state WaitLsuSimResetSigAck {
+
+	LSUSIM_SIM_CMD_ACK		WaitLsuSimResetSigAck_CmdAckHnd
+
+	default					Any
+}
+
+state WaitLsuSimSetVoltageAck {
+
+	LSUSIM_SIM_CMD_ACK		WaitLsuSimSetVoltageAck_CmdAckHnd
+
+	default					Any
+}
+
+state WaitLsuSimSetInterfAck {
+
+	LSUSIM_SIM_CMD_ACK		WaitLsuSimSetInterfAck_CmdAckHnd
+
+	default					Any
+}
+
+state WaitLsuSimSetInterfCrstAck {
+
+	LSUSIM_SIM_CMD_ACK			WaitLsuSimSetInterfCrstAck_CmdAckHnd
+	TMR_ATR_MSG					WaitLsuSimSetInterfCrstAck_TmrAtrHnd
+
+	default		Any
+}
+
+state Config_WaitForReadAtrRes {
+
+	LSUSIM_SIM_CMD_ACK			Config_WaitForReadAtrRes_CmdAckHnd
+
+	default		Any
+}
+
+######################################################
+# TRANSPARENT EfDir '2F00' reading state machine
+######################################################
+
+state ReadingEfDir_WaitResponse {
+	LSUSIM_SIM_CMD_ACK 	GetEfDirData
+	default				Any
+} 
+
+##############################################
+# PIN Status/Verify state machine
+##############################################
+
+state PinStatusCheck_WaitForCommonSelAck {
+	LSUSIM_SIM_CMD_ACK 	PinStatusCheck_WaitForCommonSelect_SimCmdAckHnd
+	LSUSIM_SIM_CMD_NAK  PinStatusCheck_SimCmdNakHnd
+	default				Any
+}
+
+state PinStatusCheck_WaitForSelDfGsm {
+	LSUSIM_SIM_CMD_ACK  PinStatusCheck_WaitForSelDfGsm_SimCmdAckHnd
+	LSUSIM_SIM_CMD_NAK  PinStatusCheck_SimCmdNakHnd
+	default				Any
+}
+
+state PinStatusCheck_WaitForStatusAnswer {
+	LSUSIM_SIM_CMD_ACK  LsuSimStatusAnswer
+	LSUSIM_SIM_CMD_NAK  PinStatusCheck_SimCmdNakHnd
+	default				Any
+}
+
+##############################################
+# TRANSPARENT EF reading state machine
+##############################################
+
+state TranspRead_WaitForCommonSelAck {
+	LSUSIM_SIM_CMD_ACK 	TranspRead_WaitForCommonSelAck_SimCmdHnd
+	default				Any
+}
+
+state TranspRead_WaitForSelDfGsmAck {
+	LSUSIM_SIM_CMD_ACK	TranspRead_WaitForSelDfGsmAck_SimCmdAckHnd
+	default				Any
+}
+
+state TranspRead_WaitForSelTranspEfAck {
+	LSUSIM_SIM_CMD_ACK  TranspRead_WaitForSelTranspEfAck_SimCmdAckHnd
+	default				Any
+}
+
+state TranspRead_WaitForGetResponseAck {
+	LSUSIM_SIM_CMD_ACK  TranspRead_WaitForGetResponseAck_SimCmdAckHnd
+	LSUSIM_SIM_CMD_NAK  TranspRead_WaitForGetResponseAck_SimCmdNakHnd
+	default				Any
+}
+
+state TranspRead_WaitForReadBinAck {
+	LSUSIM_SIM_CMD_ACK	TranspRead_WaitForReadBinAck_SimCmdAckHnd
+	default 			Any
+}
+
+##############################################
+# TRANSPARENT EF writing state machine
+##############################################
+
+state TranspWrite_WaitForSelMfAck {
+	LSUSIM_SIM_CMD_ACK  TranspWrite_WaitForSelMfAck_SimCmdAckHnd
+	default				Any
+}
+
+state TranspWrite_WaitForSelDfGsmAck {
+	LSUSIM_SIM_CMD_ACK	TranspWrite_WaitForSelDfGsmAck_SimCmdAckHnd
+	default				Any
+}
+
+state TranspWrite_WaitForSelTranspEfAck {
+	LSUSIM_SIM_CMD_ACK  TranspWrite_WaitForSelTranspEfAck_SimCmdAckHnd
+	default				Any
+}
+
+state TranspWrite_WaitForUpBinAck {
+	LSUSIM_SIM_CMD_ACK  TranspWrite_WaitForUpBinAck_SimCmdAckHnd
+	default				Any
+}
+
+
+##############################################
+# Authentication state machine
+##############################################
+
+state Auth_WaitForCommonSelAck {
+	
+	LSUSIM_SIM_CMD_ACK	Auth_WaitForCommonSelAck_SimCmdHnd
+	default				Any
+}
+
+state Auth_WaitForSelDfGsmAck {
+	
+	LSUSIM_SIM_CMD_ACK	Auth_WaitForSelDfGsmAck_SimCmdHnd
+	default				Any
+}
+
+state Auth_WaitForSelDfUmtsAck {
+ 
+	LSUSIM_SIM_CMD_ACK	Auth_WaitForSelDfUmtsAck_SimCmdHnd
+	default				Any
+}
+
+state Auth_WaitForRunGsmAlgoAck {
+	
+	LSUSIM_SIM_CMD_ACK	Auth_WaitForRunGsmAlgoAck_SimCmdHnd
+	default				Any
+}
+
+state Auth_WaitForAuthenticateAck {
+	LSUSIM_SIM_CMD_ACK	Auth_WaitForAuthenticateAck_SimCmdHnd
+	default				Any
+}
+
+state Auth_WaitForApduGetRespAck {
+
+	LSUSIM_SIM_CMD_ACK	Auth_WaitForApduGetRespAck_SimCmdHnd
+	default				Any
+}
+
+##############################################
+# PIN VERIFICATION state machine
+##############################################
+
+state WaitForVerifyPinAck {
+
+	LSUSIM_SIM_CMD_ACK  VerifyPinAck_SimCmdHnd
+	default				Any
+}
+
+##############################################
+# SMSC Address READING state machine
+##############################################
+
+state SmscAddrReading_WaitForSelMfAck {
+	LSUSIM_SIM_CMD_ACK 	SmscAddr_WaitForSelMfAck_SimCmdAckHnd
+	default				Any
+}
+
+state SmscAddrReading_WaitForSelDfTelecomAck {
+	LSUSIM_SIM_CMD_ACK 	SmscAddr_WaitForSelDfTelecomAck_SimCmdAckHnd
+	default				Any
+}
+
+state SmscAddrReading_WaitForSelEfSmsParAck {
+	LSUSIM_SIM_CMD_ACK 	SmscAddr_WaitForSelEfSmsParAck_SimCmdAckHnd
+	default				Any
+}
+
+state SmscAddr_WaitForGetResponseAck {
+	LSUSIM_SIM_CMD_ACK 	SmscAddr_WaitForGetResponseAck_SimCmdAckHnd
+	default				Any
+}
+
+state SmscAddr_WaitForReadRecordAck {
+	LSUSIM_SIM_CMD_ACK	SmscAddr_WaitForReadRecordAck_SimCmdAckHnd
+	default 			Any
+}
+
+##############################################
+# APN READING state machine
+##############################################
+
+state ApnReading_WaitForSelMfAck {
+	LSUSIM_SIM_CMD_ACK 	Apn_WaitForSelMfAck_SimCmdAckHnd
+	default				Any
+}
+
+state ApnReading_WaitForSelDfTelecomAck {
+	LSUSIM_SIM_CMD_ACK 	Apn_WaitForSelDfTelecomAck_SimCmdAckHnd
+	default				Any
+}
+
+
+# Carlo TODO ... to complete
+
+
+##############################################
+# SEND_APDU state machine
+##############################################
+
+state WaitForApduSimCmdAck {
+	LSUSIM_SIM_CMD_ACK  WaitForApdu_LsuSimCmdAckHnd
+	LSUSIM_SIM_CMD_NAK  WaitForApdu_LsuSimCmdNakHnd
+	default				Any
+}
+
+state Any {
+	default				Unexpected
+}

@@ -1,0 +1,57 @@
+#ifndef _RT_CHECKLIC_HH_
+#define _RT_CHECKLIC_HH_
+
+#include "rtsrc/asn1type.h"
+#include "rtxsrc/rtxMemory.h"
+
+#define OSCTXTINIT    0x1aa2a34a
+
+#define LIC_RT     1
+#define LIC_BER    2
+#define LIC_PER    3
+#define LIC_XER    4
+#define LIC_CPP    5
+#define LIC_PRO    6
+#define LIC_INIT   7
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+int rtxCheckLicense (OSCTXT* pCtxt, int bits);
+int rtxInitAndCheckLicense (OSCTXT* pCtxt, int bits);
+
+#define rtBaseCheckLicense(pCtxt,flags) 0
+#define rtCheckLicense(pCtxt,bits) 0
+#define rtxInitAndCheckLicense(pCtxt,bits) {  \
+memset (pCtxt, 0, sizeof(OSCTXT)); \
+pCtxt->initCode = OSCTXTINIT;      \
+}
+
+#define rtBerCheckLicense(pCtxt,bits) rtCheckLicense(pCtxt,bits)
+#define rtBerInitAndCheckLicense(pCtxt,bits) rtInitAndCheckLicense(pCtxt,bits)
+
+#define rtPerCheckLicense(pCtxt,bits) rtCheckLicense(pCtxt,bits)
+#define rtPerInitAndCheckLicense(pCtxt,bits) rtInitAndCheckLicense(pCtxt,bits)
+
+#define rtXerCheckLicense(pCtxt,bits) rtCheckLicense(pCtxt,bits)
+#define rtXerInitAndCheckLicense(pCtxt,bits) rtInitAndCheckLicense(pCtxt,bits)
+
+/*
+#define rtInitBERContext(pCtxt) rtInitASN1Context(pCtxt)
+*/
+#define rtInitPERContext(pCtxt) rtInitASN1Context(pCtxt)
+#define rtInitXERContext(pCtxt) rtInitASN1Context(pCtxt)
+#define rtInitCPPContext(pCtxt) rtInitASN1Context(pCtxt)
+
+#define LCHECK(pctxt,bits)
+#define LCHECKBER(pctxt)
+#define LCHECKPER(pctxt)
+#define LCHECKXER(pctxt)
+#define LCHECKCPP(pctxt)
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* _RT_CHECKLIC_HH_ */

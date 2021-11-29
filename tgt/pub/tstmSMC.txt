@@ -1,0 +1,95 @@
+
+       ___
+     /_\_/_\    PRISMA Engineering S.r.l.
+    |\ /_\ /|   Telecom testing solutions
+    | |   | |   Via Petrocchi, 4 - 20127 Milano (Italy)
+    |/|___|\|   Tel. +39 02 26113507 - Fax +39 02 26113597
+     \|/_\|/    info@prisma-eng.com - http://www.prisma-eng.com
+
+
+
+/*+----------------+*/
+/*+ SMC PRIMITIVEs +*/
+/*+----------------+*/
+/*+ O&M +*/
+typedef VOID SMC_CONFIG;
+
+typedef VOID SMC_CONFIG_ACK;
+
+typedef {
+UINT UserPid
+LIST_OF UINT ListMs
+UINT FirstMS
+UINT NumMS
+STRING ProfileName 
+} SMC_SET_USER_PID;
+
+/*+ MN_SMS +*/
+typedef {
+UINT MsId
+UCHAR TIO
+HEXSTR Cause
+} MN_SMS_ABORT_REQ;
+
+typedef {
+UINT MsId
+UCHAR TIO
+UCHAR More
+HEXSTR Rpdu
+} MN_SMS_DATA_REQ;
+
+typedef {
+UINT MsId
+UCHAR TIO
+HEXSTR Rpdu
+} MN_SMS_DATA_IND;
+
+typedef {
+UINT MsId
+UCHAR More
+HEXSTR Rpdu
+} MN_SMS_EST_REQ;
+
+typedef {
+UINT MsId
+UCHAR TIO 
+} MN_SMS_EST_ACK;
+
+typedef {
+UINT MsId
+UCHAR TIO
+HEXSTR Rpdu
+} MN_SMS_EST_IND;
+
+typedef {
+UINT MsId
+UCHAR TIO
+HEXSTR Cause
+} MN_SMS_ERROR_IND;
+
+typedef {
+UINT MsId
+UCHAR TIO
+HEXSTR Cause
+} MN_SMS_REL_REQ;
+
+/*+----------+*/
+/*+ SMC PDUs +*/
+/*+----------+*/
+typedef {
+BIT TIFlag
+UCHAR TIO
+HEXSTR CpUserData 
+} SMC_CP_DATA;
+
+typedef {
+BIT TIFlag
+UCHAR TIO 
+} SMC_CP_ACK;
+
+typedef {
+BIT TIFlag
+UCHAR TIO
+HEXSTR CpCause 
+} SMC_CP_ERROR;
+

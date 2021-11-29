@@ -1,0 +1,29 @@
+# Return the modified cic as an hex string of lenght 4 (unsigned short)
+
+proc GetFuzzyCic { cic } {
+	#return "0000"
+	#Use this to get the correct cic without modifications
+	return $cic 
+}
+
+proc SendSCCPTimersModifications { spc stkId tiar tias } {
+	new OM_SCCP_XID_CMD s
+	wr 	s 	Spc 	$spc
+	wr	s	StkId	$stkId
+
+	# Prepare timers
+	set data "00000000"
+	append data [uitoh $tias]
+	append data [uitoh $tiar]
+	for {set i 0} {$i < 7} {incr i} {
+		append data "00000000"
+	}
+	# Prepare switches
+	append data "0000"
+
+	wr	s	Data	$data
+	
+
+	send s
+}
+

@@ -1,0 +1,157 @@
+##############################################################
+# $URL:
+#
+# $Author:
+#
+# Description: Counters and Statistics Utilities
+#
+#
+# $Rev:
+#
+# $Date:
+##############################################################
+
+proc InitCounters { countersList } {
+	foreach idx $countersList {
+		set ::$idx 0
+	}
+}
+
+proc IncreaseCounter { counter {val 1} } {
+	incr ::$counter $val
+}
+
+proc DecreaseCounter { counter } {
+	incr ::$counter -1
+}
+
+proc SetCounter { counter val } {
+	set ::$counter $val
+}
+
+proc GetCounter { counter } {
+	return [set ::$counter]
+}
+
+proc UpdateRatio { counter num den } {
+
+	global $counter $num $den
+
+	append tmpnum [set $num] ".0"
+
+	if { [set $den] != 0 } {
+		set ratio [format {%4.4f} [expr {$tmpnum / [set $den]}]]
+	} else {
+		set ratio -1
+	}
+	
+	set $counter $ratio
+}
+
+proc InitBhcaHandler { val } {
+	global glCurrentCallsNum glPrevBhcaResult glNumOfTicks glK
+
+	set glCurrentCallsNum 0
+	set glPrevBhcaResult 0
+	set glNumOfTicks 1
+	set glK [expr {3600 / $val}]
+}
+
+proc ComputeBhca { counter } {
+	global glCurrentCallsNum glPrevBhcaResult glNumOfTicks glK
+    global $counter
+
+#logscr "Entering: $glCurrentCallsNum $glPrevBhcaResult $glNumOfTicks [set $counter]"
+
+	append glCurrentCallsNum ".0"
+	append sum [expr {$glCurrentCallsNum * $glK + $glPrevBhcaResult}] 
+
+	if { $glNumOfTicks != 0 } {
+		set val [format {%4.4f} [expr {$sum / $glNumOfTicks}]]
+		set $counter $val 
+		set glPrevBhcaResult [expr {$glPrevBhcaResult + $val}]
+	} else {
+		set $counter -1
+	}
+
+	set glCurrentCallsNum 0
+
+	incr glNumOfTicks
+
+#logscr "Exiting : $glCurrentCallsNum $glPrevBhcaResult $glNumOfTicks [set $counter]"
+}
+
+proc IncreaseBhcaCallCounter { } {
+	global glCurrentCallsNum
+
+	incr glCurrentCallsNum
+}
+
+### used by UM Tstm
+
+set glErrorFlag 0
+proc IncrProfCounter { msid counter {val 1} } {
+	
+	global glErrorFlag
+
+	## NB: updateProfStat: C callback defined 
+	if { [catch {updateProfStat $msid $counter "incr" $val ? ?} res] } {
+		if { $glErrorFlag == 0 } {
+			log "ERROR (IncrProfCounter): MS=$msid, counter=$counter, res=$res ##"
+			set glErrorFlag 1
+		}
+	}
+	# debug
+	#logscr "DEBUG (IncrProfCounter): MS=$msid, counter=$counter, res=$res ##"
+}
+
+proc DecrProfCounter { msid counter {val 1} } {
+	
+	global glErrorFlag
+
+	## NB: updateProfStat: C callback defined 
+	if { [catch {updateProfStat $msid $counter "decr" $val ? ?} res] } {
+		if { $glErrorFlag == 0 } {
+			log "ERROR (DecrProfCounter): MS=$msid, counter=$counter, res=$res ##"
+			set glErrorFlag 1
+		}
+	}
+	# debug
+	#logscr "DEBUG (DecrProfCounter): MS=$msid, counter=$counter, res=$res ##"
+}
+
+## Parameters of "SetProfCounter" action:
+###  
+###                         ms            pool
+### par1 = 
+###		--> ""              set	          no_action
+###		--> "min"           set_min       set_min_in_poolDb
+###		--> "max"           set_max       set_max_in_poolDb
+###		--> "average"       set_average   set_average_in_poolDb
+###		--> "average_pool"  set           set_average_in_poolDb
+###		--> "set_pool"      set           set_in_poolDb
+###		--> "total_pool"    set           set_total_in_poolDb
+###
+###	 with par1="average" 
+###                         ms                   pool
+### par2 = 
+###		--> "base"      	base_for_average     not_used 
+###
+proc SetProfCounter { msid counter {val ?} {par1 ?} {par2 ?} } {
+	
+	global glErrorFlag
+
+
+	## NB: updateProfStat: C callback defined 
+	if { [catch {updateProfStat $msid $counter "set" $val $par1 $par2} res] } {
+		if { $glErrorFlag == 0 } {
+			log "ERROR (SetProfCounter): MS=$msid, counter=$counter, res=$res ##"
+			set glErrorFlag 1
+		}
+	}
+	# debug
+	#logscr "DEBUG (SetProfCounter): MS=$msid, counter=$counter, res=$res ##"
+}
+
+### end of file ##############################################################
+

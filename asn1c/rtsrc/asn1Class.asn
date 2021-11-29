@@ -1,0 +1,16 @@
+Class DEFINITIONS ::= BEGIN
+   TYPE-IDENTIFIE ::= CLASS {
+      &id OBJECT IDENTIFIER UNIQUE,
+      &Type 
+   }
+   WITH SYNTAX { &Type IDENTIFIED BY &id }
+
+   ABSTRACT-SYNTA ::= CLASS {
+      &id OBJECT IDENTIFIER UNIQUE,
+      &Type,
+      &property BIT STRING { handles-invalid-encoding(0)} DEFAULT {}
+   }
+   WITH SYNTAX {
+      &Type IDENTIFIED BY &id [HAS PROPERTY &property] 
+   }
+END

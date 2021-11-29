@@ -1,0 +1,61 @@
+##############################################################
+# $URL: $
+#
+# $Author: $
+#
+# Description: General Common Db Utilities
+#
+#
+# $Rev: $
+#
+# $Date: $
+##############################################################
+
+# Return ordered indexes of csv file
+proc GetCsvIndexes { csvname } {
+
+	log "GetCsvIndexes: started"
+
+	# Initialize parameters
+	set val_l [list]
+
+	# Open CSV file
+	if {[info commands tm_open] == ""} {
+		#tm_open doesn't exist in this Test Manager
+		set OpenCmd open
+		log "DbCreate.tsm: \"tm_open\" command not supported in this Test Manager..."
+		log "... \"open\" will be used"
+	} else {
+		set OpenCmd tm_open
+	}
+
+	#get the DB name
+	set DbName [DbGetName $csvname]
+
+	#start reading the csv file
+	if {[catch {$OpenCmd $csvname r} csv]} {
+		#log the error
+		logscr "GetCsvIndexes: error opening csv ($csvname)"
+		exit
+	}
+
+	#read the csv file part with initialization values
+	#every line initializes a DB record
+	set ptrn "Value,(\[^,]*)"
+	for {gets $csv line} {![eof $csv]} {gets $csv line} {
+
+		if {![regexp $ptrn $line match val]} {
+			log "GetCsvIndexes: skipped line ($line)"
+			continue
+		}
+		lappend val_l $val
+	}
+
+	log "GetCsvIndexes: completed with list ($val_l)"
+	if { [llength val_l] } {
+		return $val_l
+	} else {
+		return "?"
+	}
+}
+

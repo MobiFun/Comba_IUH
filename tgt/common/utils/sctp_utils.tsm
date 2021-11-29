@@ -1,0 +1,810 @@
+
+
+###set myInfo(AddrOPT_NOTUSED) "0.0.0.0:0"
+
+# The following two procedures are defined because the om_sgp part is not based on glOmDb
+
+proc DbGetCurSpc {} {
+    global glSs7StkDb glLinksetIdx
+    global glOmDb glIdx
+
+    if { [info exists glOmDb] } {
+    	set spc [lindex [split $glIdx "-"] 0]
+    } else {
+        set spc [DbGet $glSs7StkDb $glLinksetIdx Opc]
+    }
+    return $spc
+}
+
+proc DbGetCurStkId {} {
+    global glSs7StkDb glLinksetIdx
+    global glOmDb glIdx
+    
+    if { [info exists glOmDb] } {
+    	set stkId [lindex [split $glIdx "-"] 1]
+    } else {
+        set stkId [DbGet $glSs7StkDb $glLinksetIdx StkId]
+    }
+    return $stkId
+}
+
+if {0} {
+proc parray {a {pattern *}} {
+    upvar 1 $a array
+    if {![array exists array]} {
+    	error "\"$a\" isn't an array"
+    }
+    set maxl 0
+    foreach name [lsort [array names array $pattern]] {
+	    if {[string length $name] > $maxl} {
+    	        set maxl [string length $name]
+	    }
+    }
+    set maxl [expr {$maxl + [string length $a] + 2}]
+    foreach name [lsort [array names array $pattern]] {
+	    set nameString [format %s(%s) $a $name]
+	    logscr [format "%-*s = %s" $maxl $nameString $array($name)]
+    }
+}
+}
+
+if {0} {
+    typedef struct {
+        uint   family;    /* IPv4, IPv6. ONLY 'IPv4' is supported */
+        uint   port;      /* port number */
+        uchar  host[4];   /* 32-bit IPv4 Network byte ordered */
+        //uchar  host[16];  /* 32-bit IPv4 or 128-bit IPv6 address. Network byte ordered */
+    
+    } sctpULP_ADDRt;
+}
+
+proc ulpAddrSize {} {
+    return 12
+}
+
+# txtAddr ::= <addr>:<port>
+# Es. set txtAddr "192.168.13.117:9191"
+
+proc ulpAddrFromTxt { txtAddr } {
+    global SCTP_IPFAMILY
+
+    lassign {host port} [split $txtAddr :]
+    set intHost [iptoui $host L]; # default is B
+    set addr [binary format "iii" $SCTP_IPFAMILY(v4) $port $intHost]
+    return $addr
+}
+
+# txtAddr ::= <addr>:<port>:<spc>
+proc ulpAddrSpcFromTxt { txtAddr } {
+    global SCTP_IPFAMILY
+
+    lassign {host port spc} [split $txtAddr :]
+logscr "ulpAddrSpcFromTxt: host = $host, port = $port spc = $spc"
+    set intHost [iptoui $host L]; # default is B
+    set addr [binary format "iiii" $SCTP_IPFAMILY(v4) $port $intHost $spc]
+    return $addr
+}
+
+
+
+proc ulpAddrToTxt { addr {offset 0}} {
+    binary scan $addr "@${offset}iii" family port host
+    set host [uitoip $host L]; # default is B
+    return "$host:$port"
+}
+
+# ------------------------------------------------------------------
+
+global SCTP_DATA_UNSENT
+global SCTP_DATA_UNACK
+set SCTP_DATA_UNSENT    1;  # /* SCTP_DATA_UNSENT: inqueue never on wire */
+set SCTP_DATA_UNACK     2;  # /* SCTP_DATA_SENT: on wire at failure */
+
+global SCTP_IPFAMILY
+set SCTP_IPFAMILY(v4)   1
+set SCTP_IPFAMILY(v6)   2
+
+global sctpAddrStatusTxt
+set sctpAddrStatusTxt(1) "SCTP_ADDR_AVAILABLE"
+set sctpAddrStatusTxt(2) "SCTP_ADDR_UNREACHABLE"
+set sctpAddrStatusTxt(3) "SCTP_ADDR_REMOVED"
+set sctpAddrStatusTxt(4) "SCTP_ADDR_ADDED"
+set sctpAddrStatusTxt(5) "SCTP_ADDR_MADE_PRIM"
+set sctpAddrStatusTxt(6) "SCTP_ADDR_CONFIRMED"
+
+global sctpAddrStatusCode
+set sctpAddrStatusCode(SCTP_ADDR_AVAILABLE)    1
+set sctpAddrStatusCode(SCTP_ADDR_UNREACHABLE)  2
+set sctpAddrStatusCode(SCTP_ADDR_REMOVED)      3
+set sctpAddrStatusCode(SCTP_ADDR_ADDED)        4
+set sctpAddrStatusCode(SCTP_ADDR_MADE_PRIM)    5
+set sctpAddrStatusCode(SCTP_ADDR_CONFIRMED)    6
+
+if {0} {
+    state AnySCTP {
+        SCTP_STATUS_ACK sctpStatusAck
+        SCTP_STATUS_NAK sctpStatusNak
+
+        SCTP_ASSOCIATE_ACK sctpAssociateAck
+        SCTP_ASSOCIATE_NAK sctpAssociateNak
+
+        SCTP_REQUESTHEARTBEAT_ACK sctpRequestHeartbeatAck
+        SCTP_REQUESTHEARTBEAT_NAK sctpRequestHeartbeatNak
+        SCTP_CHANGEHEARTBEAT_ACK  sctpChangeHeartbeatAck
+        SCTP_CHANGEHEARTBEAT_NAK  sctpChangeHeartbeatNak
+
+        SCTP_SETPRIMARY_ACK sctpSetPrimaryAck
+        SCTP_SETPRIMARY_NAK sctpSetPrimaryNak
+
+        SCTP_GETSRTTREPORT_CMD SctpSendGetSrttReport
+        SCTP_GETSRTTREPORT_ACK sctpGetSrttReportAck
+        SCTP_GETSRTTREPORT_NAK sctpGetSrttReportNak
+    
+        SCTP_SETFAILURETHRESHOLD_CMD SctpSendSetFailureThreshold
+        SCTP_SETFAILURETHRESHOLD_ACK sctpSetFailureThresholdAck
+        SCTP_SETFAILURETHRESHOLD_NAK sctpSetFailureThresholdNak
+
+        SCTP_SETPROTOCOLPARAMETERS_CMD SctpSendSetProtocolParameters
+        SCTP_SETPROTOCOLPARAMETERS_ACK SctpSetProtocolParametersAck
+        SCTP_SETPROTOCOLPARAMETERS_NAK SctpSetProtocolParametersNak
+
+        SCTP_SEND_FAILURE_IND           SctpSendFailureInd
+        SCTP_NETWORK_STATUS_CHANGE_IND  SctpNetworkStatusChgInd
+        SCTP_COMMUNICATION_UP_IND       SctpCommUpInd
+        SCTP_COMMUNICATION_LOST_IND     SctpCommLostInd
+        SCTP_COMMUNICATION_ERROR_IND    SctpCommErrorInd
+        SCTP_RESTART_IND                SctpRestartInd
+        SCTP_SHUTDOWN_COMPLETE_IND      SctpShutdownComplInd
+
+	    default {logscr "DEFAULT FROM STATE 'ANY'"; LogSig}
+    }
+}
+
+proc sctpAssociateAck {} {
+    global _sig
+    global myInfo
+    
+    if {0} {
+        typedef struct {
+            uint SctpId;
+            uint         AssId;
+            uint         OutStreamCount;
+            uint         DstAddrListSize;
+            sctpIP_ADDRt DstAddrList[1];
+        } sctpASSOCIATE_ACKt;
+    }
+    set data [rd _sig Data]
+    set binData [binary format H* $data]
+    binary scan $binData "ii" sctpId assId
+    set myInfo(assId) $assId
+    logscr "sctpAssociateAck: assId=$assId"
+}
+
+proc sctpAssociateNak {} {
+    global _sig
+    logscr "sctpAssociateNak"
+}
+
+proc SctpSendCfg {listenBacklog rxBufSize inStreamsCnt outStreamsCnt \
+                             disableNagle \
+                             soRcvBuf  \
+                             soSndBuf  \
+                             pathRet  \
+                             ascRet  \
+                             rtoInit  \
+                             rtoMin  \
+                             rtoMax  \
+                             rxMaxPendDataChunks \
+                 } {
+
+    log "SctpSendCfg: listenBacklog=$listenBacklog, rxBufSz=$rxBufSize, inStreamsCnt=$inStreamsCnt, outStreamsCnt=$outStreamsCnt"
+    log "             disableNagle=$disableNagle"
+    log "             soRcvBuf=$soRcvBuf"
+    log "             soSndBuf=$soSndBuf"
+    log "             pathRet=$pathRet"
+    log "             ascRet=$ascRet"
+    log "             rtoInit=$rtoInit"
+    log "             rtoMin=$rtoMin"
+    log "             rtoMax=$rtoMax"
+    log "             rxMaxPendDataChunks=$rxMaxPendDataChunks"
+    new OM_SCTP_CFG_CMD sig
+    
+	if {0} {
+        typedef struct {
+	        uint Inst;
+            uint ListenBacklog;
+            uint RxBufSz;
+            uint InStreamsCnt;
+            uint OutStreamsCnt;
+    
+        } sctpOmCFGt;
+
+
+        typedef struct {
+            ss7_HDRt    Hdr;
+            uint Inst;
+            uint ListenBacklog;
+            uint RxBufSz;
+            uint InStreamsCnt;
+            uint OutStreamsCnt;
+            // Note: above is the same as ss7om_SCTP_CFGt
+            uint RxMaxPendDataChunks;
+            uint DisableNagle;
+            uint SoRcvBuf; // bytes
+            uint SoSndBuf; // bytes
+            uint PathRet;  // number of attempts
+            uint AscRet;   // number of attempts
+            uint RtoInit;  // milliseconds
+            uint RtoMin;   // milliseconds
+            uint RtoMax;   // milliseconds
+
+        } ss7om_SCTP_EXTCFGt;
+
+	}
+    set fakeInst 7
+    set binData [binary format "iiiiiiiiiiiiii" $fakeInst $listenBacklog $rxBufSize \
+                                     $inStreamsCnt $outStreamsCnt \
+                                     $rxMaxPendDataChunks \
+                                     $disableNagle  \
+                                     $soRcvBuf   \
+                                     $soSndBuf   \
+                                     $pathRet   \
+                                     $ascRet   \
+                                     $rtoInit   \
+                                     $rtoMin   \
+                                     $rtoMax   \
+                                     $rtoMax   \
+                ]
+    binary scan $binData H* hexData
+    wr sig Data $hexData
+
+	wr sig Spc   [DbGetCurSpc]
+	wr sig StkId [DbGetCurStkId]
+
+	LogOutputMsg $sig
+    send sig
+}
+
+# ------------------------------------------------------------------
+
+proc SctpSendInitialize {{locPort 9191} {locAddrTxtList ""}} {
+	new SCTP_INITIALIZE_CMD sig
+	if {0} {
+        typedef struct {
+            ushort        UsrData;
+            ushort        LocPort;
+            uint          LocAddrListSize; /* 0 means INADDR_ANY */
+            sctpULP_ADDRt LocAddrList[1];
+        } sctpINITIALIZE_CMDt;
+	}
+    set dummyUsrData 0
+	set locAddrTxtListSize [llength $locAddrTxtList]
+    set binData [binary format  "ssi" $dummyUsrData $locPort $locAddrTxtListSize]
+    # Add a fake locAddList as placeholder
+    if { $locAddrTxtListSize == 0 } {
+        set locAddrTxtList "1.2.3.4:5"
+    }
+	foreach txtAddr $locAddrTxtList {
+                #set intAddr [iptoui $addr L]; # default is B
+	            #append binData [binary format "i" $intAddr]
+            set ulpAddr [ulpAddrFromTxt $txtAddr]
+	        append binData $ulpAddr
+    }
+    binary scan $binData H* hexData
+	wr sig Data $hexData
+	send sig
+}
+
+proc SctpSendStatus { sctpId assId } {
+    logscr "SctpSendStatus $assId"
+	new SCTP_STATUS_CMD sig
+	if {0} {
+        typedef struct {
+            uint sctpId;
+            uint          AssId;
+        } sctpSTATUS_CMDt;
+	}
+    set binData [binary format  "i" $sctpId $assId]
+
+    binary scan $binData H* hexData
+	wr sig Data $hexData
+	send sig
+}
+
+proc SctpSendData { sctpId assId data {streamId 1} {context 0x00} {payloadProtocolId 5} {lifeTime 2}
+                    {dstAddr "1.2.3.4:0"} {unorderFlag 3} {noBundleFlag 4}
+                  } {
+
+    set dataSize [string length $data]
+	logscr "SctpSendData: assId=$assId. stream=$streamId, ctx=$context, ppid=$payloadProtocolId, n=$dataSize, data=($data)"
+	new SCTP_DATA_REQ sig
+	if {0} {
+        typedef struct {
+            uint sctpId;
+            uint AssId;
+            uint Context;
+            uint StreamId;
+            uint LifeTime;
+            sctpIP_ADDRt DstAddr;
+            uint UnorderFlag;
+            uint NoBundleFlag;
+            uint PayloadProtocolId;
+            uint DataSize;
+            uchar Data[1];
+        } sctpDATA_REQt;
+	}
+    set binData    [binary format  "iiiii" $sctpId $assId $context $streamId $lifeTime]
+    append binData [ulpAddrFromTxt $dstAddr]
+    append binData [binary format  "iiii" $unorderFlag $noBundleFlag $payloadProtocolId \
+                                          $dataSize]
+    append binData $data
+
+    binary scan $binData H* hexData
+	wr sig Data $hexData
+	send sig
+}
+
+proc sctpSendAssociate {sctpId sgHost sgPort locOutStreamCount} {
+    logscr "sctpSendAssociate $sctpId $sgPort $sgHost $locOutStreamCount"
+	new SCTP_ASSOCIATE_CMD sig
+	if {0} {
+        typedef struct {
+            int          InstId; /* local SCTP instance name */
+            sctpIP_ADDRt DstAddr;
+            uint         OutStreamCount;
+        } sctpASSOCIATE_CMDt;
+	}
+    ###set intAddr [iptoui $sgHost L]; # default is B
+    ###set binData [binary format  "iiii" $sctpId $sgPort $intAddr $locOutStreamCount]
+    set binData    [binary format  "i" $sctpId]
+    append binData [ulpAddrFromTxt "$sgHost:$sgPort"]
+    append binData [binary format  "i" $locOutStreamCount]
+
+    binary scan $binData H* hexData
+	wr sig Data $hexData
+	send sig
+}
+
+proc sctpSendShutdown {sctpId assId} {
+    logscr "sctpSendShutdown $assId"
+	new SCTP_SHUTDOWN_CMD sig
+	if {0} {
+        typedef struct {
+            uint SctpId;
+            uint AssId;
+         } sctpSHUTDOWN_CMDt;
+	}
+    set binData [binary format  "ii" $sctpId $assId]
+
+    binary scan $binData H* hexData
+	wr sig Data $hexData
+	send sig
+}
+
+proc sctpSendAbort {sctpId assId causeCode} {
+    logscr "sctpSendAbort $assId $causeCode"
+	new SCTP_ABORT_CMD sig
+	if {0} {
+        typedef struct {
+            uint SctpId;
+            uint AssId;
+            uint CauseCode;
+        } sctpABORT_CMDt;
+	}
+    set binData [binary format  "iii" $sctpId $assId $causeCode]
+
+    binary scan $binData H* hexData
+	wr sig Data $hexData
+	send sig
+}
+
+proc SctpSendRequestHeartbeat {sctpId assId dstAddrTxt} {
+    logscr "SctpSendRequestHeartbeat $assId $dstAddrTxt"
+	new SCTP_REQUESTHEARTBEAT_CMD sig
+	if {0} {
+        typedef struct {
+            uint SctpId;
+            uint AssId;
+            sctpULP_ADDRt DstAddr;
+        } sctpREQUESTHEARTBEAT_CMDt;
+	}
+    set binData [binary format  "ii" $sctpId $assId]
+    append binData [ulpAddrFromTxt $dstAddrTxt]
+
+    binary scan $binData H* hexData
+	wr sig Data $hexData
+	send sig
+}
+
+proc sctpRequestHeartbeatAck {} {
+    logscr "sctpRequestHeartbeatAck"
+}
+
+proc sctpRequestHeartbeatNak {} {
+    logscr "sctpRequestHeartbeatNak"
+}
+
+proc sctpChangeHeartbeatAck {} {
+    logscr "sctpChangeHeartbeatAck"
+}
+
+proc sctpChangeHeartbeatNak {} {
+    logscr "sctpChangeHeartbeatNak"
+}
+
+proc SctpSendChangeHeartbeat {sctpId assId dstAddrTxt enable interval} {
+    logscr "SctpSendChangeHeartbeat $assId $dstAddrTxt $enable $interval"
+	new SCTP_CHANGEHEARTBEAT_CMD sig
+	if {0} {
+        typedef struct {
+            uint SctpId;
+            uint AssId;
+            sctpULP_ADDRt DstAddr;
+            uint NewState;  // 0=disable, 1=enable
+            uint Interval;
+
+        } sctpCHANGEHEARTBEAT_CMDt;
+	}
+    set binData [binary format  "ii" $sctpId $assId]
+    append binData [ulpAddrFromTxt $dstAddrTxt]
+    append binData [binary format  "ii" $enable $interval]
+
+    binary scan $binData H* hexData
+	wr sig Data $hexData
+	send sig
+}
+
+proc sctpSetPrimaryAck {} {
+    logscr "sctpSetPrimaryAck"
+}
+
+proc sctpSetPrimaryNak {} {
+    logscr "sctpSetPrimaryNak"
+}
+
+proc SctpSendSetPrimary {sctpId assId dstAddrTxt srcAddrTxt} {
+    logscr "SctpSendSetPrimary $assId $dstAddrTxt $srcAddrTxt"
+	new SCTP_SETPRIMARY_CMD sig
+	if {0} {
+        typedef struct {
+            uinr SctpId;
+            uint AssId;
+            sctpULP_ADDRt DstAddr;
+            sctpULP_ADDRt SrcAddr;
+        } sctpSETPRIMARY_CMDt;
+	}
+    set binData [binary format  "ii" $sctpId $assId]
+    append binData [ulpAddrFromTxt $dstAddrTxt]
+    append binData [ulpAddrFromTxt $srcAddrTxt]
+
+    binary scan $binData H* hexData
+	wr sig Data $hexData
+	send sig
+}
+
+# ------------------------------------------------------------------------
+
+proc SctpSendFailureInd  {} {
+    global _sig
+    set data [rd _sig Data]
+    set binData [binary format H* $data]
+    if { 0 } {
+        typedef struct {
+            uint SctpId;
+            uint AssId;
+            uint CauseCode;
+            uint Reason;
+            uint DataRetrievalId;
+            uint DataSize; 
+            uchar Data[1];
+        } sctpSENDFAILURE_INDt;
+    }
+    binary scan $binData "iiiiii" sctpId assId causeCode reason dataId dataSize
+    logscr "SctpSendFailureInd: assId=$assId, causeCode=$causeCode, reason=$reason, dataId=$dataId, dataSize=$dataSize"
+}
+
+proc SctpNetworkStatusChgInd  {} {
+    global _sig
+    global sctpAddrStatusTxt sctpAddrStatusCode
+    global myInfo
+    
+    if {0} {
+        use:
+            P.AssId
+            P.NewStatus
+            P.DstAddr
+    }
+    set data [rd _sig Data]
+    set binData [binary format H* $data]
+    
+    SctpParseStdCtlInd $binData stdCtlInd
+    #set dstAddr [uitoip $stdCtlInd(dstAddr) L]; # default is B
+	logscr "SctpNetworkStatusChgInd: newStatus=$sctpAddrStatusTxt($stdCtlInd(newStatus))"
+    parray stdCtlInd
+    if { $stdCtlInd(newStatus) == $sctpAddrStatusCode(SCTP_ADDR_CONFIRMED) } {
+        set myInfo(dstPrimAddrTxt) $stdCtlInd(dstAddrTxt)
+    }
+}
+
+proc SctpCommUpInd  {} {
+    global _sig
+    global myInfo
+    
+    set data [rd _sig Data]
+    set binData [binary format H* $data]
+    SctpParseStdCtlInd $binData stdCtlInd
+    parray stdCtlInd
+    logscr "SctpCommUpInd: dstAddrListTxt=$stdCtlInd(dstAddrListTxt)"
+    set myInfo(dstAddrList) $stdCtlInd(dstAddrListTxt)
+    set myInfo(curPathIdx) 0
+
+    # Configure Protocol parameters
+    #set dstAddr $myInfo(AddrOPT_NOTUSED)
+    set dstAddrTxt [lindex $myInfo(dstAddrList) 0]
+
+    set protoParams(RTOInitialMsecs)        [expr 3 * 1000]
+    set protoParams(RTOMinMsecs)            [expr 1 * 1000]
+    set protoParams(RTOMaxMsecs)            [expr 60 * 1000]
+    set protoParams(RTOAlpha)               8; # 1/8
+    set protoParams(RTOBeta)                4; # 1/4
+    set protoParams(ValidCookieLifeMsecs)   [expr 60 * 1000]
+    set protoParams(AssociationMaxRetrans)  10
+    set protoParams(PathMaxRetrans)         5
+    set protoParams(MaxInitRetransmits)     8
+    set protoParams(HBIntervalMsecs)        [expr 30 * 1000]
+
+    logscr "SctpCommUpInd: Configure Protocol parameters"
+    SctpSendSetProtocolParameters $stdCtlInd(assId) protoParams $dstAddrTxt
+
+    # Request status info
+    logscr "SctpCommUpInd: Request status info"
+    SctpSendStatus $stdCtlInd(assId)
+}
+
+proc SctpCommLostInd  {} {
+    global _sig
+    logscr "SctpCommLostInd"
+}
+
+proc SctpCommErrorInd  {} {
+    global _sig
+    logscr "SctpCommErrorInd"
+}
+
+proc SctpRestartInd  {} {
+    global _sig
+    logscr "SctpRestartInd"
+}
+
+proc SctpDumpShutdownComplInd  {} {
+    global _sig
+    set data [rd _sig Data]
+    set binData [binary format H* $data]
+    SctpParseStdCtlInd $binData stdCtlInd
+	logscr "SctpDumpShutdownComplInd: assId=$stdCtlInd(assId)"
+}
+
+proc SctpParseStdCtlInd { binData stdCtlIndRef } {
+    upvar $stdCtlIndRef stdCtlInd
+
+    if { 0 } {
+        typedef struct {
+            uint SctpId; /* local SCTP instance name */
+            uint AssId;
+            uint Status;
+            uint DataRetrievalId;
+            uint CauseCode;
+            uint Context;
+            uint TsnLastAcked;  /* the TSN last acked by that peer endpoint */
+            uint TsnLastSent;   /* the TSN last sent to that peer endpoint */
+            uint ErrorInfo; /* this indicates the type of error and optionally some
+                             * additional information received through the ERROR chunk
+                             */
+            uint         OutStreamCount; /* The maximum number of streams allowed
+                                          * to be used in this association by the ULP
+                                          */
+            uint         InStreamCount;   /* The number of streams the peer endpoint has
+                                           * requested with this association (this may
+                                           * not be the same number as 'outbound stream count')
+                                           */
+            sctpIP_ADDRt DstAddr;
+            uint         NewStatus;
+            uint         DstAddrListSize;
+            sctpIP_ADDRt DstAddrList[1];  /* the complete set of transport
+                                           * addresses of the peer
+                                           */
+        } sctpCTL_INDt;
+    }
+    set offset 0
+    binary scan $binData "@${offset}iiiiiiiiiii" stdCtlInd(sctpId) stdCtlInd(assId) stdCtlInd(status) \
+                            stdCtlInd(dataRetrId) \
+                            stdCtlInd(causeCode) stdCtlInd(context) stdCtlInd(tsnLastAcked) \
+                            stdCtlInd(tsnLastSent) stdCtlInd(errorInfo) stdCtlInd(outStream) \
+                            stdCtlInd(inStream)
+    set offset [expr 11 * 4]
+    set stdCtlInd(dstAddrTxt) [ulpAddrToTxt $binData $offset]
+    incr offset [ulpAddrSize]
+    binary scan $binData "@${offset}ii" stdCtlInd(newStatus) stdCtlInd(dstAddrListSize)
+    incr offset 8
+    set stdCtlInd(dstAddrListTxt) [list]
+    for {set i 0} {$i < $stdCtlInd(dstAddrListSize)} {incr i; incr offset [ulpAddrSize]} {
+        set dstAddrTxt [ulpAddrToTxt $binData $offset]
+        lappend stdCtlInd(dstAddrListTxt) $dstAddrTxt
+    }
+}
+
+proc sctpStatusAck {} {
+    global _sig
+    global myInfo
+    set data [rd _sig Data]
+    set binData [binary format H* $data]
+    if { 0 } {
+        uint SctpId;
+        uint AssId;
+        uint State;
+        uint Rwnd;
+        uint UnackData;
+        uint PendData;
+        uint InStreams;
+        uint OutStreams;
+        sctpPEER_INFOt PeerPrimInfo;
+            typedef struct {
+                sctpIP_ADDRt Addr;
+                uint         State;
+                uint         Cwnd;
+                uint         Srtt;
+                uint         Rto;
+                uint         Mtu;
+            } sctpPEER_INFOt;
+    }
+    binary scan $binData "iiiiiiii" sctpId assId state rwnd unack pend instr outstr
+    set offset [expr 7*4]
+    set myInfo(dstPrimAddrTxt) [ulpAddrToTxt $binData $offset]
+    incr offset [ulpAddrSize]
+    binary scan $binData "@${offset}iiiii" pstate pcwnd psrtt prto pmtu
+    logscr "sctpStatusAck: assId=$assId, state=$state, rwnd=$rwnd, unack=$unack, pend=$pend, instr=$instr, outstr=$outstr"
+    logscr "               pstate=$pstate, pcwnd=$pcwnd, psrtt=$psrtt, prto=$prto, pmtu=$pmtu"
+    logscr "               primPath=$myInfo(dstPrimAddrTxt)"
+}
+
+proc sctpStatusNak {} {
+    global _sig
+    logscr "sctpStatusNak"
+}
+
+# ----------------------------------------------------------------
+proc SctpSendGetSrttReport {sctpId assId dstAddrTxt} {
+    logscr "SctpSendGetSrttReport"
+	new SCTP_GETSRTTREPORT_CMD sig
+	if {0} {
+        typedef struct {
+            uint SctpId
+            uint AssId;
+            sctpULP_ADDRt DstAddr;
+        } sctpGETSRTTREPORT_CMDt;
+	}
+    set binData [binary format  "ii" $sctpId $assId]
+    append binData [ulpAddrFromTxt $dstAddrTxt]
+
+    binary scan $binData H* hexData
+	wr sig Data $hexData
+	send sig
+}
+
+proc sctpGetSrttReportAck {} {
+    global _sig
+    global myInfo
+    set data [rd _sig Data]
+    set binData [binary format H* $data]
+    if {0} {
+        typedef struct {
+            uint          SctpId;
+            uint          AssId;
+            sctpULP_ADDRt DstAddr;
+            uint          Srtt;
+        } sctpGETSRTTREPORT_ACKt;
+    }
+    binary scan $binData "ii" sctpId assId
+    set offset 4
+    set dstAddrTxt [ulpAddrToTxt $binData $offset]
+    incr offset [ulpAddrSize]
+    binary scan $binData "@${offset}i" srtt
+    logscr "sctpGetSrttReportAck: dstAddrTxt=$dstAddrTxt, srtt=$srtt"
+}
+
+proc sctpGetSrttReportNak {} {
+    global _sig
+    logscr "sctpGetSrttReportNak"
+}
+
+# ----------------------------------------------------------------
+proc SctpSendSetFailureThreshold {sctpId assId dstAddrTxt failThres} {
+    logscr "SctpSendSetFailureThreshold: dstAddrTxt=$dstAddrTxt, failThres=$failThres"
+	new SCTP_SETFAILURETHRESHOLD_CMD sig
+	if {0} {
+        typedef struct {
+            uint          AssId;
+            sctpULP_ADDRt DstAddr;
+            uint          FailureThreshold;
+        } sctpSETFAILURETHRESHOLD_CMDt;
+	}
+    set binData [binary format  "ii" $sctpId $assId]
+    append binData [ulpAddrFromTxt $dstAddrTxt]
+    append binData [binary format  "i" $failThres]
+
+    binary scan $binData H* hexData
+	wr sig Data $hexData
+	send sig
+}
+
+proc sctpSetFailureThresholdAck {} {
+    global _sig
+    logscr "sctpSetFailureThresholdAck"
+}
+
+proc sctpSetFailureThresholdNak {} {
+    global _sig
+    logscr "sctpSetFailureThresholdNak"
+}
+
+# ----------------------------------------------------------------
+proc SctpSendSetProtocolParameters {sctpId assId paramsRef dstAddrTxt} {
+    upvar $paramsRef p
+    logscr "SctpSendSetProtocolParameters"
+    parray p
+    if {0} {
+        typedef struct {
+            uint SctpId
+            uint                    AssId;
+            sctpULP_ADDRt           DstAddr;
+            sctpPROTOCOLPARAMETERSt Parameters;
+
+        } sctpSETPROTOCOLPARAMETERS_CMDt;
+            typedef struct {
+                uint RTOInitialMsecs;
+                uint RTOMinMsecs;
+                uint RTOMaxMsecs;
+                uint RTOAlpha;
+                uint RTOBeta;
+                uint ValidCookieLifeMsecs;
+                uint AssociationMaxRetrans;
+                uint PathMaxRetrans;
+                uint MaxInitRetransmits;
+                uint HBIntervalMsecs;
+
+            } sctpPROTOCOLPARAMETERSt;
+    }
+	new SCTP_SETPROTOCOLPARAMETERS_CMD sig
+    set binData [binary format  "ii" $sctpid $assId]
+    append binData [ulpAddrFromTxt $dstAddrTxt]
+    append binData [binary format  "iiiii" \
+                                    $p(RTOInitialMsecs) \
+                                    $p(RTOMinMsecs) \
+                                    $p(RTOMaxMsecs) \
+                                    $p(RTOAlpha) \
+                                    $p(RTOBeta) \
+                    ]
+    append binData [binary format  "iiiii" \
+                                    $p(ValidCookieLifeMsecs) \
+                                    $p(AssociationMaxRetrans) \
+                                    $p(PathMaxRetrans) \
+                                    $p(MaxInitRetransmits) \
+                                    $p(HBIntervalMsecs) \
+                    ]
+    binary scan $binData H* hexData
+	wr sig Data $hexData
+	send sig
+}
+
+proc SctpSetProtocolParametersAck {} {
+    global _sig
+    logscr "SctpSetProtocolParametersAck"
+}
+
+proc SctpSetProtocolParametersNak {} {
+    global _sig
+    logscr "SctpSetProtocolParametersNak"
+}
+
+
+

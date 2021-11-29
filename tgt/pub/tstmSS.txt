@@ -1,0 +1,335 @@
+
+       ___
+     /_\_/_\    PRISMA Engineering S.r.l.
+    |\ /_\ /|   Telecom testing solutions
+    | |   | |   Via Petrocchi, 4 - 20127 Milano (Italy)
+    |/|___|\|   Tel. +39 02 26113507 - Fax +39 02 26113597
+     \|/_\|/    info@prisma-eng.com - http://www.prisma-eng.com
+
+
+
+typedef {
+INT Tag
+HEXSTR service  /* Tag: 1=bearerService / 2=teleservice */
+} BASIC_SERVICE;
+
+typedef {
+STRUCTURE BASIC_SERVICE basicService
+HEXSTR ss_Status
+HEXSTR forwardedToNumber
+HEXSTR forwardedToSubaddress
+HEXSTR forwardingOptions
+UCHAR noReplyConditionTime
+HEXSTR longForwardedToNumber 
+} FORWARD_FEAT;
+
+typedef {
+UCHAR ccbs_Index
+HEXSTR b_subscriberNumber
+HEXSTR b_subscriberSubaddress
+STRUCTURE BASIC_SERVICE basicServiceGroup 
+} CCBS_FEAT;
+
+typedef {
+STRUCTURE BASIC_SERVICE basicService
+HEXSTR ss_Status 
+} SS_INFO_CALL_BARRING_INFO_FEAT;
+
+typedef {
+INT Tag
+UINT value  /* Tag: 1=overrideCategory / 2=cliRestrictionOption */
+} SS_DATA_SS_SUBSCRIPTION_OPT;
+
+typedef {
+HEXSTR ss_Code
+LIST_OF FORWARD_FEAT forwardingFeatureList 
+} SS_INFO_FORWARDING_INFO;
+
+typedef {
+HEXSTR ss_Code
+LIST_OF SS_INFO_CALL_BARRING_INFO_FEAT callBarringFeatureList 
+} SS_INFO_CALL_BARRING_INFO;
+
+typedef {
+HEXSTR ss_Code
+HEXSTR ss_Status
+STRUCTURE SS_DATA_SS_SUBSCRIPTION_OPT ss_SubscriptionOption
+LIST_OF BASIC_SERVICE basicServiceGroupList
+UCHAR defaultPriority
+UCHAR nbrUser 
+} SS_INFO_SS_DATA;
+
+typedef {
+HEXSTR ss_Status
+UINT cliRestrictionOption
+UCHAR maximumEntitledPriority
+UCHAR defaultPriority
+LIST_OF CCBS_FEAT ccbs_FeatureList
+UCHAR nbrSB
+UCHAR nbrUser
+UCHAR nbrSN 
+} GENERIC_SERVICE_INFO;
+
+typedef {
+HEXSTR partyNumber
+HEXSTR partyNumberSubaddress 
+} PRESENTATION_ADDR;
+
+typedef {
+UINT Tag
+HEXSTR addr 	/* Tag: 1=presentationAllowedAddress (PRESENTATION_ADDR)
+} RDN;
+
+typedef {
+UINT ect_CallState
+STRUCTURE RDN rdn 
+} ECT_INDICATOR;
+
+typedef {
+HEXSTR dataCodingScheme
+INT lengthInCharacters
+HEXSTR nameString
+} NAME;
+
+typedef {
+UINT Tag
+HEXSTR name 	/* Tag: 1=namePresentationAllowed (NAME)
+} CALLING_NAME;
+
+typedef {
+STRUCTURE CALLING_NAME callingName 
+} NAME_INDICATOR;
+
+typedef {
+HEXSTR ss_Code
+STRUCTURE BASIC_SERVICE basicService
+HEXSTR forwardedToNumber
+HEXSTR forwardedToSubaddress
+UCHAR noReplyConditionTime
+UCHAR defaultPriority
+UCHAR nbrUser 
+} REGISTER_SS_ARG;
+
+typedef {
+HEXSTR ss_Code
+STRUCTURE BASIC_SERVICE basicService
+STRING longFTN_Supported 	/* supported / not_supported */
+} SS_FOR_BS;
+
+typedef {
+HEXSTR ss_Code
+HEXSTR ss_Status
+HEXSTR ss_Notification
+UINT callOnHold_Indicator
+USHORT cug_Index
+STRUCTURE ECT_INDICATOR ect_Indicator
+STRUCTURE NAME_INDICATOR nameIndicator
+STRUCTURE CCBS_FEAT ccbs_Feature
+HEXSTR alertingPattern
+UINT multicall_Indicator 
+} NOTIFY_SS_ARG;
+
+typedef {
+HEXSTR ss_Code 
+} SS_CODE;
+
+typedef {
+UCHAR GuidanceInfo 		// 0=enterPW,1=enterNewPW,2=enterNewPW-Again
+} GUIDANCE_INFO;
+
+typedef {
+HEXSTR ss_Code
+ARRAY USHORT 7 chargingInformation 
+} FORWARD_CHARGE_ADVICE;
+
+typedef {
+HEXSTR ussdDataCodingScheme
+HEXSTR ussdString  
+} USSD_ARG;
+
+typedef {
+INT Tag
+HEXSTR Ss_Info  /* Tag: 1=SS_INFO_FORWARDING_INFO / 2=SS_INFO_CALL_BARRING_INFO / 3=SS_INFO_SS_DATA / 4=CUG_INFO */
+} SS_INFO;
+
+typedef {
+INT Tag
+HEXSTR interrogate_res  /* Tag: 1=ss_Status / 2=BASIC_SERVICE / 3=FORWARD_FEAT / 4=GENERIC_SERVICE_INFO */
+} INTERROGATE_SS_RES;
+
+typedef {
+HEXSTR Password  // NumericString SIZE(4)
+} PASSWORD;
+
+typedef {
+HEXSTR ussdDataCodingScheme
+HEXSTR ussdString  
+} USSD_RES;
+
+typedef {
+INT Tag
+UINT Reject_problem  /* Tag: GeneralProblem / InvokeProblem / ReturnResultProblem / ReturnErrorProblem */
+} REJECT_PROBLEM;
+
+typedef {
+CHAR invokeID
+CHAR linkedID
+INT operationCode
+HEXSTR parameter /* see Operations Arguments */
+} INVOKE;
+
+typedef {
+CHAR invokeID
+INT operationCode
+HEXSTR parameter /* see Operations Results */
+} RETURN_RESULT;
+
+typedef {
+CHAR invokeID
+INT errorCode
+HEXSTR parameter
+} RETURN_ERROR;
+
+typedef {
+CHAR invokeID
+STRUCTURE REJECT_PROBLEM problem
+} REJECT;
+
+typedef {
+INT Tag
+HEXSTR Component  /* Tag: 1=INVOKE / 2=RETURN_RESULT / 3=RETURN_ERROR / 4=REJECT */
+} COMPONENT;
+
+typedef {
+LIST_OF COMPONENT Components 
+} FACILITY_IE;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+STRUCTURE FACILITY_IE Facility 
+} FACILITY;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+STRUCTURE FACILITY_IE Facility
+HEXSTR SsVersion 
+} REGISTER;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR Cause
+STRUCTURE FACILITY_IE Facility 
+} RELEASE_CMPL;
+
+typedef VOID SS_CONFIG;
+
+typedef VOID SS_CONFIG_ACK;
+
+typedef {
+UINT UserPid
+LIST_OF UINT ListMs 
+} SS_SET_USER_PID;
+
+typedef {
+UINT UserPid
+LIST_OF UINT ListMs 
+} HLR_SET_USER_PID;
+
+/*+ MN_SS +*/
+typedef {
+UINT MsId
+STRING Service
+STRING Operation
+HEXSTR ForwardedMsNum
+HEXSTR UssdDataCodSch
+STRING UssdStr 
+} MN_SS_BEGIN_REQ;
+
+typedef {
+UINT MsId
+UINT Tio
+STRING Service
+STRING Operation
+HEXSTR UssdDataCodSch
+STRING UssdStr 
+} MN_SS_BEGIN_IND;
+
+typedef {
+UINT MsId
+UINT Tio
+UCHAR TIFlag
+STRING Operation
+HEXSTR UssdDataCodSch
+STRING UssdStr 
+} MN_SS_FACILITY_REQ;
+
+typedef {
+UINT MsId
+UINT Tio
+UCHAR TIFlag
+STRING Operation
+HEXSTR UssdDataCodSch
+STRING UssdStr 
+} MN_SS_FACILITY_IND;
+
+typedef {
+UINT MsId
+UINT Tio
+STRING Service
+STRING Operation
+HEXSTR Cause
+HEXSTR UssdDataCodSch
+STRING UssdStr 
+} MN_SS_END_REQ;
+
+typedef {
+UINT MsId
+UINT Tio
+STRING Service
+STRING Operation 
+} MN_SS_END_IND;
+
+typedef {
+UINT MsId
+UINT Tio
+HEXSTR Cause 
+} MN_SS_ERROR_IND;
+
+/*+ SS_HLR +*/
+typedef {
+HEXSTR Service
+HEXSTR Status 
+} SS_SERVICE;
+
+typedef {
+UINT MsId
+HEXSTR MsNum 
+} SS_HLR_REQ_INFO;
+
+typedef {
+UINT MsId
+HEXSTR MsNum
+LIST_OF SS_SERVICE Services 
+} SS_HLR_RES_INFO;
+
+typedef {
+UINT MsId
+HEXSTR MsNum
+STRING Service
+HEXSTR SsNotification
+HEXSTR CallIsWaiting_Indicator 
+} SS_HLR_REQ_FAC;
+
+typedef {
+UINT MsId
+HEXSTR MsNum
+STRING Service
+HEXSTR Facility 
+} SS_HLR_RES_FAC;
+

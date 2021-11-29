@@ -1,0 +1,124 @@
+.SUFFIXES : .c .cpp .o
+
+.cpp.o:
+	$(CCC) $(CCFLAGS) -c $(IPATHS) $<
+
+.c.o:
+	$(CC) $(CFLAGS) -c $(IPATHS) $<
+
+.y.c:
+
+# Platform specific definitions for Linux/GNU. Assumes 
+# GNU GCC 3.x or 2.95.x compiler.
+
+# The following variables are platform specific and may need
+# to be edited if moving to a different system.
+
+# compiler defs
+CC        = gcc
+CCC       = g++
+CVARS_    = -DASN1RT -DGNU -D_GNU_SOURCE 
+LINKDBG_  = -g
+CELF_     = -fPIC
+CUSEELF_  = -fpic
+CEXCEPT_  = -fexceptions
+CVARS0_   = $(CVARS_)
+CVARSR_   = $(CVARS_)
+CVARSMT_  = $(CVARS_)
+CVARSMTR_ = $(CVARS_)
+CVARSMTD_ = $(CVARS_)
+CVARSMTR_ = $(CVARS_)
+CDEV_     = -D_TRACE
+COPTIMIZE0_ = -O2 -ffunction-sections -fdata-sections
+
+# changed to be blank because OBJOUT already does this and some 
+# compilations were failing because this was specified twice 
+# (ED, 6/25/04)
+# CFLAGS_    = -o $@
+# END ED 6/25/04
+
+CFLAGS_    = 
+COPTIMIZE_ = $(COPTIMIZE0_) -D_OPTIMIZED  
+CDEBUG_    = -g
+LINKOPT_   = -o $@ -static --gc-sections
+CBLDTYPE_  = $(COPTIMIZE_)
+
+
+CCFLAGS_  = $(CFLAGS_) $(CEXCEPT_)
+CCDEBUG_  = $(CDEBUG_)
+
+LIBCMD    = ar r $@
+LIBADD    = $(LIBCMD)
+LINK = gcc
+LINKSO    = $(LINK)
+LINKOPT2  = $(LINKOPT_)
+LINKELF_  = -shared $(CELF_) -o $@
+LINKELF2_ = $(LINKELF_)
+LINKUELF_ = $(CUSEELF_) -o $@
+COMPACT   = -Os -D_COMPACT
+OBJOUT    = -o $@
+
+# File extensions
+EXE     = 
+OBJ     = .o
+SO      = .so
+
+# Run-time library
+LIBPFX  = lib
+LIBEXT  = a
+LPPFX   = -L
+LLPFX   = -l
+LLEXT   =
+
+A       = .$(LIBEXT)
+MTA     = $(A)
+MDA     = $(A)
+
+# Include and library paths
+PS      = /
+FS      = :
+IPATHS_ = 
+
+# O/S commands
+COPY     = cp -f
+MOVE     = mv -f
+MV       = $(MOVE)
+RM       = rm -f
+STRIP    = strip
+MAKE     = make
+
+LLSYS = -lm -lpthread
+
+# LIBXML2 defs
+LIBXML2ROOT = $(OSROOTDIR)/libxml2src
+LIBXML2INC  = $(LIBXML2ROOT)/include
+LIBXML2LIBDIR = ../lib
+LIBXML2NAME = libxml2.a
+LIBXML2LINK = -lxml2
+
+# START ASN1C
+# Link libraries
+LLBER   = -lasn1ber
+LLPER   = -lasn1per
+LLXER   = -lasn1xer
+LLXML   = -lasn1xml
+LLRT    = -lasn1rt
+LLLIC   = -llicense
+LLASN1C = -lasn1c
+LLOSCOM = -loscom
+LLX2A   = -lxsd2asn1
+LLX2AAC = -lxsd2asn1ac
+RTLIBNAME =  libasn1rt.a
+BERLIBNAME = libasn1ber.a
+PERLIBNAME = libasn1per.a
+XERLIBNAME = libasn1xer.a
+XMLLIBNAME = libasn1xml.a
+LICLIBNAME = liblicense.a
+OSLIBNAME  = liboscom.a
+X2ALIBNAME = libxsd2asn1.a
+X2AACLIBNAME = libxsd2asn1ac.a
+# END ASN1C
+
+# START XBINDER
+# XBinder specific platform definitions
+# END XBINDER

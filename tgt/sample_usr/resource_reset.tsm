@@ -1,0 +1,65 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/tstmUtils/sampleUsr/trunk/$
+#
+# $Author: umbertob $
+#
+# Description: User Script - Cic reset and group reset 
+#
+#
+# $Rev: 2685 $
+#
+# $Date: 2005-02-15 14:18:37 +0100 (mar, 15 feb 2005) $
+##############################################################
+
+# Includes
+include "common/utils/generalUtils.tsm"
+include "common/utils/Ss7SaalUtils.tsm"
+proc Init { args } {
+	
+	dump_on
+
+	nextstate Null
+}
+
+############################################################
+# Scheduler Signals Handling
+############################################################
+
+proc StartHandler { } {
+
+	SendReset
+}
+
+proc DeleteHandler { } {
+
+	global _parent
+	set res "DELETED"
+	send res $_parent
+	LogOutputMsg $res
+}
+
+############################################################
+# Procedures
+############################################################
+
+proc SendReset { } {
+
+	global _bssappid
+	new BSSAP_CTL_RESET_RESOURCES s
+	send s $_bssappid
+	LogOutputMsg $s
+}
+
+############################################################
+# FSM
+############################################################
+
+state Null {
+	START                   StartHandler
+	default 				Any
+}
+
+state Any {
+	DELETE					DeleteHandler
+	default 				Unexpected
+}

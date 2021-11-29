@@ -1,0 +1,2001 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/CC/tags/CC-3.0.4/scripts/cc_ms.tsm $
+#
+# $Author: roger $
+#
+# Description: CC procedures MS side 3GPP TS 24.008 V3.8.0 (2001-06)
+#
+#
+# $Rev: 56778 $
+#
+# $Date: 2012-11-27 14:54:06 +0100 (Tue, 27 Nov 2012) $
+##############################################################
+
+##############################################################
+#
+# Init Procedure
+#
+##############################################################
+
+proc Init { args } {
+ 
+	# Declare and Initialize Global Variables
+	global _self _mmpid _HandleRxSignalProc glCCdb glCommonDb glMMdb
+
+    # Includes
+	include "common/utils/generalUtils.tsm"
+	include "common/utils/L3Utils.tsm"
+	uplevel #0 include "common/utils/countersUtils.tsm"; #0 to get visiblity of glErrorFlag
+	
+	# Uplevel Configuration File
+	set cfgfile [lindex $args 0]
+	uplevel #0 include $cfgfile
+
+	# Check Dependencies for Utilities Libraries
+	set scriptUtilsNeeded "scriptUtils-2.11.0"
+	if { [CheckCompatibility $scriptUtilsNeeded] == 0 } {
+		logscr "Update of scriptUtils library ($scriptUtilsNeeded) is needed by current CC library"
+		exit
+	}
+
+	# Set NetSide
+	SetNetside
+
+	# Create Common Db
+	set glCommonDb [lindex $args 1]
+		
+	# Cc Adapation Layer
+	set al [lindex $args 2]
+	include "$al"
+		
+	# Register Sapi
+	# args 3 is used only to know how to register
+	# args 4 is the MM_CC_SAP pid.
+	global glMmCcSapPid glCcPduToSig
+	if {[llength $args] == 5} {
+		set glMmCcSapPid [lindex $args 4]
+		set glCcPduToSig ccMsPduToSig
+
+		set s MM_CC_SAP_REG
+		send s $glMmCcSapPid
+
+		register CC MS
+	} else {
+		set glMmCcSapPid 0; #use signal routing based on sap registration
+		set glCcPduToSig ccPduToSig
+		register CC
+	}
+
+	# Handle Multi-Instance
+	set _HandleRxSignalProc CcMultiInstanceHdl
+
+	# Set MM Database Name
+	set glMMdb [remcmd $_mmpid "set glMMdb"]
+	
+	#log "### glMMdb=$glMMdb ###"
+
+	# Display
+	logscr "CC Access Network Simulation Started"
+
+	nextstate WaitForConfig
+}
+
+##############################################################
+#
+# Auxiliary Procedures
+#
+##############################################################
+
+proc CcProtocolError { inst } {
+
+	# Global Variables
+	global glCCdb
+
+	new		MN_CC_ERROR_IND s
+	wr		s MsId [IndexToMsId $inst]
+	wr		s Tio [expr {$inst % 8}]
+	wr      s Cause e0ef
+	send    s [DbGet $glCCdb $inst UserPid]
+	LogOutputMsg $s
+
+	# Remove CC Entity
+	RemoveCcEntity $inst
+}
+
+# Enable/Disable Loop of Voice Channel (used by AbisNortel TSTM)
+proc LoopChannel { msid val } {
+
+	# Declare and Initialize Global Variables
+	global _rrpid 
+
+	new RR_LOOP_CH s
+	wr s	MsId $msid
+	wr s	LoopTrauCh $val
+	LogOutputMsg $s
+	send s $_rrpid
+}
+
+### Send Traffic Command to RR (used by Um TSTM)
+##proc SendRrTrafficInfo { msid cmd } {
+##
+##	# Declare and Initialize Global Variables
+##	global _rrpid glCommonDb glIdx
+##
+##	if { [DbFieldExists $glCommonDb GsmTrafficMode] } {
+##
+##		set gsm_traffic_mode [DbGet $glCommonDb $msid GsmTrafficMode]
+##		if { ![IsVoid $gsm_traffic_mode] } {
+##
+##			new RR_TRAFFIC s
+##			wr s	MsId $msid
+##			wr s	Mode $gsm_traffic_mode
+##			wr s	Cmd $cmd
+##			LogOutputMsg $s
+##			send s $_rrpid
+##		}
+##	}
+##}
+
+##############################################################
+#
+# Mm Connection Procedures
+#
+##############################################################
+
+proc EstablishMmConnection { } {
+   
+	# Declare and Initialize Global Variables
+	global _sig glCCdb glIdx
+
+	LogInputMsg $_sig
+
+	# Get Parameters
+	set type [rd _sig Type]
+	set cnum [rd _sig CalledNum]
+	set ctype [rd _sig CallType]
+	set clir_suppression [rd _sig ClirSuppression]
+	set clir_invocation  [rd _sig ClirInvocation]
+
+	set msid [IndexToMsId $glIdx]
+	DbSet $glCCdb $glIdx SetupType $type
+	DbSet $glCCdb $glIdx CalledPartyNum $cnum
+	DbSet $glCCdb $glIdx CallType $ctype
+	DbSet $glCCdb $glIdx PendingTid $msid
+	DbSet $glCCdb $glIdx PendingResAssTid $msid
+	DbSet $glCCdb $glIdx ClirSuppression $clir_suppression
+	DbSet $glCCdb $glIdx ClirInvocation $clir_invocation
+
+	log "EstablishMmConnection: glIdx=$glIdx, ctype=$ctype, clir_suppression=$clir_suppression, clir_invocation=$clir_invocation"; #cDEBUG
+	log "ctype=$ctype"; #cDEBUG
+	#LogDb $glCCdb; #cDEBUG
+	
+	# Acknowledge User Script
+	new		MN_CC_MS_SETUP_ACK s
+	wr		s MsId $msid
+	wr		s Tio [expr {$glIdx % 8}]
+	send    s [DbGet $glCCdb $glIdx UserPid]
+	LogOutputMsg $s
+
+	# Send to Lower Layer
+	SendMmCcEstReq $msid $type
+
+	tmrstart [DbGet $glCCdb $glIdx T_303id]
+
+	nextstate MMConnectionPending_U0_1
+}
+
+proc AbortMmConnection { cause } {
+
+	# Declare and Initialize Global Variables
+	global glIdx glCCdb
+
+	# Inform User Script
+	new		MN_CC_ERROR_IND s
+	wr		s MsId [IndexToMsId $glIdx]
+	wr      s Tio [expr {$glIdx % 8}]
+	wr      s Cause $cause
+	send    s [DbGet $glCCdb $glIdx UserPid]
+	LogOutputMsg $s
+
+	# Release MM Connection
+	ReleaseMmConnection
+
+	# Remove CC Entity
+	RemoveCcEntity $glIdx
+}
+
+proc ReleaseMmConnection { } {
+
+	# Declare and Initialize Global Variables
+	global glCCdb glIdx
+
+	# Stop timers
+	tmrstop [DbGet $glCCdb $glIdx T_303id]
+
+	SendMmCcRelReq [IndexToMsId $glIdx]
+
+	nextstate Null_U0
+}
+
+proc MmConnectionEstablished { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glCCdb glIdx glCommonDb _is_umts
+
+	LogInputMsg $_sig
+
+	# Get Parameters
+	set msid [IndexToMsId $glIdx]
+	set tid [expr {$glIdx % 8}]
+	set type [DbGet $glCCdb $glIdx SetupType]
+	set cnum [DbGet $glCCdb $glIdx CalledPartyNum]
+	set clir_suppression [DbGet $glCCdb $glIdx ClirSuppression]
+	set clir_invocation  [DbGet $glCCdb $glIdx ClirInvocation]
+	set call_type [DbGet $glCCdb $glIdx CallType]
+
+	#TODO add
+#		"3.1 kHz audio, ex PLMN"	{
+#			set bcap1 [DbGet $glCommonDb $msid BearerCap1CSD]
+#		}
+
+	switch -exact -- $call_type {
+		"facsimile group 3" {
+			set bcap1 [DbGet $glCommonDb $msid BearerCap1CSD]
+		}
+		default {
+			set bcap1 [DbGet $glCommonDb $msid BearerCap1]
+		}
+	}
+
+	DbSet $glCCdb $glIdx ExpectedTif 1
+	DbSet $glCCdb $glIdx PendingTid "?"
+
+	if { [string equal $type "SETUP"] } {
+		new     CC_MS_SETUP s
+		wr      s TIFlag 0
+		wr      s TIO $tid
+		wr      s Sn 0
+
+		if { $_is_umts && $call_type == 2 } {
+			# Voice Call in second choose			
+			set call_type 0; # speech
+			wr      s BearerCap1 [DbGet $glCommonDb $msid BearerCap2]
+		} else {
+			wr      s BearerCap1 $bcap1
+		}
+
+		if { $_is_umts && [DbFieldExists $glCommonDb BearerCap2] } {
+			set bcap2 [DbGet $glCommonDb $msid BearerCap2]
+			wr 		s BearerCap2 $bcap2
+		}
+
+		wr      s CalledPartyBCDNum $cnum
+
+		if { ![IsVoid $clir_suppression] && ![IsVoid $clir_invocation] } {
+			if { $clir_suppression && !$clir_invocation } {
+				wr      s CLIRSuppr $clir_suppression
+			} elseif { !$clir_suppression && $clir_invocation } {
+				wr      s CLIRInvo $clir_invocation
+			} elseif { $clir_suppression && $clir_invocation } { 
+				logscr "MmConnectionEstablished: ERROR: both clir_suppression and clir_invocation are equal to 1"
+			}
+		}
+	} elseif { [string equal $type "EMERGENCY_SETUP"] } {
+		new     CC_EMERGENCY_SETUP s
+		wr		s TIFlag 0
+		wr      s TIO $tid
+	    wr		s Sn 0
+		wr      s BearerCap $bcap1
+	} else { 
+		logscr "Unknown Setup Type ($type)"
+		return
+	}
+
+	# Check if LoopTrau has to be enabled (for MTC only)
+	if { [DbFieldExists $glCommonDb LoopTrau] } {
+		set loop [DbGet $glCommonDb $msid LoopTrau]
+		if { $loop } {
+			# Disable Loop for MOC
+			LoopChannel	$msid 0
+		}
+	}
+
+	# Send to Lower Layer
+	SendMmCcDataReq [IndexToMsId $glIdx] $s
+	LogOutputMsg $s
+
+	nextstate CallInitiated_U1
+}
+
+proc SendMmCcEstReq { msid type } {
+
+	# Global Variables
+	global glIdx glCCdb
+
+	# Set Type Number
+	if { [string equal $type "SETUP"] } {
+		# Speech or Video Call
+		set typenum 1
+	} elseif { [string equal $type "EMERGENCY_SETUP"] } {
+		set typenum 2
+	} else {
+		logscr "Type Not Supported ($type)"
+		return
+	}
+
+	# MMCC Establish Request
+	new		MM_CC_EST_REQ s
+	wr		s MsId $msid
+	wr		s Tio [expr {$glIdx % 8}]
+	wr      s CmServType $typenum
+
+	global glMmCcSapPid
+	send	s $glMmCcSapPid
+
+	LogOutputMsg $s
+}
+
+proc SendMmCcDataReq { msid pdu } {
+
+	# Declare and Initialize Global Variables
+	global glCCdb glIdx
+
+	# MMCC Data Request
+	new		MM_CC_DATA_REQ s
+	wr		s MsId $msid
+	wr      s Pdu [ccSigToPdu pdu]
+	global glMmCcSapPid
+	send	s $glMmCcSapPid
+
+	LogOutputPrim $s
+}
+
+proc SendMmCcRelReq { msid } {
+
+	# Global Variables
+	global glIdx glMmCcSapPid
+
+	# MMCC Release Request
+	new		MM_CC_REL_REQ s
+	wr      s MsId $msid
+	wr      s Tio [expr {$glIdx % 8}]
+	send	s $glMmCcSapPid
+
+	LogOutputMsg $s
+}
+
+proc MmConnectionReleased { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glCCdb glIdx
+
+	LogInputMsg $_sig
+	
+	# Inform Users
+	set start [expr {$glIdx & -8}]
+	for { set i $start } { $i < [expr {$start + 8}] } { incr i } {
+		if { [DbEntryExists $glCCdb $i] } {
+			set userpid [DbGet $glCCdb $i UserPid]
+			if { ![IsVoid $userpid] } {
+				new		MN_CC_ERROR_IND s
+				wr		s MsId [IndexToMsId $i]
+				wr		s Tio [expr {$i % 8}]
+				wr      s Cause [rd _sig Cause]
+				send    s $userpid
+				LogOutputMsg $s
+			}
+
+			# Remove CC Entity
+			RemoveCcEntity $i
+		}
+	}
+
+	nextstate Null_U0
+}
+
+##############################################################
+#
+# Cc Entity Procedures
+#
+##############################################################
+
+proc Config { } {
+
+	# Declare and Initialize Global Variables
+	global _self glCCdb glInitState
+
+	set glInitState Null_U0
+
+	# Create Internal Database
+	set glCCdb CC_ms_db
+	CreateDataBase $glCCdb MS
+
+	# Cc Config Ack
+	new		CC_CONFIG_ACK s
+	send s $::_src
+	LogOutputMsg $s
+
+	logscr ""
+    logscr "CC BRING-UP COMPLETE"
+	logscr ""
+
+	nextstate $glInitState
+}
+
+proc RemoveCcEntity { index } {
+
+	# Global Variables
+	global glCCdb
+
+	# Free Timers
+	tmrfree [DbGet $glCCdb $index T_303id]
+	tmrfree [DbGet $glCCdb $index T_305id]
+	tmrfree [DbGet $glCCdb $index T_308id]
+	tmrfree [DbGet $glCCdb $index T_310id]
+	tmrfree [DbGet $glCCdb $index T_313id]
+	tmrfree [DbGet $glCCdb $index T_RESid]
+
+	DbRemEntry $glCCdb $index
+}
+
+proc CreateNewCcEntity { index } {
+ 
+	# Global Variables
+	global glCCdb glInitState glPidArray
+
+	DbCreateDefEntry $glCCdb $index
+
+	# Resources Assigned
+	DbSet $glCCdb $index ResAssigned 0
+
+	# Timer T303
+	set t303id [tmrnew T_303 30000]
+	DbSet $glCCdb $index T_303id $t303id
+
+	# Timer T305
+	set t305id [tmrnew T_305 30000]
+	DbSet $glCCdb $index T_305id $t305id
+
+	# Timer T308
+	set t308id [tmrnew T_308 30000]
+	DbSet $glCCdb $index T_308id $t308id
+	DbSet $glCCdb $index T_308count 1
+
+	# Timer T310
+	set t310id [tmrnew T_310 30000]
+	DbSet $glCCdb $index T_310id $t310id
+
+	# Timer T313
+	set t313id [tmrnew T_313 30000]
+	DbSet $glCCdb $index T_313id $t313id
+
+	# Timer TRES
+	set tRESid [tmrnew T_RES 30000]
+	DbSet $glCCdb $index T_RESid $tRESid
+
+	# User Pid
+	set arridx [expr {$index / 8}]
+
+	#log "--------  index=$index; arridx=$arridx; glPidArray($arridx)=$glPidArray($arridx)   -----------"; #cDEBUG
+
+	if { [info exists glPidArray($arridx)] } {
+		DbSet $glCCdb $index UserPid $glPidArray($arridx)
+	}
+
+	# Set State
+	DbSet $glCCdb $index State $glInitState
+}
+
+proc SetUserPid { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glCCdb glInitState glPidArray
+
+	set userPid [lindex $_sig 1]
+	set listMs [lindex $_sig 2]
+
+	# Configure Parameters for every DB Index
+	foreach index $listMs {
+ 
+		# Set User Pid
+		set glPidArray($index) $userPid
+	
+		#log "SetUserPid: index=$index; userPid=$userPid --> glPidArray($index)=$glPidArray($index)"; #cDEBUG
+	
+		# Update Data Base
+		set start [expr {$index * 8}]
+
+		for { set i 0 } { $i < 8 } { incr i } {
+			set el [expr {$i + $start}]
+
+			if { [DbEntryExists $glCCdb $el] } {
+
+				#log "SetUserPid: DbEntryExists $glCCdb for el=$el --> set glPidArray"; #cDEBUG
+
+				DbSet $glCCdb $el UserPid $glPidArray($index)
+			}
+		}
+	}
+}
+
+proc CcParamReset { } {
+
+	# Global Variables
+	global glIdx glCCdb
+
+	# Resources Assigned
+	DbSet $glCCdb $glIdx ResAssigned 0
+}
+
+##############################################################
+#
+# Resource Management Procedures
+#
+##############################################################
+
+proc AssignmentCmplte { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glCCdb glIdx
+
+	# Stop Timers
+	tmrstop [DbGet $glCCdb $glIdx T_RESid]
+
+	# Unset Pending Tid
+	DbSet $glCCdb $glIdx PendingResAssTid "?"
+
+	# Check Result
+	set res [rd _sig Res]	
+	if { $res == "1" } {
+		# MNCC Sync Indication
+		new 	MN_CC_MS_SYNC_IND s
+		wr      s MsId [IndexToMsId $glIdx]	
+		wr      s Tio [expr {$glIdx % 8}]
+		wr		s Cause [rd _sig Cause]
+		send    s [DbGet $glCCdb $glIdx UserPid]
+		LogOutputMsg $s
+
+		DbSet $glCCdb $glIdx ResAssigned 1
+	}
+}
+
+##############################################################
+#
+# Timers Handling Procedures
+#
+##############################################################
+
+proc T_303Abort { } {
+
+	# Global Variables
+    global _sig
+
+	LogInputMsg $_sig
+
+	# Disconnect - Cause (3GPP 24.008 p. 10.5.4.11)
+	set cause e0e6333033
+
+	AbortMmConnection $cause
+}
+
+proc T_303Expired { } {
+
+	# Global Variables
+    global _sig glIdx glCCdb
+
+	LogInputMsg $_sig
+
+	# Disconnect - Cause (3GPP 24.008 p. 10.5.4.11)
+	set cause e0e6333033
+	SendDisconnect $cause
+
+	# MNCC Disconnect Indication - Cause (3GPP 24.008 p. 10.5.4.11)
+	set cause e192
+
+	new		MN_CC_MS_DISC_IND s
+	wr		s MsId [IndexToMsId $glIdx]
+	wr      s Tio [expr {$glIdx % 8}]
+	wr      s Cause $cause
+	send    s [DbGet $glCCdb $glIdx UserPid]
+	LogOutputMsg $s
+}
+
+proc T_305Expired { } {
+
+	# Global Variables
+	global _sig glIdx glCCdb
+
+	LogInputMsg $_sig
+
+	# Cause (3GPP 24.008 p. 10.5.4.11)
+	set cause [DbGet $glCCdb $glIdx DiscCause]
+	set cause2 e0e6333035
+
+	# CC Release
+	SendRelease $cause $cause2
+}
+
+proc T_308Expired { } {
+
+	# Global Variables
+	global _sig glIdx glCCdb 
+
+	LogInputMsg $_sig
+
+	# Get Parameters
+	set count [DbGet $glCCdb $glIdx T_308count]
+
+	set msid [IndexToMsId $glIdx]
+	if {![info exists ::__CxtUsed]} {
+		IncrProfCounter $msid "t308exp"
+	}
+	if { $count < 2 } {
+		# Cause (3GPP 24.008 p. 10.5.4.11)
+		set cause e0e6333038
+
+		# CC Release
+		SendRelease $cause
+
+		# Timer T_308 Counter
+		incr count
+		DbSet $glCCdb $glIdx T_308count $count
+	} else { 
+		# Cause (3GPP 24.008 p. 10.5.4.11)
+		set cause e0e6333038
+
+		# Inform User
+		new		MN_CC_MS_REL_IND s
+		wr		s MsId [IndexToMsId $glIdx]
+		wr      s Tio [expr {$glIdx % 8}]
+		wr		s Cause $cause
+		send    s [DbGet $glCCdb $glIdx UserPid]
+		LogOutputMsg $s
+
+		# Release Mm Connection
+		ReleaseMmConnection
+
+		# Remove CC Entity
+		RemoveCcEntity $glIdx
+	} 
+}
+
+proc T_310Expired { } {
+
+	# Global Variables
+    global _sig glIdx glCCdb
+
+	LogInputMsg $_sig
+
+	# Disconnect - Cause (3GPP 24.008 p. 10.5.4.11)
+	set cause e0e6333130
+	SendDisconnect $cause
+
+	# MNCC Disconnect Indication - Cause (3GPP 24.008 p. 10.5.4.11)
+	set cause e192
+
+	new		MN_CC_MS_DISC_IND s
+	wr		s MsId [IndexToMsId $glIdx]
+	wr      s Tio [expr {$glIdx % 8}]
+	wr      s Cause $cause
+	send    s [DbGet $glCCdb $glIdx UserPid]
+	LogOutputMsg $s
+}
+
+proc T_313Expired { } {
+
+	# Global Variables
+    global _sig glIdx glCCdb
+
+	LogInputMsg $_sig
+
+	# Cause (3GPP 24.008 p. 10.5.4.11)
+	set cause e0e6333133
+
+	# Stop Timers
+	tmrstop [DbGet $glCCdb $glIdx T_303id]
+	tmrstop [DbGet $glCCdb $glIdx T_310id]
+
+	# Disconnect
+	SendDisconnect $cause
+
+	new		MN_CC_MS_DISC_IND s
+	wr		s MsId [IndexToMsId $glIdx]
+	wr      s Tio [expr {$glIdx % 8}]
+	wr      s Cause $cause
+	send    s [DbGet $glCCdb $glIdx UserPid]
+	LogOutputMsg $s
+}
+
+proc T_RESExpired { } {
+
+	# Global Variables
+    global _sig glIdx glCCdb
+
+	LogInputMsg $_sig
+
+	# Disconnect - Cause (3GPP 24.008 p. 10.5.4.11)
+	set cause e0e6
+	SendDisconnect $cause
+
+	# MNCC Disconnect Indication - Cause (3GPP 24.008 p. 10.5.4.11)
+	set cause e192
+
+	new		MN_CC_MS_DISC_IND s
+	wr		s MsId [IndexToMsId $glIdx]
+	wr      s Tio [expr {$glIdx % 8}]
+	wr      s Cause $cause
+	send    s [DbGet $glCCdb $glIdx UserPid]
+	LogOutputMsg $s
+}
+
+
+##############################################################
+#
+# Specific Procedures
+#
+##############################################################
+
+proc CallProceeding { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glCCdb glIdx
+
+	LogInputMsg $_sig
+
+	# Check Transaction Id Direction
+	set tif [rd _sig TIFlag]
+	if { $tif != "1" } {
+		logscr "Unexpected Transaction Id Flag ($tif)"
+		#CcProtocolError $glIdx
+		return
+	}
+
+	# Stop Timers
+	tmrstop [DbGet $glCCdb $glIdx T_303id]
+
+	# Get Parameters
+	set msid [IndexToMsId $glIdx]
+
+	# Check Progress Indication
+
+	# MNCC Call Proceeding
+	new		MN_CC_CALL_PROC_IND s
+	wr		s MsId $msid
+	wr      s Tio [expr {$glIdx % 8}]
+	send    s [DbGet $glCCdb $glIdx UserPid]
+	LogOutputMsg $s
+	
+	tmrstart [DbGet $glCCdb $glIdx T_310id]
+
+	nextstate MobileOrigCallProceeding_U3
+}
+
+proc Alerting { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glCCdb glIdx
+
+	LogInputMsg $_sig
+
+	# Check Transaction Id Direction
+	set tif [rd _sig TIFlag]
+	if { $tif != "1" } {
+		logscr "Unexpected Transaction Id Flag ($tif)"
+		#CcProtocolError $glIdx
+		return
+	}
+	
+	# Stop Timers
+	tmrstop [DbGet $glCCdb $glIdx T_303id]
+	tmrstop [DbGet $glCCdb $glIdx T_310id]
+
+	# MNCC Alerting Indication
+	new		MN_CC_MS_ALERT_IND s
+	wr		s MsId [IndexToMsId $glIdx]
+	wr      s Tio [expr {$glIdx % 8}]
+
+	if { [rd _sig Facility] == "a10302020500" } {
+		# callIsWaiting-Indicator[14]=Null --> Tag=05; Len=00
+		wr		s CallIsWaiting 1	
+	}
+
+	send    s [DbGet $glCCdb $glIdx UserPid]
+	LogOutputMsg $s
+	
+	nextstate CallDelivered_U4
+}
+
+proc ConnectAck { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glCCdb glIdx
+
+	LogInputMsg $_sig
+
+	# Check Transaction Id Direction
+	set tif [rd _sig TIFlag]
+	if { $tif != "0" } {
+		logscr "Unexpected Transaction Id Flag ($tif)"
+		#CcProtocolError $glIdx
+		return
+	}
+	
+	# Stop Timers
+	tmrstop [DbGet $glCCdb $glIdx T_313id]
+
+	# Set MsId
+	set msid [IndexToMsId $glIdx]
+
+	# MNCC Setup Complete Indication
+	new		MN_CC_MS_SETUP_CMPLTE_IND s
+	wr		s MsId $msid
+	wr      s Tio [expr {$glIdx % 8}]
+	send    s [DbGet $glCCdb $glIdx UserPid]
+	LogOutputMsg $s
+	
+##	# Send Traffic Info To Lower layer
+##	SendRrTrafficInfo $msid "start"
+
+	nextstate Active_U10
+}
+
+proc Connect { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glCCdb glIdx
+
+	LogInputMsg $_sig
+
+	# Check Transaction Id Direction
+	set tif [rd _sig TIFlag]
+	if { $tif != "1" } {
+		logscr "Unexpected Transaction Id Flag ($tif)"
+		#CcProtocolError $glIdx
+		return
+	}
+	
+	# Stop Timers
+	tmrstop [DbGet $glCCdb $glIdx T_303id]
+	tmrstop [DbGet $glCCdb $glIdx T_310id]
+
+	# MNCC Setup Confirm
+	new		MN_CC_MS_SETUP_CNF s
+	wr		s MsId [IndexToMsId $glIdx]	
+	wr      s Tio [expr {$glIdx % 8}]
+	wr		s UserUser [rd _sig UserUser]
+	send    s [DbGet $glCCdb $glIdx UserPid]
+	LogOutputMsg $s
+}
+
+proc ReleaseCmplte { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glCCdb glIdx
+		
+	LogInputMsg $_sig
+
+	# Check Transaction Id Direction
+	set tif [rd _sig TIFlag]
+	if { $tif != [DbGet $glCCdb $glIdx ExpectedTif] } {
+		logscr "Unexpected Transaction Id Flag ($tif)"
+		#CcProtocolError $glIdx
+		return
+	}
+
+	# Check Cause
+	set cause [rd _sig Cause]
+	if { ![IsVoid $cause] && [WrongCcCause $cause] } {
+		logscr "Warning: Unexpected Cause in Release Complete ($cause)"
+		#CcProtocolError $glIdx
+	} 	
+
+	# Stop Timers
+	tmrstop [DbGet $glCCdb $glIdx T_308id]
+
+	# Inform Higher Layers
+	new		MN_CC_MS_REL_CNF s
+	wr		s MsId [IndexToMsId $glIdx]
+	wr      s Tio [expr {$glIdx % 8}]
+
+	if { $cause == "e088" || $cause == "e19f" || $cause == "e188" || $cause == "e1d8" } {
+		wr		s Cause $cause
+	} elseif { [DbFieldExists $glCCdb HoldAuxiliaryState] && [DbGet $glCCdb $glIdx HoldAuxiliaryState] == "Call_Held" } {
+		#impongo la causa 'Normal, Unspecified' nel caso di Call Held
+		wr		s Cause "e19f"
+	}
+
+	send    s [DbGet $glCCdb $glIdx UserPid]
+	LogOutputMsg $s
+
+	if { [DbFieldExists $glCCdb HoldAuxiliaryState] && [DbGet $glCCdb $glIdx HoldAuxiliaryState] == "Call_Held"} {
+		log "ReleaseCmplte: glIdx=$glIdx; call_hold_release_cause=$cause; current_state=[DbGet $glCCdb $glIdx State]"; #cDEBUG
+	} else {
+		# Release MM Connection
+		ReleaseMmConnection
+
+		# Remove CC Entity
+		RemoveCcEntity $glIdx
+	}
+}
+
+proc NetSetup { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glCCdb glIdx glCommonDb
+	global _is_umts _is_gsm
+
+	LogInputMsg $_sig
+
+	# Check Transaction Id Direction
+	set tif [rd _sig TIFlag]
+	if { $tif != "0" } {
+		logscr "Unexpected Trans Id Flag ($tif)"	
+		#CcProtocolError $glIdx
+		return
+	}	
+
+	# Set Parameters
+	DbSet $glCCdb $glIdx ExpectedTif $tif
+	set msid [IndexToMsId $glIdx]
+
+	if { [DbKeyExists $glCCdb PendingResAssTid $msid] } {
+
+		set inst [DbGetIdx $glCCdb PendingResAssTid $msid]
+		log "NetSetup: PendingResAssTid key has already the value $msid for instance $inst"
+		log "NetSetup: signal discarded"
+		return
+	}
+
+	DbSet $glCCdb $glIdx PendingResAssTid $msid
+
+#	# Check if CallWaitingTone is ON and in affermative case set parameter in Db
+#	if { $callWaitingToneOn == 7 } {
+#		DbSet $glCCdb $glIdx CallWaitingTone $callWaitingToneOn
+#		log "NetSetup: callWaitingTone=$callWaitingToneOn --> Waiting Tone ON"; #cDEBUG
+#	}
+
+	# Check if LoopTrau has to be enabled (for MTC only)
+	if { [DbFieldExists $glCommonDb LoopTrau] } {
+		set msid [IndexToMsId $glIdx]
+		set loop [DbGet $glCommonDb $msid LoopTrau]
+		if { $loop } {
+			# Enable Loop for MTC
+			LoopChannel	$msid 1
+		}
+	}
+
+	set user_pid [DbGet $glCCdb $glIdx UserPid]
+	if { ![IsVoid $user_pid] } {
+
+		set signal	[rd _sig Signal]
+
+		set bearerCapRepeatInd [rd _sig BCRepeatInd]
+		set bearerCap1 [rd _sig BearerCap1]
+		set bearerCap2 [rd _sig BearerCap2]
+
+		if { $_is_umts } {
+			if { ![IsVoid $bearerCapRepeatInd] } {
+				log "NetSetup: bearerCapRepeatInd=$bearerCapRepeatInd"
+				SendSetupInd $signal $user_pid $bearerCapRepeatInd $bearerCap1 $bearerCap2
+			} elseif { [IsVoid $bearerCapRepeatInd] && $bearerCap1 =="a0" } {
+				# Voice Call case
+				log "NetSetup: --Voice Call case-- bearerCap1=$bearerCap1"; #cDEBUG
+				SendSetupInd $signal $user_pid "?" $bearerCap1
+			} else {
+				SendSetupInd $signal $user_pid
+			}
+		} elseif { $_is_gsm } {
+
+			SendSetupInd $signal $user_pid ? $bearerCap1
+
+		} else {
+			logscr "NetSetup: neither _is_umts nor _is_gsm had been set"
+		}
+	} else {
+		logscr "Warning: CC_NET_SETUP received for MS ($msid) not registered on CC layer"
+	}
+}
+
+proc SendSetupInd { signal user_pid { bcRepeatInd "?" } { bearcap1 "?" } { bearcap2 "?" } } {
+
+	# Declare and Initialize Global Variables
+	global glCCdb glIdx _is_umts _is_gsm
+
+	# MNCC Setup Indication
+	new 	MN_CC_MS_SETUP_IND s
+	wr		s MsId [IndexToMsId $glIdx]
+	wr      s Tio [expr {$glIdx % 8}]
+	wr      s Signal $signal
+
+	if { $_is_umts } {
+		if { ![IsVoid $bcRepeatInd] } {
+			if { $bcRepeatInd == 2 } {
+				# 'Support of fallback'
+				wr      s BearerCapRepeatInd 2
+			} elseif { $bcRepeatInd == 4 } {
+				# 'Service change and fallback'
+				wr      s BearerCapRepeatInd 4
+			} else {
+				log "SendSetupInd: WARNING: bcRepeatInd=$bcRepeatInd is neither 2 nor 4"
+			}
+			wr 		s BearerCap1 $bearcap1
+			wr 		s BearerCap2 $bearcap2
+		} else {
+			log "SendSetupInd: WARNING: bcRepeatInd is void"
+			if { ![IsVoid $bearcap1] } {
+				wr 		s BearerCap1 $bearcap1
+			} else {
+				log "SendSetupInd: WARNING: bearcap1 is void"; #cDEBUG
+			}
+		}
+	} elseif { $_is_gsm } {
+		wr 		s BearerCap1 $bearcap1
+	}
+
+	send    s $user_pid
+	LogOutputMsg $s
+
+	nextstate CallPresent_U6
+}
+
+proc ConfirmCall { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glCCdb glCommonDb glIdx _is_umts
+
+	# Get Parameters
+	set tid [expr {$glIdx % 8}]
+	set msid [IndexToMsId $glIdx]
+
+	if { $_is_umts && [rd _sig Bcap1] == "a0" } {
+		set bearerCap1 [rd _sig Bcap1]
+	} else {
+
+		set bearerCap1 [rd _sig Bcap1]
+		if { ![IsVoid $bearerCap1] && [expr [hgetb $bearerCap1 0] & 0x7] == "3" } {
+			#fax case
+			set bearerCap1 [DbGet $glCommonDb $msid BearerCap1CSD]
+		} else {
+			set bearerCap1 [DbGet $glCommonDb $msid BearerCap1]
+		}
+	}
+
+	new 	CC_CALL_CONFIRMED s
+	wr 		s TIFlag 1
+	wr      s TIO $tid
+	wr      s Sn 0
+	wr      s BearerCap1 $bearerCap1
+
+	set cause [rd _sig Cause]
+	if { $cause == 7 } {
+		 # Call Is Waiting
+		wr		s Cause	"671091"; # Cause = 17 (user busy)
+	}
+
+	# Send to Lower Layer
+	SendMmCcDataReq $msid $s
+	LogOutputMsg $s
+
+	tmrstart [DbGet $glCCdb $glIdx T_RESid]
+
+    nextstate MobileTerminatingCallConf_U9
+}
+
+proc SendAlerting { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glCCdb glIdx
+
+	# Get Parameters
+	set tid [expr {$glIdx % 8}]
+	set msid [IndexToMsId $glIdx]
+
+	new 	CC_MS_ALERTING s
+	wr 		s TIFlag 1
+	wr      s TIO $tid
+	wr      s Sn 0
+
+	# Send to Lower Layer
+	SendMmCcDataReq [IndexToMsId $glIdx] $s
+	LogOutputMsg $s
+
+    nextstate CallReceived_U7
+}
+
+################################################################
+#proc SendAlertingActiveState { } {
+#
+#	global _sig glCCdb glIdx
+#
+#	#LogDb $glCCdb ; #cDEBUG
+#
+#	if { [DbGet $glCCdb $glIdx CallWaitingTone] == 7 } {
+#		# Get Parameters
+#		set tid [expr {$glIdx % 8}]
+#		set msid [IndexToMsId $glIdx]
+#
+#		new 	CC_MS_ALERTING s
+#		wr 		s TIFlag 1
+#		wr      s TIO $tid
+#		wr      s Sn 0
+#
+#		# Send to Lower Layer
+#		SendMmCcDataReq [IndexToMsId $glIdx] $s
+#		LogOutputMsg $s
+#
+#		nextstate CallReceived_U7
+#
+#	} else {
+#		Unexpected
+#	}
+#}
+#
+################################################################
+proc SendConnect { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glCCdb glIdx
+
+	# Get Parameters
+	set tid [expr {$glIdx % 8}]
+	set msid [IndexToMsId $glIdx]
+
+	new 	CC_MS_CONNECT s
+	wr 		s TIFlag 1
+	wr      s TIO $tid
+	wr      s Sn 0
+	wr		s UserUser [rd _sig UserUser]
+
+	# Send to Lower Layer
+	SendMmCcDataReq [IndexToMsId $glIdx] $s
+	LogOutputMsg $s
+
+	tmrstart [DbGet $glCCdb $glIdx T_313id]
+
+    nextstate ConnectRequest_U8
+}
+
+proc NetDisconnectReceived { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glCCdb glIdx _is_umts
+
+	LogInputMsg $_sig
+	
+	# Check Transaction Id Direction
+	set tif [rd _sig TIFlag]
+	if { $tif != [DbGet $glCCdb $glIdx ExpectedTif] } {
+		logscr "Unexpected Transaction Id Flag ($tif)"
+		#CcProtocolError $glIdx
+		return
+	}
+
+	# Check Cause
+	set cause [rd _sig Cause]
+	if { [IsVoid $cause] } {
+		logscr "Unexpected Empty Cause"
+		#CcProtocolError $glIdx
+        return
+	}
+	set causeval [CheckCcCause $cause]
+	if { $causeval == "-1" } {
+		logscr "Unexpected Cause ($cause)"
+		#CcProtocolError $glIdx
+        return
+	}
+	
+	# Stop Running Timers	
+	tmrstop [DbGet $glCCdb $glIdx T_303id]
+	tmrstop [DbGet $glCCdb $glIdx T_310id]
+	tmrstop [DbGet $glCCdb $glIdx T_313id]
+
+	tmrstop [DbGet $glCCdb $glIdx T_305id]; #this timer could be not running
+
+	log "NetDisconnectReceived: MsId=[IndexToMsId $glIdx], cause=$cause --> causeval=$causeval; HoldAuxiliaryState=[DbGet $glCCdb $glIdx HoldAuxiliaryState]"; #cDEBUG
+
+	# Send CC Release
+	if { $cause == "e190" } {
+		SendRelease $cause
+	} elseif { [DbFieldExists $glCCdb HoldAuxiliaryState] && [DbGet $glCCdb $glIdx HoldAuxiliaryState] == "Hold_Request" || [DbGet $glCCdb $glIdx HoldAuxiliaryState] == "Call_Held" } {
+		# Release Call in case of Call Hold
+		SendRelease $cause
+	} elseif { $_is_umts && $cause == "e1d8" } {
+		log "NetDisconnectReceived: Bearer Capability not supported --> swithing Video Call --> Voice Call"
+		#log "NetDisconnectReceived: RELEASE not send"
+		SendRelease $cause
+	} else {
+		SendRelease
+	}
+
+	# Set MsId
+	set msid [IndexToMsId $glIdx]
+
+##	# Send Traffic Info To Lower layer
+##	SendRrTrafficInfo $msid "stop"
+
+	# MNCC Disconnect Indication
+	new		MN_CC_MS_DISC_IND s
+	wr		s MsId $msid
+	wr      s Tio [expr {$glIdx % 8}]
+	if { [string compare $causeval "Normal Call Clearing"] } {
+		wr  s Cause $cause
+	} elseif { $_is_umts && [string compare $causeval "Incompatible destination"] } {
+		wr  s Cause $cause
+	}
+	send    s [DbGet $glCCdb $glIdx UserPid]
+	LogOutputMsg $s
+}
+
+proc ReleaseCcTransaction { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glIdx _is_umts
+
+	LogInputMsg $_sig
+
+	if { $_is_umts } {
+
+		# Cause (3GPP 24.008 p. 10.5.4.11)
+		set cause [rd _sig Cause]
+		if { $cause == "e1d8" || $cause == "e19f" } {
+			# CC Release Complete
+			SendReleaseCmplte $cause
+		}
+	}
+
+	# Release MM Connection
+	ReleaseMmConnection
+
+	# Remove CC Entity
+	RemoveCcEntity $glIdx
+}
+
+proc NetReleaseReceived { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glCCdb glIdx
+
+	LogInputMsg $_sig
+
+	# Check Transaction Id Direction
+	set tif [rd _sig TIFlag]
+	if { $tif != [DbGet $glCCdb $glIdx ExpectedTif] } {
+		logscr "Unexpected Transaction Id Flag ($tif)"
+		#CcProtocolError $glIdx
+		return
+	}
+		
+	# Check Cause
+	set cause [rd _sig Cause]
+	if { ![IsVoid $cause] && [WrongCcCause $cause] } {
+		logscr "Unexpected Cause ($cause)"
+		#CcProtocolError $glIdx
+        return
+	}
+	
+	# Stop Running Timers	
+	tmrstop [DbGet $glCCdb $glIdx T_303id]
+	tmrstop [DbGet $glCCdb $glIdx T_305id]
+	tmrstop [DbGet $glCCdb $glIdx T_310id]
+	tmrstop [DbGet $glCCdb $glIdx T_313id]
+	
+	#Carlo - SS-CFx -
+	if { ![IsVoid $cause] && [expr {[hgetb $cause 0] & 0xF0}] == "0xe0" && [hgetb $cause 1] == "147" } {
+		# CC Release Complete (CFNRY case)
+		SendReleaseCmplte $cause
+	} elseif { ![IsVoid $cause] && [expr {[hgetb $cause 0] & 0xF0}] == "0xe0" && [hgetb $cause 1] == "145" } {
+		# Carlo (Call Waiting)
+			
+		# Inform Higher Layers
+		new		MN_CC_MS_REL_IND s
+		wr      s MsId [IndexToMsId $glIdx]
+		wr      s Tio [expr {$glIdx % 8}]
+		wr		s Cause $cause
+		send    s [DbGet $glCCdb $glIdx UserPid]
+		LogOutputMsg $s
+
+		# CC Release Complete
+		SendReleaseCmplte $cause
+
+		# Release MM Connection
+		ReleaseMmConnection
+
+		# Remove CC Entity
+		RemoveCcEntity $glIdx
+###
+
+	} elseif { [DbFieldExists $glCCdb HoldAuxiliaryState] && [DbGet $glCCdb $glIdx HoldAuxiliaryState] == "Call_Held" } {
+		#impongo la causa 'Normal, Unspecified' nel caso di Call Held
+		set cause "e19f"
+		# CC Release Complete
+		SendReleaseCmplte $cause
+	} else {
+
+		#log "NetReleaseReceived: send 'MN_CC_MS_REL_IND' that informs the higher layer that the MsId [IndexToMsId $glIdx] is busy (cause $cause)"; #cDEBUG
+
+		# Inform Higher Layers
+		new		MN_CC_MS_REL_IND s
+		wr      s MsId [IndexToMsId $glIdx]
+		wr      s Tio [expr {$glIdx % 8}]
+		wr		s Cause $cause
+		send    s [DbGet $glCCdb $glIdx UserPid]
+		LogOutputMsg $s
+
+		# CC Release Complete
+		SendReleaseCmplte
+
+		# Release MM Connection
+		ReleaseMmConnection
+
+		# Remove CC Entity
+		RemoveCcEntity $glIdx
+	}
+}
+
+proc LocalRelease { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glCCdb glIdx
+
+	LogInputMsg $_sig
+
+	# Check Transaction Id Direction
+	set tif [rd _sig TIFlag]
+	if { $tif != [DbGet $glCCdb $glIdx ExpectedTif] } {
+		logscr "Unexpected Transaction Id Flag ($tif)"
+		#CcProtocolError $glIdx
+		return
+	}
+		
+	# Check Cause
+	set cause [rd _sig Cause]
+	if { ![IsVoid $cause] && [WrongCcCause $cause] } {
+		logscr "Unexpected Cause ($cause)"
+		#CcProtocolError $glIdx
+        return
+	}
+	
+	# Stop Running Timers	
+	tmrstop [DbGet $glCCdb $glIdx T_303id]
+	tmrstop [DbGet $glCCdb $glIdx T_305id]
+	tmrstop [DbGet $glCCdb $glIdx T_310id]
+	tmrstop [DbGet $glCCdb $glIdx T_313id]
+
+	# Inform Higher Layers
+	new		MN_CC_MS_REL_IND s
+	wr      s MsId [IndexToMsId $glIdx]
+	wr      s Tio [expr {$glIdx % 8}]
+	wr		s Cause $cause
+	send    s [DbGet $glCCdb $glIdx UserPid]
+	LogOutputMsg $s
+
+	# Release MM Connection
+	ReleaseMmConnection
+
+	# Remove CC Entity
+	RemoveCcEntity $glIdx
+
+	nextstate Null_U0
+}
+
+proc SendDisconnect { cause } {
+
+	# Declare and Initialize Global Variables
+	global _sig glCCdb glIdx
+
+	# Get Parameters
+	set msid [IndexToMsId $glIdx]
+	set tid [expr {$glIdx % 8}]
+	set tif [expr {1 - [DbGet $glCCdb $glIdx ExpectedTif]}]
+	DbSet $glCCdb $glIdx DiscCause $cause
+
+	# Set MsId
+	set msid [IndexToMsId $glIdx]
+
+	new 	CC_MS_DISCONNECT s
+	wr 		s TIFlag $tif
+	wr      s TIO $tid
+	wr      s Sn 0
+	wr      s Cause $cause
+
+	# Send to Lower Layer
+	SendMmCcDataReq $msid $s
+	LogOutputMsg $s
+
+	tmrstart [DbGet $glCCdb $glIdx T_305id]
+
+##	# Send Traffic Info To Lower layer
+##	SendRrTrafficInfo $msid "stop"
+
+	if { [DbFieldExists $glCCdb HoldAuxiliaryState] && [DbGet $glCCdb $glIdx HoldAuxiliaryState] != "Idle" && $cause == "e19f" } {
+		# nel caso di rilascio del traffic channel causa Call Hold, NON cambio lo stato corrente
+	} else {
+    	nextstate DisconnectRequest_U11
+	}
+}
+
+proc SendRelease { { cause "?" } { cause2 "?" } } {
+
+	# Global Variables 
+	global glIdx glCCdb
+
+	# Get Parameters
+	set msid [IndexToMsId $glIdx]
+	set tif [expr {1 - [DbGet $glCCdb $glIdx ExpectedTif]}]
+	set tid [expr {$glIdx % 8}]
+
+	# CC Release
+	new		CC_MS_RELEASE s
+	wr      s TIFlag $tif
+	wr      s TIO $tid
+	wr      s Sn 0
+	wr		s Cause $cause
+	if { ![IsVoid $cause2] } {
+		wr	s SecondCause $cause2
+	}
+
+	# Send To Lower Layer
+	SendMmCcDataReq [IndexToMsId $glIdx] $s
+	LogOutputMsg $s
+
+	tmrstart [DbGet $glCCdb $glIdx T_308id]
+
+	if { [DbFieldExists $glCCdb HoldAuxiliaryState] && [DbGet $glCCdb $glIdx HoldAuxiliaryState] == "Hold_Request" || [DbGet $glCCdb $glIdx HoldAuxiliaryState] == "Call_Held" } {
+		# nel caso di rilascio del traffic channel causa Call Hold, NON cambio lo stato corrente
+	} else {
+		nextstate ReleaseRequest_U19
+	}
+}
+
+proc SendReleaseCmplte { { cause "?" } } {
+
+	# Declare and Initialize Global Variables
+	global _sig glCCdb glIdx _is_umts
+
+	log "SendReleaseCmplte: glIdx=$glIdx <--> msid=[IndexToMsId $glIdx]"; #cDEBUG
+
+	# Get Parameters
+	set msid [IndexToMsId $glIdx]
+	set tid [expr {$glIdx % 8}]
+	#TMALCAB-279
+	set exptif [DbGet $glCCdb $glIdx ExpectedTif]
+	log "SendReleaseCmplte exptif=$exptif"
+	if { $exptif != "?" } {
+
+		set tif [expr {1 - [DbGet $glCCdb $glIdx ExpectedTif]}]
+
+		new 	CC_MS_RELEASE_COMP s
+		wr 		s TIFlag $tif
+		wr      s TIO $tid
+		wr      s Sn 0
+		wr		s Cause $cause
+
+		# Send to Lower Layer
+		SendMmCcDataReq [IndexToMsId $glIdx] $s
+		LogOutputMsg $s
+	} else {
+		log "SendReleaseCmplte invalid tif"
+	}
+
+	if { [DbFieldExists $glCCdb HoldAuxiliaryState] && [DbGet $glCCdb $glIdx HoldAuxiliaryState] == "Call_Held"} {
+		# nel caso di rilascio del traffic channel causa Call Hold, NON cambio lo stato corrente
+	} elseif { $_is_umts && $cause == "e1d8" } {
+		# Bearer Capability not supported --> swithing Video/Voice Call
+		nextstate WaitForDisconnect
+	} else {
+		nextstate Null_U0
+	}
+}
+
+proc ReleaseRequest { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glIdx glCCdb
+	
+	# Cause (3GPP 24.008 p. 10.5.4.11)
+	set cause [rd _sig Cause]
+
+	# Send CC Release
+	SendRelease $cause
+}
+
+proc AbortRequest { } {
+
+	# Global Variables
+	global _sig
+	
+	LogInputMsg $_sig
+
+	# Cause (3GPP 24.008 p. 10.5.4.11)
+	set cause [rd _sig Cause]
+
+	# Abort Connection
+	AbortMmConnection $cause
+}
+
+proc DisconnectRequest { } {
+
+	# Global Variables
+	global _sig glCCdb glIdx
+	
+	LogInputMsg $_sig
+
+	# Cause (3GPP 24.008 p. 10.5.4.11)
+	set cause [rd _sig Cause]
+	if { [IsVoid $cause] } {
+		set cause e090
+	}
+
+	# Stop Timers
+	tmrstop [DbGet $glCCdb $glIdx T_303id]
+	tmrstop [DbGet $glCCdb $glIdx T_310id]
+	tmrstop [DbGet $glCCdb $glIdx T_313id]
+
+	# Disconnect
+	SendDisconnect $cause
+}
+
+proc MsSetupCmplteReq { } {
+
+	# Global Variables
+	global glIdx glCCdb
+
+	# Get Parameters
+	set msid [IndexToMsId $glIdx]
+	set tid [expr {$glIdx % 8}]
+
+	# Stop Timers
+	tmrstop [DbGet $glCCdb $glIdx T_303id]
+	tmrstop [DbGet $glCCdb $glIdx T_310id]
+
+	# Set MsId
+	set msid [IndexToMsId $glIdx]
+
+	# Connection Acknowledge
+	new     CC_CONNECT_ACK s
+	wr      s TIFlag 0
+	wr      s TIO $tid
+	wr      s Sn 0
+
+	# Send To Lower Layer
+	SendMmCcDataReq $msid $s
+	LogOutputMsg $s
+	
+##	# Send Traffic Info To Lower layer
+##	SendRrTrafficInfo $msid "start"
+
+	nextstate Active_U10
+}
+
+proc MnCcMsInitReqHnd {} {
+	global glIdx glCCdb _sig _state
+
+	LogInputSig
+
+	#GetInstance will save _state in glCCdb
+	set _state [rd _sig State]
+
+	DbSet $glCCdb $glIdx ExpectedTif [rd _sig ExpectedTif]
+	DbSet $glCCdb $glIdx SetupType [rd _sig SetupType]
+	DbSet $glCCdb $glIdx CalledPartyNum [rd _sig CalledPartyNum]
+	DbSet $glCCdb $glIdx CallType [rd _sig CallType]
+	DbSet $glCCdb $glIdx ResAssigned [rd _sig ResAssigned]
+
+	new MN_CC_MS_INIT_ACK s
+	wr s MsId [IndexToMsId $glIdx]
+	wr s CcIdx $glIdx
+	wr s Tio [expr {$glIdx % 8}]
+	send s [DbGet $glCCdb $glIdx UserPid]
+
+	LogOutputMsg $s
+
+	DebugLogDbRecord $glCCdb $glIdx; #debug
+}
+
+############################################################
+# Call SS Hold/Retrieve Handling
+############################################################
+
+proc SendSsHoldReq { } {
+
+	global _sig glIdx glCCdb
+
+	LogInputMsg $_sig
+
+	# Get Parameters
+	set msid [IndexToMsId $glIdx]
+	set tid [rd _sig Tio]
+
+	# Hold Request
+	new 	CC_HOLD s
+	wr 		s Sn 0
+	wr 		s TIFlag 0; # Tx from the side that originates the TI (24.007)
+	wr 		s TIO $tid
+
+	# Send to Lower Layer
+	SendMmCcDataReq $msid $s
+	LogOutputMsg $s
+
+	# Set the Hold Auxiliary State (only when the call is in active state)
+	DbSet $glCCdb $glIdx HoldAuxiliaryState "Hold_Request"
+}
+
+############################################################
+proc SsHoldResponse { } {
+
+	global _sig glIdx glCCdb
+
+	LogInputMsg $_sig
+
+	set expectedTif [DbGet $glCCdb $glIdx ExpectedTif]
+
+	# Check Transaction Id Direction
+	set tif [rd _sig TIFlag]
+	if { $tif != $expectedTif } {
+		logscr "Unexpected Trans Id Flag ($tif)"	
+		return
+	}	
+
+	# Get Parameters
+	set msid [IndexToMsId $glIdx]
+	set tid [rd _sig TIO]
+	###set tid [expr {$glIdx % 8}]
+
+	if { [string equal [lindex $_sig 0] "CC_HOLD_ACK"] } {
+		# LATO MOBILE POSSO AVERE + di 1 TRAFFIC CHANNEL ASSEGNATO ALLO STESSO MOBILE (1 Traffic channel per esm legato ad una Active Call ed un altro alla Hold Call).
+		# Traffic channel reserved ONLY for Call Hold
+		DbSet $glCCdb $glIdx CallHoldPendingResAssTid $tid
+
+		# Set Hold Auxiliary State (only when the call is in active state)
+		DbSet $glCCdb $glIdx HoldAuxiliaryState "Call_Held"
+
+		# Set Hold Auxiliary State for remote mobile involved in call hold
+		global glCommonDb
+		set remoteNum [DbGet $glCommonDb $msid CalledMsNum]
+		set remoteIdx [DbGetIdx $glCommonDb OwnNum $remoteNum]
+		set remoteMs [expr {$remoteIdx * 8 + $tid}]
+		DbSet $glCCdb $remoteMs HoldAuxiliaryState "Call_Held"
+
+		new 	HOLD_ACCEPT_RSP s
+		wr      s MsId $msid 
+		wr      s Tio $tid
+
+	} elseif { [string equal [lindex $_sig 0] "CC_HOLD_REJ"] } {
+
+		# Set Hold Auxiliary State (only when the call is in active state)
+		DbSet $glCCdb $glIdx HoldAuxiliaryState "Idle"
+
+		new 	HOLD_REJECT_RSP s
+		wr      s MsId $msid 
+		wr      s Tio $tid
+		wr		s Cause	[rd _sig Cause]
+	}
+
+	# Send Hold Indication to Upper Layer
+	send 	s [DbGet $glCCdb $glIdx UserPid]
+
+	LogOutputMsg $s
+}
+
+############################################################
+proc SendSsRetrieveReq { } {
+
+	global _sig glIdx glCCdb
+
+	LogInputMsg $_sig
+
+	# Get Parameters
+	set msid [IndexToMsId $glIdx]
+	set tid [rd _sig Tio]
+
+	# Hold Request
+	new 	CC_RETRIEVE s
+	wr 		s Sn 0
+	wr 		s TIFlag 0; # Tx from the side that originates the TI (24.007)
+	wr 		s TIO $tid
+
+	# Send to Lower Layer
+	SendMmCcDataReq $msid $s
+	LogOutputMsg $s
+
+	# Set the Hold Auxiliary State (only when the call is in active state)
+	DbSet $glCCdb $glIdx HoldAuxiliaryState "Retrieve_Request"
+
+
+#-----------------------------------------#
+	#@Carlo workaround del 04/12/2008
+
+	# Set Hold Auxiliary State for remote mobile involved in call hold
+	global glCommonDb
+	set remoteNum [DbGet $glCommonDb $msid CalledMsNum]
+	set remoteIdx [DbGetIdx $glCommonDb OwnNum $remoteNum]
+	set remoteMs [expr {$remoteIdx * 8 + $tid}]
+	DbSet $glCCdb $remoteMs HoldAuxiliaryState "Retrieve_Request"
+}
+
+proc StatusEnq { } {
+	global _sig glIdx glCCdb
+
+	set msid [IndexToMsId $glIdx]
+	set tid [rd _sig TIO]
+
+	new CC_STATUS s
+
+	wr	s	Sn			0
+	wr	s	TIFlag 		0
+	wr	s	TIO			$tid
+	wr	s	Cause		e01e
+	wr	s	CallState	ca	
+	#wr s AuxiliaryStates
+
+	# Send to Lower Layer
+	SendMmCcDataReq $msid $s
+	LogOutputMsg $s
+}
+
+############################################################
+proc SsRetrieveResponse { } { 
+
+	global _sig glIdx glCCdb
+
+	LogInputMsg $_sig
+
+	set expectedTif [DbGet $glCCdb $glIdx ExpectedTif]
+
+	# Check Transaction Id Direction
+	set tif [rd _sig TIFlag]
+	if { $tif != $expectedTif } {
+		logscr "Unexpected Trans Id Flag ($tif)"	
+		return
+	}	
+
+	# Get Parameters
+	###set tid [expr {$glIdx % 8}]
+	set tid [rd _sig TIO]
+
+	if { [string equal [lindex $_sig 0] "CC_RETRIEVE_ACK"] } {
+
+		new 	RETRIEVE_ACCEPT_RSP s
+		wr      s MsId  [IndexToMsId $glIdx] 
+		wr      s Tio $tid
+
+	} elseif { [string equal [lindex $_sig 0] "CC_RETRIEVE_REJ"] } {
+
+		new 	RETRIEVE_REJECT_RSP s
+		wr      s MsId  [IndexToMsId $glIdx] 
+		wr      s Tio $tid
+		wr		s Cause	[rd _sig Cause];
+	}
+
+	# Send Hold Indication to Upper Layer
+	send 	s [DbGet $glCCdb $glIdx UserPid]
+
+	LogOutputMsg $s
+}
+
+############################################################
+proc ReceiveNetFacility { } {
+
+	global _sig glCCdb glIdx
+
+	LogInputMsg $_sig
+
+	set facility [rd _sig Facility]
+
+	if { $facility != "?" && $facility == "a20302020001" } {
+
+		log "ReceiveNetFacility: ## Call On HOLD ##"
+
+		# Send the notification to Upper Layer (userscript) to inform that the call is Held
+		SendFacilityInd "hold"
+
+	} elseif { $facility != "?" && $facility == "a20302020101" } {
+
+		log "ReceiveNetFacility: ## Call On RETRIEVED ##"
+
+		# Send the notification to Upper Layer (userscript) to inform that the call is Retrieved
+		SendFacilityInd "retrieve"
+
+	} elseif { $facility == "?" } {
+		logscr "ReceiveNetFacility: WARNING facility='?'"
+	} else {
+		logscr "ReceiveNetFacility: WARNING --> facility=$facility"
+	}
+}
+
+############################################################
+proc SendFacilityInd { type } {
+	
+	global _sig glCCdb glIdx glCommonDb
+
+	# Get Transaction Identifier
+	set tid [rd _sig TIO]
+
+	# Get Called (remote mobile) Parameters
+	set calledNumber [DbGet $glCCdb $glIdx CalledPartyNum]
+	set calledId [DbGetIdx $glCommonDb OwnNum $calledNumber]
+	set indexRemote [expr {$calledId * 8 + $tid}]
+
+	# Set the Pid of the Remote Mobile
+	set userRemotePid [DbGet $glCCdb $indexRemote UserPid]
+
+	# Set facility type
+	if { $type == "hold" } {
+		#Carlo TODO
+
+	} elseif { $type == "retrieve" } {
+		#Carlo TODO
+
+	} else {
+		logscr "SendFacilityInd: WARNING typeNotification=$type"
+	}
+
+	log "SendFacilityInd: calledNumber=$calledNumber; calledId=$calledId; tid=$tid; indexRemote=$indexRemote; userRemotePid=$userRemotePid; type=$type"; #cDEBUG
+
+	new		MN_CC_MS_FACILITY_IND s
+	wr 		s MsId $calledId
+	wr 		s Tio $tid
+	wr		s Facility [rd _sig Facility] 
+	
+	# Send Hold Indication to Upper Layer to the Remote Called Mobile
+	send 	s $userRemotePid
+
+	LogOutputMsg $s
+}
+
+
+##############################################################
+#
+# FSM
+#
+##############################################################
+
+state WaitForConfig {
+	CC_CONFIG					Config
+	default	 					Unexpected
+}
+
+state Null_U0 {
+	CC_NET_SETUP				NetSetup
+	CC_NET_DISCONNECT			ReleaseCcTransaction
+	CC_NET_CONNECT				ReleaseCcTransaction
+	CC_NET_RELEASE   			ReleaseCcTransaction
+	CC_NET_ALERTING   			ReleaseCcTransaction
+    MN_CC_MS_SETUP_REQ			EstablishMmConnection
+	MN_CC_MS_INIT_REQ			MnCcMsInitReqHnd
+	default 					Any
+}
+
+state MMConnectionPending_U0_1  {
+	MM_CC_EST_CNF				MmConnectionEstablished
+	T_303						T_303Abort
+	MN_CC_MS_DISC_REQ			AbortRequest
+	default 					Any
+}
+
+state CCPromptPresent_U0_2 {
+	default 					WaitForDisconnect
+}
+
+state WaitForNetworkInformation_U0_3 {
+	default 					WaitForDisconnect
+}
+
+state CCEstablishmentPresent_U0_4 {
+	default 					WaitForDisconnect
+}
+
+state CCEstablishmentConfirmed_U0_5 {
+	default 					WaitForDisconnect
+}
+
+state RecallPresent_U0_6 {
+	default 					WaitForDisconnect
+}
+
+state CallInitiated_U1 {
+	CC_CALL_PROCEEDING			CallProceeding 
+	CC_NET_ALERTING				Alerting
+	CC_NET_CONNECT	    		Connect
+	MN_CC_MS_SETUP_CMPLTE_REQ 	MsSetupCmplteReq
+	T_303						T_303Expired
+	default 					WaitForDisconnect
+}
+
+state MobileOrigCallProceeding_U3 {
+	MM_CC_SYNC_IND      		AssignmentCmplte
+	CC_NET_ALERTING				Alerting
+	CC_NET_CONNECT	    		Connect
+	MN_CC_MS_SETUP_CMPLTE_REQ 	MsSetupCmplteReq
+    T_310               		T_310Expired
+	CC_PROGRESS					LogInputSig
+	default 					WaitForDisconnect
+}
+
+state CallDelivered_U4 {
+	MM_CC_SYNC_IND      		AssignmentCmplte
+	CC_NET_CONNECT	    		Connect
+	MN_CC_MS_SETUP_CMPLTE_REQ 	MsSetupCmplteReq
+	default 					WaitForDisconnect
+}
+
+state CallPresent_U6 {
+	MN_CC_CALL_CONF_REQ 		ConfirmCall
+	MN_CC_MS_REJ_REQ   			ReleaseCcTransaction
+	default 					WaitForDisconnect
+}
+
+state CallReceived_U7 {
+	MN_CC_MS_SETUP_RSP  		SendConnect
+	MM_CC_SYNC_IND      		AssignmentCmplte
+	default 					WaitForDisconnect
+}
+
+state ConnectRequest_U8 {
+	CC_CONNECT_ACK				ConnectAck
+	T_313						T_313Expired
+	default 					WaitForDisconnect
+}
+
+state MobileTerminatingCallConf_U9 {
+	MM_CC_SYNC_IND      		AssignmentCmplte
+	MN_CC_MS_ALERT_REQ     		SendAlerting
+	T_RES						T_RESExpired
+	MN_CC_MS_SETUP_RSP  		SendConnect
+	default 					WaitForDisconnect
+}
+
+state Active_U10 {
+	HOLD_INVOC_REQ				SendSsHoldReq
+	CC_HOLD_ACK					SsHoldResponse
+	CC_HOLD_REJ					SsHoldResponse
+	RETRIEVE_INVOC_REQ			SendSsRetrieveReq
+	CC_RETRIEVE_ACK				SsRetrieveResponse
+	CC_RETRIEVE_REJ				SsRetrieveResponse
+	CC_STATUS_ENQ				StatusEnq
+	default 					WaitForDisconnect
+}
+
+state DisconnectRequest_U11 {
+	T_305						T_305Expired
+	default 					WaitForDisconnect
+}
+
+state DisconnectIndication_U12 {
+	default 					WaitForRelease
+}
+
+state ReleaseRequest_U19 {
+	MN_CC_MS_REL_REQ			LogUnexpected
+	CC_NET_RELEASE				LocalRelease
+	T_308                   	T_308Expired
+	default 					Any
+}
+
+state MobileOriginatingModify_U26 {
+	default 					WaitForDisconnect
+}
+
+state MobileTerminatingModify_U27 {
+	default 					WaitForDisconnect
+}
+
+state WaitForDisconnect {
+	CC_NET_DISCONNECT			NetDisconnectReceived
+	default						WaitForRelease
+}
+
+state WaitForRelease {
+	CC_NET_RELEASE				NetReleaseReceived
+	MN_CC_MS_REL_REQ			ReleaseRequest
+	MN_CC_MS_DISC_REQ			DisconnectRequest
+	default						Any
+}
+
+state Any {
+	MM_CC_REL_IND				MmConnectionReleased
+	CC_NET_RELEASE_COMP     	ReleaseCmplte
+	CC_SET_USER_PID     		SetUserPid
+	CC_NET_FACILITY				ReceiveNetFacility
+	default						Unexpected
+}

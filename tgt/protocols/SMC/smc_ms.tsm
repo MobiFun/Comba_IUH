@@ -1,0 +1,907 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/SMC/tags/SMC-0.7.19/scripts/smc_ms.tsm $
+#
+# $Author: roger $
+#
+# Description: SMS SMC procedures MS side 3GPP TS 24.008 V3.8.0 (2001-06)
+#
+#
+# $Rev: 54266 $
+#
+# $Date: 2012-09-12 14:39:40 +0200 (Wed, 12 Sep 2012) $
+##############################################################
+
+##############################################################
+#
+# Init Procedure
+#
+##############################################################
+
+proc Init { args } {
+	 
+	# Declare and Initialize Global Variables
+	global _self _HandleRxSignalProc __net_side glSMCdb glCommonDb
+
+    # Includes
+	include "common/utils/generalUtils.tsm"
+	include "common/utils/L3Utils.tsm"
+	
+	# Uplevel Configuration File
+	set cfgfile [lindex $args 0]
+	uplevel #0 include $cfgfile
+
+	# Check Dependencies for Utilities Libraries
+	set scriptUtilsNeeded "scriptUtils-2.11.0"
+	if { [CheckCompatibility $scriptUtilsNeeded] == 0 } {
+		logscr "Update of scriptUtils library ($scriptUtilsNeeded) is needed by current SMC library"
+		exit
+	}
+
+	# Set NetSide
+	SetNetside
+
+	# Create Common Db
+	set glCommonDb [lindex $args 1]
+		
+	# Smc Adapation Layer
+	set al [lindex $args 2]
+	include "$al"
+	
+	# Register Sapi
+	register SMC
+	if {![info exists ::_gmmpid]} {
+		# Initialization of _gmmpid in case it isn't done in ext.c.
+		# This may happen in case of Tstm that doesn't use GMM.
+		set ::_gmmpid "?"
+	}
+
+	# Handle Multi-Instance
+	set _HandleRxSignalProc SmcMultiInstanceHdl
+
+	# Display
+	logscr "SMC Access Network Simulation Started"
+
+	nextstate WaitForConfig
+}
+
+##############################################################
+#
+# Mm Connection Procedures
+#
+##############################################################
+
+proc EstablishMmConnection { } {
+   
+	global _sig glSMCdb glIdx
+
+	set msid [IndexToMsId $glIdx 16]
+
+	# Send to Lower Layer
+	SendMmSmcEstReq $msid
+	
+	nextstate MO_MmConnectionPending
+}
+
+proc MmConnectionEstablished { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glSMCdb glIdx
+
+	LogInputMsg $_sig
+
+	# Get Parameters
+	#set tid [expr {$glIdx % 8}]
+	DbSet $glSMCdb $glIdx ExpectedTif 1
+	DbSet $glSMCdb $glIdx PendingTid "?"
+
+	# CP-DATA
+	SendCpData "MO"
+}
+
+proc MmConnectionReleased { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glSMCdb glIdx
+
+	LogInputMsg $_sig
+	
+	# Inform Users
+	set start [expr {$glIdx - [expr {$glIdx % 16}]}]
+	for { set i $start } { $i < [expr {$start + 16}] } { incr i } {
+		if { [DbEntryExists $glSMCdb $i] } {
+			set pend_rel_req [DbGet $glSMCdb $i PendingRelReq]
+			if { $pend_rel_req != "1" } {
+				new		MN_SMS_ERROR_IND s
+				wr		s MsId [IndexToMsId $i 16]
+				wr		s TIO [expr {$i % 16}]
+				wr      s Cause [rd _sig Cause]
+				send    s [DbGet $glSMCdb $i UserPid]
+				LogOutputMsg $s
+			}
+
+			# Remove SMC Entity
+			RemoveSmcEntity $i
+
+			nextstate Any
+		}
+	}
+}
+
+proc SendMmSmcEstReq { msid } {
+
+	# Global Variables
+	global glIdx
+
+	# MMCC Establish Request
+	new		MM_SMS_EST_REQ s
+	wr		s MsId $msid
+	wr		s Tio [expr {$glIdx % 16}]
+	wr      s CmServType 4
+	send  s
+	LogOutputMsg $s
+}
+
+proc SendLlSmcDataReq { msid prio pdu } {
+
+	new		LLSMS_UNITDATA_REQ s
+	wr      s MsId $msid
+	wr      s PkThCl 1
+	wr      s ReliabCl 3
+	wr      s Cipher 0
+	wr      s Prio $prio
+	wr		s Data [smcSigToPdu pdu]
+	send    s
+	LogOutputMsg $s
+}
+
+proc SendMmSmcDataReq { msid pdu } {
+
+	# Declare and Initialize Global Variables
+	global glIdx
+
+	# MMCC Data Request
+	new		MM_SMS_DATA_REQ s
+	wr		s MsId $msid
+	wr      s Pdu [smcSigToPdu pdu]
+	send  s
+	LogOutputPrim $s
+}
+
+proc SendMmSmcRelReq { msid } {
+
+	# Global Variables
+	global glIdx
+
+	# MMCC Release Request
+	new		MM_SMS_REL_REQ s
+	wr      s MsId $msid
+	wr      s Tio [expr {$glIdx % 16}]
+	send  s
+	LogOutputMsg $s
+}
+
+##############################################################
+#
+# Smc Entity Procedures
+#
+##############################################################
+
+proc Config { } {
+
+	# Declare and Initialize Global Variables
+	global _self glSMCdb
+
+	# Create Internal Database
+	set glSMCdb SMC_ms_db
+	CreateDataBase $glSMCdb
+
+	# Cc Config Ack
+	new		SMC_CONFIG_ACK s
+	
+	send s $::_src
+	LogOutputMsg $s
+
+	logscr ""
+    logscr "SMC BRING-UP COMPLETE"
+	logscr ""
+}
+
+proc RemoveSmcEntity { index } {
+
+	# Global Variables
+	global glSMCdb
+
+	# Free Timers
+	set tTc1id [DbGet $glSMCdb $index T_TC1id]
+	if { ![IsVoid $tTc1id] } {
+		tmrfree $tTc1id
+	}
+
+	DbRemEntry $glSMCdb $index
+}
+
+proc CreateNewSmcEntity { index initstate } {
+
+	# Global Variables
+	global glSMCdb glPidArray
+
+	if { [DbEntryExists $glSMCdb $index] } {
+		logscr "CreateNewSmcEntity: Error the entry $index already exists"
+		return -1
+	}
+
+	DbCreateDefEntry $glSMCdb $index
+
+	# Current TC1 Counter
+	DbSet $glSMCdb $index TC1CurrentCount 0
+
+	# Max TC1 Counter
+	DbSet $glSMCdb $index TC1MaxCount 1
+
+	# Pending Release Request
+	DbSet $glSMCdb $index PendingRelReq 0
+
+	# Concatenate Short Messages
+	DbSet $glSMCdb $index ConcatShortMessage 0
+
+	# Block Unit Time
+	DbSet $glSMCdb $index BlockUnitTime 960
+
+	# Radio Priority for PS SMS (Gsm)
+	# When set ps sms is used (gsm).
+	DbSet $glSMCdb $index RadPrioSMS ?
+
+	# User Pid
+	set arridx [expr {$index / 16}]
+	if { [info exists glPidArray($arridx)] } {
+		DbSet $glSMCdb $index UserPid $glPidArray($arridx)
+	} else {
+		log "Warning Unknown Pid for Relay Protocol"
+		DbRemEntry $glSMCdb $index
+		return -1
+	}
+
+	# Expected Transaction Flag
+	if { [string equal $initstate "MO_Idle"] } {
+		DbSet $glSMCdb $index ExpectedTif 1
+	} elseif { [string equal $initstate "MT_Idle"] } {
+		DbSet $glSMCdb $index ExpectedTif 0
+	} else {
+		logscr "Invalid Initial State ($initstate)"
+		return -1
+	}
+
+	# Set State
+	DbSet $glSMCdb $index State $initstate
+}
+
+proc SetUserPid { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glSMCdb glPidArray
+
+	set userPid [lindex $_sig 1]
+	set listMs [lindex $_sig 2]
+
+	# Configure Parameters for every DB Index
+	foreach index $listMs {
+ 
+		# Set User Pid
+		set glPidArray($index) $userPid
+		
+		# Update Data Base
+		set start [expr {$index * 16}]
+		for { set i 0 } { $i < 16 } { incr i } {
+			set el [expr {$i + $start}]
+			if { [DbEntryExists $glSMCdb $el] } {
+				DbSet $glSMCdb $el UserPid $glPidArray($index)
+			}
+		}
+	}
+}
+
+##############################################################
+#
+# Timers Handling Procedures
+#
+##############################################################
+
+proc SetTC1 { pdu } {
+
+	global _is_gsm _rrpid glSMCdb glIdx
+
+	# Set Timer TC1 by Estimating Number of Blocks
+	set pdusize [expr {[string length $pdu] / 2}]
+	set numblocks [expr {$pdusize / 20}]
+	if { $numblocks < 1 } {
+		set numblocks 1
+	}
+
+	set blockTc1 [DbGet $glSMCdb $glIdx BlockUnitTime]
+	if { [info exists _is_gsm ] && $_is_gsm } {
+		if { [string len [remcmd $_rrpid "info procs GetT200ofSapi3Link"]] } {
+			set t200 [remcmd $_rrpid GetT200ofSapi3Link]
+			if { ![IsVoid $t200] } {
+				# override previous value if too small compared with T200
+				if { ($blockTc1 / $t200) < 2 } {
+					set blockTc1 [expr {$t200 * 2}]
+					log "DEBUG (SetTC1): Overriding blockTc1 ($blockTc1) ##"
+				}
+			}
+		}
+	}
+	log "DEBUG (SetTC1): blockTc1=$blockTc1 ##"
+
+	set tTC1id [tmrnew T_TC1 [expr {$blockTc1 * $numblocks}]]
+	DbSet $glSMCdb $glIdx T_TC1id $tTC1id
+}
+
+proc MoTC1Expired { } {
+
+	TC1Expired "MO"
+}
+
+proc MtTC1Expired { } {
+
+	TC1Expired "MT"
+}
+
+proc TC1Expired { side } {
+
+	# Global Variables
+	global _sig glIdx glSMCdb
+
+	LogInputMsg $_sig
+
+	# Get Parameters
+	set count [DbGet $glSMCdb $glIdx TC1CurrentCount]
+	set maxcount [DbGet $glSMCdb $glIdx TC1MaxCount]
+
+	if { $count < $maxcount } {
+		# Re-Send CP-DATA
+		SendCpData $side
+
+		# Timer T_TC1 Counter
+		incr count
+		DbSet $glSMCdb $glIdx TC1CurrentCount $count
+	} else { 
+
+		set prio [DbGet $glSMCdb $glIdx RadPrioSMS]
+		if { [IsVoid $prio]} {
+			# Release Mm Connection
+			SendMmSmcRelReq [IndexToMsId $glIdx 16]
+		}
+		# Inform Higher Layer
+		new		MN_SMS_ERROR_IND s
+		wr		s MsId [IndexToMsId $glIdx 16]
+		wr      s TIO [expr {$glIdx % 16}]
+		wr		s Cause "?"
+		send    s [DbGet $glSMCdb $glIdx UserPid]
+		LogOutputMsg $s
+
+		# Remove Entity
+		RemoveSmcEntity $glIdx
+
+		nextstate Any
+	}	
+}
+
+##############################################################
+#
+# Specific Procedures
+#
+##############################################################
+
+proc StoreSmsEstReq { } {
+   
+	global _sig glSMCdb glIdx
+
+	# Get Parameters
+	set msid [IndexToMsId $glIdx 16]
+	set pdu [rd _sig Rpdu]
+	DbSet $glSMCdb $glIdx RpData $pdu
+	DbSet $glSMCdb $glIdx ConcatShortMessage [rd _sig More]
+	DbSet $glSMCdb $glIdx PendingTid $msid
+	
+	SetTC1 $pdu
+}
+
+proc SendSmsEstAck { } {
+
+	global glSMCdb glIdx
+
+	set msid [IndexToMsId $glIdx 16]
+
+	# Acknowledge User Script
+	new		MN_SMS_EST_ACK s
+	wr		s MsId $msid
+	wr		s TIO [expr {$glIdx % 16}]
+	send    s [DbGet $glSMCdb $glIdx UserPid]
+	LogOutputMsg $s
+}
+
+proc SmsEstReq {} {
+
+	global _gmmpid _sig glIdx glSMCdb
+
+	LogInputMsg $_sig
+
+	StoreSmsEstReq
+	SendSmsEstAck
+
+	if { ![IsVoid $_gmmpid] && $_gmmpid != -1 } {
+
+		SendGmmRegState
+		nextstate MO_WaitGmmRegRsp
+	} else {
+		#use cs
+		EstablishMmConnection
+	}
+}
+
+proc SendGmmRegState {} {
+
+	global glIdx
+
+	new GMM_SMS_REG_STATE_REQ s
+	wr		s MsId [IndexToMsId $glIdx 16]
+	wr		s Tio $glIdx
+	send    s $::_gmmpid
+	LogOutputMsg $s
+}
+
+proc GmmRegStateRsp {} {
+
+	global _sig glIdx glSMCdb _is_gsm
+
+	set ps [rd _sig PsRegistered]
+
+	set  smsprio ?
+
+	#TODO ps sms NYI for umts
+	if { [info exists _is_gsm ] && $_is_gsm } {
+		set smstom8 [rd _sig RadPrioSMS-TOM8]
+		if { ![IsVoid $smstom8]} {
+			set smsprio [expr 0x0f & 0x$smstom8]
+		} else {
+			set smsprio ?
+		}
+		DbSet $glSMCdb $glIdx RadPrioSMS $smsprio
+	}
+
+	#Note: it is possible that GMM responds not ps registered
+	#if there is some deregistration procedure ongoing which hasn't
+	#yet been signalled to the user script.  In that case we will
+	#try using cs but we don't know if cs is attached either and it
+	#may fail.
+
+	if { $ps != 0 && [IsVoid $smsprio] } {
+		log "GmmRegStateRsp: ps registered but no sms prio, use cs"
+	}
+
+	if { $ps != 0 && ![IsVoid $smsprio] } {
+		#TODO use ps, for now still call EstablishMmConnection
+		#SendCpData MO 
+		EstablishMmConnection
+	} else {
+		#use cs
+		EstablishMmConnection
+	}
+}
+
+##############################################################
+
+proc MoSmsDataReq { } {
+
+	SmsDataReq "MO"
+}
+
+proc MtSmsDataReq { } {
+
+	SmsDataReq "MT"
+}
+
+proc SmsDataReq { side } {
+
+	# Declare and Initialize Global Variables
+	global _sig glIdx glSMCdb
+
+	LogInputMsg $_sig
+
+	# Get Parameters
+	set pdu [rd _sig Rpdu]
+	DbSet $glSMCdb $glIdx RpData $pdu
+	DbSet $glSMCdb $glIdx ConcatShortMessage [rd _sig More]
+
+	SetTC1 $pdu
+
+	# CP-DATA
+	SendCpData $side
+}
+
+proc MoCpData { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glIdx glSMCdb
+
+	LogInputMsg $_sig
+
+	# Check Transaction Id Direction
+	set tif [rd _sig TIFlag]
+	if { $tif != [DbGet $glSMCdb $glIdx ExpectedTif] } {
+		logscr "Unexpected Transaction Id Flag ($tif)"
+		return
+	}
+
+	set prio [DbGet $glSMCdb $glIdx RadPrioSMS]
+	#TODO implement concatenated sms for gsm ps
+
+	# Get Parameters
+	set more [DbGet $glSMCdb $glIdx ConcatShortMessage]
+	if { $more == 1 && [IsVoid $prio]} {
+		# Open New Transaction
+		SendMmSmcEstReq [IndexToMsId $glIdx 16]
+	} 
+
+	# Inform Higher Layer
+	new		MN_SMS_DATA_IND s
+	wr		s MsId [IndexToMsId $glIdx 16]
+	wr		s TIO [expr {$glIdx % 16}]
+	wr      s Rpdu [rd _sig CpUserData]
+	send    s [DbGet $glSMCdb $glIdx UserPid]
+	LogOutputMsg $s
+
+	SendCpAck "MO"	
+}
+
+proc MtCpData { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glIdx glSMCdb
+
+	LogInputMsg $_sig
+
+	# Check Transaction Id Direction
+	set tif [rd _sig TIFlag]
+	if { $tif != [DbGet $glSMCdb $glIdx ExpectedTif] } {
+		logscr "Unexpected Transaction Id Flag ($tif)"
+
+		set prio [DbGet $glSMCdb $glIdx RadPrioSMS]
+		if { [IsVoid $prio]} {
+			# Release MM Connection
+			SendMmSmcRelReq [IndexToMsId $glIdx 16]
+		}
+		# Remove Entity
+		RemoveSmcEntity $glIdx
+		nextstate Any
+		return
+	}
+
+	# Check if one other Transaction was waiting for CP-ACK
+	set start [expr {$glIdx - [expr {$glIdx % 16}]}]
+	for { set i $start } { $i < [expr {$start + 16}] } { incr i } {
+		if { $i != $glIdx && [DbEntryExists $glSMCdb $i] } {
+			set state [DbGet $glSMCdb $i State]
+			if { [string equal $state "MT_WaitForCPAck"] } {
+
+				set prio [DbGet $glSMCdb $glIdx RadPrioSMS]
+				if { [IsVoid $prio]} {
+					# Release MM Connection
+					SendMmSmcRelReq [IndexToMsId $i 16]
+				}
+				# Remove Entity
+				RemoveSmcEntity $i
+				nextstate Any
+				break
+			}
+		}
+	}
+
+	# Inform Higher Layer
+	new		MN_SMS_EST_IND s
+	wr		s MsId [IndexToMsId $glIdx 16]
+	wr		s TIO [expr {$glIdx % 16}]
+	wr      s Rpdu [rd _sig CpUserData]
+	send    s [DbGet $glSMCdb $glIdx UserPid]
+	LogOutputMsg $s
+
+	SendCpAck "MT"	
+}
+
+proc MoCpAck { } {
+
+	CpAck "MO"
+}
+
+proc MtCpAck { } {
+
+	CpAck "MT"
+}
+
+proc CpAck { side } {
+
+	global _sig glSMCdb glIdx
+
+	LogInputMsg $_sig
+
+	# Stop Timers
+	tmrstop [DbGet $glSMCdb $glIdx T_TC1id]
+
+	# Check if Pending Release Request
+	set pend_rel_req [DbGet $glSMCdb $glIdx PendingRelReq]
+	if { $pend_rel_req == "1" } {
+
+		set prio [DbGet $glSMCdb $glIdx RadPrioSMS]
+		if { [IsVoid $prio]} {
+			# Release MM Connection
+			SendMmSmcRelReq [IndexToMsId $glIdx 16]
+		}
+		# Remove Entity
+		RemoveSmcEntity $glIdx
+		nextstate Any
+	} else {
+		if { [string equal $side "MO"] } {
+			nextstate MO_MmConnectionEstablished
+		} elseif { [string equal $side "MT"] } {
+			nextstate MT_MmConnectionEstablished
+		} else {
+			logscr "Unexpected Side ($side)"
+		}
+	}
+}
+
+proc CpError { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glSMCdb glIdx
+
+	LogInputMsg $_sig
+
+	# Get Parameters
+	set msid [IndexToMsId $glIdx 16]
+	set tif [expr {1 - [DbGet $glSMCdb $glIdx ExpectedTif]}]
+	set tid [expr 0x07 & [expr {$glIdx % 16}]]
+
+	# Inform Higher Layer
+	new		MN_SMS_ERROR_IND s
+	wr      s MsId $msid
+	wr      s TIO $tid
+	send    s [DbGet $glSMCdb $glIdx UserPid]
+	LogOutputMsg $s
+
+	set prio [DbGet $glSMCdb $glIdx RadPrioSMS]
+	if { [IsVoid $prio]} {
+		# Release MM Connection
+		SendMmSmcRelReq $msid
+	}	
+	# Remove Entity
+	RemoveSmcEntity $glIdx
+
+	nextstate Any
+}
+
+proc SendCpAck { side } { 
+
+	global glIdx glSMCdb
+
+	# Get Parameters
+	set tif [expr {1 - [DbGet $glSMCdb $glIdx ExpectedTif]}]
+	set tid [expr 0x07 & [expr {$glIdx % 16}]]
+
+	# CP-ACK
+	new		SMC_CP_ACK s
+	wr      s TIFlag $tif
+	wr      s TIO $tid
+	
+	# Send to Lower Layer
+	set msid [IndexToMsId $glIdx 16]
+
+	set prio [DbGet $glSMCdb $glIdx RadPrioSMS]
+	if { ![IsVoid $prio] } {
+		SendLlSmcDataReq $msid $prio $s
+	} else {
+		SendMmSmcDataReq $msid $s
+    }
+	LogOutputMsg $s
+
+	#Note: state names aren't correct in Gsm ps sms case.
+	if { [string equal $side "MO"] } {
+		nextstate MO_MmConnectionEstablished
+	} elseif { [string equal $side "MT"] } {
+		nextstate MT_MmConnectionEstablished
+	} else {
+		logscr "Unexpected Side ($side)"
+	}
+}
+
+proc SendCpData { side } {
+
+	global glSMCdb glIdx 
+
+	# Get Parameters
+	set tif [expr {1 - [DbGet $glSMCdb $glIdx ExpectedTif]}]
+	set tid [expr 0x07 & [expr {$glIdx % 16}]]
+	set data [DbGet $glSMCdb $glIdx RpData]
+
+	# CP-DATA
+	new		SMC_CP_DATA s
+	wr      s TIFlag $tif
+	wr      s TIO $tid
+	wr      s CpUserData $data
+
+	# Send to Lower Layer
+	set msid [IndexToMsId $glIdx 16]
+	set prio [DbGet $glSMCdb $glIdx RadPrioSMS]
+	if { ![IsVoid $prio] } {
+		SendLlSmcDataReq $msid $prio $s
+	} else {
+		SendMmSmcDataReq $msid $s
+    }
+	LogOutputMsg $s
+
+	tmrstart [DbGet $glSMCdb $glIdx T_TC1id]
+
+	if { [string equal $side "MO"] } {
+		nextstate MO_WaitForCPAck
+	} elseif { [string equal $side "MT"] } {
+		nextstate MT_WaitForCPAck
+	} else {
+		logscr "Unexpected Side ($side)"
+	}
+}
+
+proc SendCpError { } {
+
+	global glSMCdb glIdx
+
+	# Get Parameters
+	set tif [expr {1 - [DbGet $glSMCdb $glIdx ExpectedTif]}]
+	set tid [expr 0x07 & [expr {$glIdx % 16}]]
+
+	# CP-ERROR
+	new		SMC_CP_ERROR s
+	wr      s TIFlag $tif
+	wr      s TIO $tid
+	wr      s CpCause 67
+
+	# Send to Lower Layer
+	set msid [IndexToMsId $glIdx 16]
+	set prio [DbGet $glSMCdb $glIdx RadPrioSMS]
+	if { ![IsVoid $prio] } {
+		SendLlSmcDataReq $msid $prio $s
+	} else {
+		SendMmSmcDataReq $msid $s
+	}
+	LogOutputMsg $s
+}
+
+proc ReleaseRequest { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glIdx glSMCdb
+
+	LogInputMsg $_sig
+
+	set prio [DbGet $glSMCdb $glIdx RadPrioSMS]
+	if { [IsVoid $prio]} {
+		# Release MM Connection
+		SendMmSmcRelReq [IndexToMsId $glIdx 16]
+	}	
+	# Remove Entity
+	RemoveSmcEntity $glIdx
+
+	nextstate Any
+}
+
+proc HoldReleaseRequest { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glSMCdb glIdx
+
+	LogInputMsg $_sig
+
+	# Set Pending Release Request
+	DbSet $glSMCdb $glIdx PendingRelReq 1
+}
+
+proc AbortRequest { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glSMCdb glIdx
+
+	LogInputMsg $_sig
+
+	# Send CP-ERROR
+	SendCpError
+
+	set prio [DbGet $glSMCdb $glIdx RadPrioSMS]
+	if { [IsVoid $prio]} {
+		# Release MM Connection
+		SendMmSmcRelReq [IndexToMsId $glIdx 16]
+	}	
+	# Remove Entity
+	RemoveSmcEntity $glIdx
+
+	nextstate Any
+}
+
+##############################################################
+#
+# FSM
+#
+##############################################################
+
+state WaitForConfig {
+	SMC_CONFIG					Config
+	SMC_SET_USER_PID     		SetUserPid
+	default                     Unexpected
+}
+
+state MO_Idle {
+	MN_SMS_EST_REQ			    SmsEstReq
+	default						Any
+}
+
+state MO_WaitGmmRegRsp {
+	GMM_SM_REG_STATE_RSP        GmmRegStateRsp
+	default						Any
+}
+
+state MO_MmConnectionPending {
+	MM_SMS_EST_CNF				MmConnectionEstablished	
+	MM_SMS_REL_IND				MmConnectionReleased	
+	MM_SMS_EST_IND				ReleaseRequest
+	default						Any
+}
+
+state MO_WaitForCPAck {
+	SMC_CP_ACK					MoCpAck
+	SMC_CP_ERROR				CpError
+	MN_SMS_REL_REQ				HoldReleaseRequest
+	T_TC1						MoTC1Expired
+	MN_SMS_ABORT_REQ			AbortRequest
+	default						Common
+}
+
+state MO_MmConnectionEstablished {
+	SMC_CP_DATA					MoCpData
+	SMC_CP_ERROR				CpError
+	MN_SMS_DATA_REQ				MoSmsDataReq
+	MN_SMS_REL_REQ				ReleaseRequest
+	MN_SMS_ABORT_REQ			AbortRequest
+	default						Common
+}
+
+state MT_Idle {
+	SMC_CP_ACK					ReleaseRequest
+	SMC_CP_DATA					MtCpData
+	default						Any
+}
+
+state MT_WaitForCPAck {
+	SMC_CP_ACK					MtCpAck
+	SMC_CP_ERROR				CpError
+	MN_SMS_REL_REQ				HoldReleaseRequest
+	T_TC1						MtTC1Expired
+	MN_SMS_ABORT_REQ			AbortRequest
+	default						Common
+}
+
+state MT_MmConnectionEstablished {
+	SMC_CP_DATA					MtCpData
+	SMC_CP_ERROR				CpError
+	MN_SMS_DATA_REQ				MtSmsDataReq
+	MN_SMS_REL_REQ				ReleaseRequest
+	MN_SMS_ABORT_REQ			AbortRequest
+	default						Common
+}
+
+state Common {
+	MM_SMS_REL_IND				MmConnectionReleased	
+	default						Any
+}
+
+state Any {
+	SMC_SET_USER_PID     		SetUserPid
+	default						Unexpected
+}

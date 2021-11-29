@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# Linux header
+
+# Tstm Binary File Path
+exepath=$(readLink $0)
+#exepath=$(readlink -f $0)
+
+# Test Manager Root Path
+scriptroot=${exepath%/*/*}
+export IUH_CS_COMBA_TSTM_SCRIPT_DIR=$scriptroot
+scheduler=sched/MultiSchedule.tsm
+
+# Set core file size
+ulimit -c unlimited
+
+$scriptroot/bin/iuhcs_comba_tm_r8 $scheduler $@

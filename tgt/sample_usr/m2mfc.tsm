@@ -1,0 +1,973 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/tstmUtils/sampleUsr/tags/sampleUsr-2.3.4/m2mfc.tsm $
+#
+# $Author: umbertob $
+#
+# Description: User Script Network Side - Ms 2 Ms Call 
+#
+#
+# $Rev: 2676 $
+#
+# $Date: 2005-02-14 18:45:29 +0100 (Mon, 14 Feb 2005) $
+##############################################################
+
+proc Init { args } {
+	
+	# Declare and Initialize Global Variables
+	global _HandleRxSignalProc _self _parent glCommonDb glUserDb glIdx 
+	global _ccpid _mmpid glFirstMs glNumOfMs glEnableAnyCall
+
+	# Includes
+	#include "common/dbscripts/DbMng.tsm"
+	include "common/utils/generalUtils.tsm"
+	include "common/utils/L3Utils.tsm"
+
+	# Create Common Db
+	set argZero	[lindex $args 0]
+	if { ![string compare $argZero ""] } {
+		logscr "Invalid Path for Data Base ($argZero)"
+		return
+	}
+	set dbpath $argZero
+	set glCommonDb [GetDbNameFromPath $dbpath] 
+	#set dbdir [GetDbDirFromPath $dbpath]
+	#spawn_unsafe "common/dbscripts/DbCreate.tsm $_self $dbdir$glCommonDb.csv"
+	
+	# Initialize Indexes
+	set glIdx 0
+	set argOne [lindex $args 1]
+	set argTwo [lindex $args 2]
+	set argThree [lindex $args 3]
+	# First Argument
+	if { ![string is integer -strict $argOne] } {
+		logscr "Invalid Value for First Index ($argOne)"
+		return
+	}
+	set glFirstMs $argOne
+	# Second Argument
+	if { ![string is integer -strict $argTwo] } {
+		logscr "Invalid Value for Number of Indexes ($argTwo)"
+		return
+	}
+	set glNumOfMs $argTwo	
+	# Third Argument
+	if { ![string is integer -strict $argTwo] } {
+		set glEnableAnyCall 0
+	} else {
+		set glEnableAnyCall $argThree
+	}
+
+	# Create Internal Database
+	set glUserDb User_m2mfc_db
+	append glUserDb $_self
+	CreateDataBase $glUserDb
+	
+	# Handle Multi-Instance
+	set _HandleRxSignalProc HandleRxSignalProc
+
+	# Enable Log
+	dump_on
+
+	# Form Pid List
+	set end [expr {$glFirstMs + $glNumOfMs}]
+	for { set i $glFirstMs } { $i < $end } { incr i } {
+		lappend listMsId $i	
+	}
+	
+	# Send Pids to MM
+	new		MM_SET_USER_PID s
+	wr		s UserPid $_self
+	wr		s ListMs $listMsId 
+	send	s $_mmpid
+	LogOutputMsg $s
+
+	# Send Pids to CC
+	new		CC_SET_USER_PID s
+	wr		s UserPid $_self
+	wr		s ListMs $listMsId 
+	send	s $_ccpid
+	LogOutputMsg $s
+
+	# Inform Parent
+	set 	s PASSIVE_SCRIPT
+	send 	s $_parent
+	LogOutputMsg $s
+
+	nextstate Null
+}
+
+############################################################
+# Multi Instance Handling
+############################################################
+
+proc HandleRxSignalProc { } {
+
+	# Declare Global Variables
+	global _sig  
+
+	set primName [lindex $_sig 0]
+
+	switch -exact -- $primName {
+		"MN_CC_NET_SETUP_IND"   		{ MnCcNetSetupHnd }
+		"MN_CC_NET_SETUP_ACK"   		{ MnCcNetSetupAckHnd }
+		"MN_CC_CALL_CONF_IND"			{ CalledHnd }
+		"MN_CC_NET_ALERT_IND"			{ CalledHnd }
+		"MN_CC_NET_SETUP_CNF"			{ CalledHnd }
+		"MN_CC_NET_SETUP_CMPLTE_IND"	{ CallingHnd }
+		"MN_CC_NET_DISC_IND"			{ MnCcNetDiscHnd }
+		default                 		{ DefaultHnd }
+	}
+}
+
+proc DefaultHnd { } {
+
+	# Global Variables
+	global _sig _state glIdx glUserDb glCommonDb
+
+	# Get Parameters
+	set msid [rd _sig MsId]
+
+	# Get Index
+	set callednum [DbGet $glCommonDb $msid OwnNum]
+	if { [DbKeyExists $glUserDb CallingMs $msid] } {
+		# It's the calling msid
+    	set index [DbGetIdx $glUserDb CallingMs $msid]
+    } elseif { [DbKeyExists $glUserDb CalledNum $callednum] } {
+		# It's the called msid
+		set index [DbGetIdx $glUserDb CalledNum $callednum]
+	} else {
+		log "No Instance Could Be Found ($msid)"
+		set _state Null
+		return
+	}
+
+	# Instance
+	GetInstance $index $glUserDb glIdx
+}
+
+proc MnCcNetDiscHnd { } {
+
+	# Global Variables
+	global _sig glIdx glUserDb glCommonDb
+
+	set msid [rd _sig MsId] 
+	
+	# Get Index
+	set callednum [DbGet $glCommonDb $msid OwnNum]
+	if { [DbKeyExists $glUserDb CallingMs $msid] } {
+		# It's the calling msid
+    	set index [DbGetIdx $glUserDb CallingMs $msid]
+		DbSet $glUserDb $index WhoDisconnects "Moc"
+    } elseif { [DbKeyExists $glUserDb CalledNum $callednum] } {
+		# It's the called msid
+		set index [DbGetIdx $glUserDb CalledNum $callednum]
+		DbSet $glUserDb $index WhoDisconnects "Mtc"
+	} else {
+		log "No Instance Could Be Found ($msid)"
+		set _state Null
+		return
+	}
+
+	# Instance
+	GetInstance $index $glUserDb glIdx
+}
+
+proc MnCcNetSetupHnd { } {
+
+	# Global Variables
+	global _sig _parent glUserDb glIdx
+	
+	# Get Pars
+	set msid [rd _sig MsId]
+	set callednum [rd _sig CalledNum]
+	set calltype [rd _sig CallType]
+	set tid [rd _sig Tio]
+	
+	# Create Index
+	set idx $msid
+	append idx ":"
+	append idx $callednum
+
+	# Create New Entity
+	if { ![DbEntryExists $glUserDb $idx] } {
+		DbCreateDefEntry $glUserDb $idx
+		DbSet $glUserDb $idx State Null
+		DbSet $glUserDb $idx Result Passed
+		DbSet $glUserDb $idx CallingMs $msid
+		DbSet $glUserDb $idx CallingTid $tid
+		DbSet $glUserDb $idx CalledNum $callednum
+		DbSet $glUserDb $idx CallType $calltype
+
+		# Signal scheduler
+		set 	s "STARTED $msid"
+		send 	s $_parent
+		LogOutputMsg $s
+	}
+
+	# Instance
+	GetInstance $idx $glUserDb glIdx
+}
+
+proc  MnCcNetSetupAckHnd { } {
+
+	# Global Variables
+	global _sig glUserDb glIdx
+	
+	# Get Index
+	set callednum [rd _sig CalledNum]
+	set idx [DbGetIdx $glUserDb CalledNum $callednum]
+
+	DbSet $glUserDb $idx CalledTid [rd _sig Tio]
+
+	# Instance
+	GetInstance $idx $glUserDb glIdx
+}
+
+proc CallingHnd { } {
+
+	# Global Variables
+	global _sig glIdx glUserDb
+
+	# Get Index
+	set index [DbGetIdx $glUserDb CallingMs [rd _sig MsId]]
+
+	# Instance
+	GetInstance $index $glUserDb glIdx
+}
+
+proc CalledHnd { } {
+
+	# Global Variables
+	global _sig glIdx glUserDb glCommonDb
+
+	# Get Index
+	set callednum [DbGet $glCommonDb [rd _sig MsId] OwnNum]
+	set index [DbGetIdx $glUserDb CalledNum $callednum]
+
+	# Instance
+	GetInstance $index $glUserDb glIdx
+}
+
+############################################################
+# Data Base Handling
+############################################################
+
+proc CreateDataBase { dbname } {
+
+	# Global Variables
+	global glCommonDb
+
+	lappend idxList [list Idx            	Index   Read/Write]
+	lappend idxList [list State	            Normal  Read/Write]
+	lappend idxList [list CallingMs         Key     Read/Write]
+	lappend idxList [list CalledNum         Key     Read/Write]
+	lappend idxList [list CallType          Normal  Read/Write]
+	lappend idxList [list WhoDisconnects    Normal  Read/Write]
+	lappend idxList [list CallingTid        Normal  Read/Write]
+	lappend idxList [list CalledTid         Normal  Read/Write]
+	lappend idxList [list Result            Normal  Read/Write]
+
+	DbCreate $dbname $idxList
+}
+
+############################################################
+# Procedures
+############################################################
+
+proc SetupInd { } {
+
+	# Declare and Initialize Global Variables
+	global _sig _ccpid _parent glUserDb glIdx glCommonDb glEnableAnyCall 
+
+	LogInputMsg $_sig	
+
+	# Check
+	set num [rd _sig CalledNum]
+	if { [DbKeyExists $glCommonDb OwnNum $num] } {
+		new		MN_CC_CALL_PROC_REQ s
+		wr		s MsId [DbGet $glUserDb $glIdx CallingMs]
+		wr		s Tio [DbGet $glUserDb $glIdx CallingTid]
+		send    s $_ccpid
+		LogOutputMsg $s
+
+		nextstate WaitForNetSyncInd
+	} elseif { $glEnableAnyCall } {
+		new		MN_CC_CALL_PROC_REQ s
+		wr		s MsId [DbGet $glUserDb $glIdx CallingMs]
+		wr		s Tio [DbGet $glUserDb $glIdx CallingTid]
+		send    s $_ccpid
+		LogOutputMsg $s
+
+		nextstate WaitForNetSyncIndAny
+	} else {
+		set callingms [DbGet $glUserDb $glIdx CallingMs]
+
+		# Disconnect Ms
+		new     MN_CC_NET_DISC_REQ s
+		wr  	s MsId $callingms
+		wr  	s Tio [DbGet $glUserDb $glIdx CallingTid]
+		wr      s Cause e181
+		l3send  s $_ccpid
+		LogOutputMsg $s
+
+		DbRemEntry $glUserDb $glIdx
+
+		# Signal scheduler
+		set s [ list FAIL $callingms ]
+		send s $_parent
+		LogOutputMsg $s
+
+		nextstate Null
+	}
+}
+
+proc MoNetSyncInd { } {
+
+	# Declare and Initialize Global Variables
+	global _sig _ccpid glUserDb glIdx
+
+	# Check Cause
+	set cause [rd _sig Cause]
+	set causeval [CheckCcCause $cause]
+
+	if { $causeval == "-1" } {
+    	logscr "Unexpected Cause ($cause)"
+	} elseif { [string equal $causeval "Normal, Unspecified"] } {
+	
+		# Send Setup to Called Ms
+		new 	MN_CC_NET_SETUP_REQ s
+		wr		s CalledNum [DbGet $glUserDb $glIdx CalledNum]
+		wr      s CallType [DbGet $glUserDb $glIdx CallType]
+		send    s $_ccpid
+		LogOutputMsg $s
+
+		nextstate WaitForNetSetupAck
+	} else {
+		logscr "Resource Assignment Failure: $causeval"
+	}
+}
+
+proc AnyNetSyncInd { } {
+
+	# Declare and Initialize Global Variables
+	global _sig _ccpid glUserDb glIdx
+
+	# Check Cause
+	set cause [rd _sig Cause]
+	set causeval [CheckCcCause $cause]
+
+	if { $causeval == "-1" } {
+    	logscr "Unexpected Cause ($cause)"
+	} elseif { $causeval == "Normal, Unspecified" } {
+		logscr "Resource Assignment Completed, Simulating Fixed Line ..."
+
+		set ms [DbGet $glUserDb $glIdx CallingMs]
+		set tio [DbGet $glUserDb $glIdx CallingTid]
+
+		# Alert Calling Side
+		new		MN_CC_NET_ALERT_REQ s
+		wr      s MsId $ms 
+		wr		s Tio $tio
+		send    s $_ccpid
+		LogOutputMsg $s
+
+		# Respond to Setup at Calling Side
+		new 	MN_CC_NET_SETUP_RSP s
+		wr		s MsId $ms 
+		wr		s Tio $tio
+		wr      s MsIdDst "?"
+		send    s $_ccpid
+		LogOutputMsg $s
+
+		nextstate WaitForSetupCmplteAny
+	} else {
+		logscr "Resource Assignment Failure: $causeval"
+	}
+}
+
+proc MtNetSyncInd { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glUserDb glIdx
+
+	# Check Cause
+	set cause [rd _sig Cause]
+	set causeval [CheckCcCause $cause]
+
+	if { $causeval == "-1" } {
+    	logscr "Unexpected Cause ($cause)"
+	} elseif { $causeval == "Normal, Unspecified" } {
+		logscr "Resource Assignment Completed"
+	} else {
+		logscr "Resource Assignment Failure: $causeval"
+	}
+}
+
+proc NetSetupAck { } {
+
+	# Declare and Initialize Global Variables
+	global _sig 
+
+	LogInputMsg $_sig	
+
+	nextstate WaitForCallConfInd
+}
+
+proc AlertInd { } {
+
+	# Declare and Initialize Global Variables
+	global _sig _ccpid glUserDb glIdx
+
+	LogInputMsg $_sig	
+
+	new		MN_CC_NET_ALERT_REQ s
+	wr      s MsId [DbGet $glUserDb $glIdx CallingMs] 
+	wr		s Tio [DbGet $glUserDb $glIdx CallingTid]
+	send    s $_ccpid
+	LogOutputMsg $s
+
+	nextstate WaitForSetupCnf
+}
+
+proc SetupCnf { } {
+
+	# Declare and Initialize Global Variables
+	global _sig _ccpid glCommonDb glIdx glUserDb
+
+	LogInputMsg $_sig	
+
+	set callingms [DbGet $glUserDb $glIdx CallingMs]
+	set callednum [DbGet $glUserDb $glIdx CalledNum]
+	set calledms [DbGetIdx $glCommonDb OwnNum $callednum]
+
+	# Respond to Setup at Calling Side
+	new 	MN_CC_NET_SETUP_RSP s
+	wr		s MsId $callingms 
+	wr		s Tio [DbGet $glUserDb $glIdx CallingTid]
+	wr      s MsIdDst $calledms
+	send    s $_ccpid
+	LogOutputMsg $s
+
+	nextstate WaitForSetupCmplte
+}
+
+proc SetupCmplte { } {
+
+	# Declare and Initialize Global Variables
+	global _sig _ccpid glCommonDb glIdx glUserDb 
+
+	LogInputMsg $_sig	
+
+	set callingms [DbGet $glUserDb $glIdx CallingMs]
+	set callednum [DbGet $glUserDb $glIdx CalledNum]
+	set calledms [DbGetIdx $glCommonDb OwnNum $callednum]
+
+	# Complete Setup at Called Side
+	new 	MN_CC_NET_SETUP_CMPLTE_REQ s
+	wr		s MsId $calledms
+	wr		s Tio [DbGet $glUserDb $glIdx CalledTid]
+	wr      s MsIdDst $callingms
+	send    s $_ccpid
+	LogOutputMsg $s
+
+	nextstate Active
+}
+
+proc AnySetupCmplte { } {
+
+	# Declare and Initialize Global Variables
+	global _sig _ccpid glUserDb glIdx
+
+	LogInputMsg $_sig	
+
+	DbSet $glUserDb $glIdx Result Passed
+}
+
+proc CallConfInd { } {
+
+	# Declare and Initialize Global Variables
+	global _sig 
+
+	LogInputMsg $_sig	
+
+	nextstate WaitForAlerting
+}
+
+proc MoDisconnectInd { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glUserDb glIdx
+
+	LogInputMsg $_sig	
+
+	# Set result to failed
+	DbSet $glUserDb $glIdx Result Failed
+
+	# Check Disconnect Cause
+	set cause [rd _sig Cause]
+	if { [string compare $cause "?"] && [CheckCcCause $cause] == "-1" } {
+		logscr "Unexpected Cause ($cause)"
+		return 
+	}
+
+	nextstate WaitForFinalRelease
+}
+
+proc AnyDisconnectInd { } {
+
+	# Declare and Initialize Global Variables
+	global _sig
+
+	LogInputMsg $_sig	
+
+	nextstate WaitForFinalRelease
+}
+
+proc ErrorInd { } {
+
+	# Declare and Initialize Global Variables
+	global glUserDb glIdx _sig glCommonDb _ccpid
+
+	LogInputMsg $_sig	
+
+	# Set result to failed
+	DbSet $glUserDb $glIdx Result Failed
+
+	# Disconnect remaining Ms
+	new     MN_CC_NET_DISC_REQ s
+	if { [rd _sig MsId] == [DbGet $glUserDb $glIdx CallingMs] } {
+		set callednum [DbGet $glUserDb $glIdx CalledNum]
+		wr  s MsId [DbGetIdx $glCommonDb OwnNum $callednum] 	
+		wr  s Tio [DbGet $glUserDb $glIdx CalledTid]
+	} else {
+		wr  s MsId [DbGet $glUserDb $glIdx CallingMs]
+		wr  s Tio [DbGet $glUserDb $glIdx CallingTid]
+	}
+	wr      s Cause [rd _sig Cause]
+	l3send  s $_ccpid
+	LogOutputMsg $s
+
+	nextstate WaitForFinalRelease 
+}
+
+proc ErrorInd2 { } {
+
+	# Declare and Initialize Global Variables
+	global glUserDb glIdx _sig glCommonDb 
+
+	LogInputMsg $_sig	
+
+	# Set result to failed
+	DbSet $glUserDb $glIdx Result Failed
+
+	# Get Parameters
+	set whodisc [DbGet $glUserDb $glIdx WhoDisconnects]
+	set callingms [DbGet $glUserDb $glIdx CallingMs]
+
+	# Disconnect remaining Ms
+	new     MN_CC_NET_DISC_REQ s
+	if { [rd _sig MsId]  == $callingms && $whodisc == "moc" } {
+		# Find MsId
+		set callednum [DbGet $glUserDb $glIdx CalledNum]
+		wr 	s MsId [DbGetIdx $glCommonDb OwnNum $callednum] 	
+		wr  s Tio [DbGet $glUserDb $glIdx CalledTid]
+		wr  s Cause [rd _sig Cause]
+		# Reset Calling Ms
+		DbSet $glUserDb $glIdx CallingMs "?"
+		l3send  s $_ccpid
+		LogOutputMsg $s
+	} elseif { $whodisc == "mtc" } {
+		# Find MsId
+		wr 	s MsId $callingms
+		wr  s Tio [DbGet $glUserDb $glIdx CalledTid]
+		wr  s Cause [rd _sig Cause]
+		# Reset Called Ms
+		DbSet $glUserDb $glIdx CalledNum "?"
+		l3send  s $_ccpid
+		LogOutputMsg $s
+	}
+
+	nextstate WaitForFinalRelease 
+}
+
+proc ErrorInd3 { } {
+
+	# Declare and Initialize Global Variables
+	global glUserDb glIdx _sig glCommonDb _parent
+	LogInputMsg $_sig	
+
+	set callingms [DbGet $glUserDb $glIdx CallingMs]
+
+	DbRemEntry $glUserDb $glIdx
+
+	# Set result to failed
+	set  s [ list FAIL $callingms ]
+	send s $_parent
+	LogOutputMsg $s
+
+	nextstate Null
+}
+
+proc ErrorInd4 { } {
+
+	# Declare and Initialize Global Variables
+	global glUserDb glIdx _sig glCommonDb 
+
+	LogInputMsg $_sig	
+
+	# Set result to failed
+	DbSet $glUserDb $glIdx Result Failed
+
+	nextstate WaitForFinalRelease 
+}
+
+proc MmrErrorInd { } {
+
+	# Declare and Initialize Global Variables
+	global _sig _parent
+
+	LogInputMsg $_sig	
+
+	set msid [rd _sig MsId]
+
+	# Signal scheduler
+	set 	s "STARTED $msid"
+	send 	s $_parent
+	LogOutputMsg $s
+
+	# Set result to failed
+	set  s [ list FAIL $msid ]
+	send s $_parent
+	LogOutputMsg $s
+}
+
+proc FirstDisconnectInd { } {
+
+	# Declare and Initialize Global Variables
+	global _sig _ccpid glUserDb glIdx glCommonDb
+
+	LogInputMsg $_sig	
+
+	set cause [rd _sig Cause]
+
+	if { $cause != "?" } {
+		# Set result to failed
+		DbSet $glUserDb $glIdx Result Failed
+	}
+
+	nextstate WaitForFirstRelease 
+}
+
+proc FinalDisconnectInd { } {
+
+	# Declare and Initialize Global Variables
+	global _sig _ccpid glUserDb glIdx glCommonDb
+
+	LogInputMsg $_sig	
+
+	set cause [rd _sig Cause]
+
+	if { $cause != "?" } {
+		# Set result to failed
+		DbSet $glUserDb $glIdx Result Failed
+	}
+
+	nextstate WaitForTwoRelease 
+}
+
+proc SendReleaseReq { } {
+
+	# Declare and Initialize Global Variables
+	global _sig _ccpid glUserDb glIdx glCommonDb
+
+	set whodisc [DbGet $glUserDb $glIdx WhoDisconnects]
+
+	# Release Connection
+	new 	MN_CC_NET_REL_REQ s
+	if { $whodisc == "Moc" } {
+		wr 	s MsId [DbGet $glUserDb $glIdx CallingMs]
+		wr  s Tio [DbGet $glUserDb $glIdx CallingTid]
+	} elseif { $whodisc == "Mtc" } {
+		set callednum [DbGet $glUserDb $glIdx CalledNum]
+		wr  s MsId [DbGetIdx $glCommonDb OwnNum $callednum] 	
+		wr  s Tio [DbGet $glUserDb $glIdx CalledTid]
+	}
+	wr      s Cause [rd _sig Cause]
+	l3send  s $_ccpid
+	LogOutputMsg $s
+}
+
+proc FirstRelease { } {
+
+	# Declare and Initialize Global Variables
+	global _sig _ccpid glUserDb glIdx glCommonDb
+
+	LogInputMsg $_sig	
+
+	set cause [rd _sig Cause]
+
+	if { $cause != "?" } {
+		# Set result to failed
+		DbSet $glUserDb $glIdx Result Failed
+	}
+
+	set whodisc [DbGet $glUserDb $glIdx WhoDisconnects]
+
+	# Disconnect Ms
+	new     MN_CC_NET_DISC_REQ s
+	if { $whodisc == "Moc" } {
+		# Find MsId
+		set callednum [DbGet $glUserDb $glIdx CalledNum]
+		wr 	s MsId [DbGetIdx $glCommonDb OwnNum $callednum] 	
+		wr  s Tio [DbGet $glUserDb $glIdx CalledTid]
+		# Reset Calling Ms
+		DbSet $glUserDb $glIdx CallingMs "?"
+	} elseif { $whodisc == "Mtc" } {
+		# Find MsId
+		wr 	s MsId [DbGet $glUserDb $glIdx CallingMs]
+		wr  s Tio [DbGet $glUserDb $glIdx CallingTid]
+		# Reset Called Ms
+		DbSet $glUserDb $glIdx CalledNum "?"
+	}
+	l3send  s $_ccpid
+	LogOutputMsg $s
+
+	nextstate WaitForFinalRelease 
+}
+
+proc FirstReleaseCmp { } {
+
+	# Declare and Initialize Global Variables
+	global _sig _ccpid glUserDb glIdx glCommonDb
+
+	LogInputMsg $_sig	
+
+	set whodisc [DbGet $glUserDb $glIdx WhoDisconnects]
+
+	# Disconnect Ms
+	new     MN_CC_NET_DISC_REQ s
+	if { $whodisc == "Moc" } {
+		# Find MsId
+		set callednum [DbGet $glUserDb $glIdx CalledNum]
+		wr 	s MsId [DbGetIdx $glCommonDb OwnNum $callednum] 	
+		wr  s Tio [DbGet $glUserDb $glIdx CalledTid]
+		# Reset Calling Ms
+		DbSet $glUserDb $glIdx CallingMs "?"
+	} elseif { $whodisc == "Mtc" } {
+		# Find MsId
+		wr 	s MsId [DbGet $glUserDb $glIdx CallingMs]
+		wr  s Tio [DbGet $glUserDb $glIdx CallingTid]
+		# Reset Called Ms
+		DbSet $glUserDb $glIdx CalledNum "?"
+	}
+	l3send  s $_ccpid
+	LogOutputMsg $s
+
+	nextstate WaitForFinalRelease 
+}
+
+proc FinalRelease { } {
+
+	# Declare and Initialize Global Variables
+	global _sig _ccpid _parent glUserDb glIdx 
+
+	LogInputMsg $_sig	
+
+	set cause [rd _sig Cause]
+
+	if { $cause != "?" } {
+		# Set result to failed
+		DbSet $glUserDb $glIdx Result Failed
+	}
+
+	set callingms [DbGet $glUserDb $glIdx CallingMs]
+	set result [DbGet $glUserDb $glIdx Result]
+
+	DbRemEntry $glUserDb $glIdx
+
+	# Signal scheduler
+	if { $result == "Passed" } {
+		set s [ list PASS $callingms ]
+	} else {
+		set s [ list FAIL $callingms ]
+	}
+	send s $_parent
+	LogOutputMsg $s
+
+	nextstate Null
+}
+
+proc FinalReleaseCmp { } {
+
+	# Declare and Initialize Global Variables
+	global _sig _ccpid _parent glUserDb glIdx 
+
+	LogInputMsg $_sig	
+
+	set callingms [DbGet $glUserDb $glIdx CallingMs]
+	set result [DbGet $glUserDb $glIdx Result]
+
+	DbRemEntry $glUserDb $glIdx
+
+	# Signal scheduler
+	if { $result == "Passed" } {
+		set s [ list PASS $callingms ]
+	} else {
+		set s [ list FAIL $callingms ]
+	}
+	send s $_parent
+	LogOutputMsg $s
+
+	nextstate Null
+}
+
+proc OneRelease { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glUserDb glIdx
+
+	LogInputMsg $_sig	
+
+	set cause [rd _sig Cause]
+
+	if { $cause != "?" } {
+		# Set result to failed
+		DbSet $glUserDb $glIdx Result Failed
+	}
+
+	nextstate WaitForFinalRelease 
+}
+
+proc OneReleaseCmp { } {
+
+	# Declare and Initialize Global Variables
+	global _sig
+
+	LogInputMsg $_sig	
+
+	nextstate WaitForFinalRelease 
+}
+
+proc RejectSetup { } {
+
+	# Declare and Initialize Global Variables
+	global _sig _ccpid _parent glUserDb glIdx
+
+	LogInputMsg $_sig	
+
+	set callingms [DbGet $glUserDb $glIdx CallingMs]
+
+	# Disconnect Ms
+	new     MN_CC_NET_DISC_REQ s
+	wr  	s MsId $callingms
+	wr  	s Tio [DbGet $glUserDb $glIdx CallingTid]
+	wr      s Cause e1ba
+	l3send  s $_ccpid
+	LogOutputMsg $s
+
+	DbRemEntry $glUserDb $glIdx
+
+	# Signal scheduler
+	set s [ list FAIL $callingms ]
+	send s $_parent
+	LogOutputMsg $s
+
+	nextstate Null
+}
+
+############################################################
+# FSM
+############################################################
+
+state Null {
+	MMR_ERROR_IND				MmrErrorInd
+	MN_CC_NET_SETUP_IND			SetupInd
+	default 					Any
+}
+
+state WaitForNetSyncInd {
+	MN_CC_NET_SYNC_IND			MoNetSyncInd
+	MN_CC_NET_DISC_IND			MoDisconnectInd
+	MN_CC_ERROR_IND				ErrorInd3
+	MN_CC_NET_REL_IND			ErrorInd3
+	default 					Any
+}
+
+state WaitForNetSyncIndAny {
+	MN_CC_NET_SYNC_IND			AnyNetSyncInd
+	MN_CC_NET_DISC_IND			AnyDisconnectInd
+	MN_CC_ERROR_IND				ErrorInd3
+	MN_CC_NET_REL_IND			ErrorInd3
+	default 					Any
+}
+
+state WaitForNetSetupAck {
+	MN_CC_NET_SETUP_ACK			NetSetupAck
+	default 					Termination
+}
+
+state WaitForCallConfInd {
+	MN_CC_CALL_CONF_IND			CallConfInd
+	default 					Termination
+}
+
+state WaitForAlerting {
+	MN_CC_NET_ALERT_IND			AlertInd
+	MN_CC_NET_SYNC_IND			MtNetSyncInd
+	default 					Termination
+}
+
+state WaitForSetupCnf {
+	MN_CC_NET_SETUP_CNF			SetupCnf
+	default 					Termination
+}
+
+state WaitForSetupCmplte {
+	MN_CC_NET_SETUP_CMPLTE_IND	SetupCmplte
+	default 					Termination
+}
+
+state WaitForSetupCmplteAny {
+	MN_CC_NET_SETUP_CMPLTE_IND	AnySetupCmplte
+	MN_CC_NET_DISC_IND			MoDisconnectInd
+	default 					Termination
+}
+
+state Active {
+	default 					Termination
+}
+
+state Termination {
+	MN_CC_ERROR_IND				ErrorInd
+	MMR_ERROR_IND				ErrorInd
+	MN_CC_NET_REL_IND			ErrorInd
+	MN_CC_NET_DISC_IND			FirstDisconnectInd
+	default						Any
+}
+
+state WaitForFirstRelease {
+	MN_CC_NET_REL_CNF			FirstReleaseCmp
+	MN_CC_NET_REL_IND			FirstRelease
+	MN_CC_NET_DISC_IND			FinalDisconnectInd
+	MN_CC_ERROR_IND				ErrorInd2
+	default						Any
+}
+
+state WaitForFinalRelease  {
+	MN_CC_NET_REL_CNF			FinalReleaseCmp
+	MN_CC_NET_REL_IND			FinalRelease
+	MN_CC_ERROR_IND				ErrorInd3
+	default						Any
+}
+
+state WaitForTwoRelease {
+	MN_CC_NET_REL_CNF			OneReleaseCmp
+	MN_CC_NET_REL_IND			OneRelease
+	MN_CC_ERROR_IND				ErrorInd4
+	default						Any
+}
+
+state Any {
+	default 					Unexpected
+	MN_CC_NET_SETUP_IND			RejectSetup
+}

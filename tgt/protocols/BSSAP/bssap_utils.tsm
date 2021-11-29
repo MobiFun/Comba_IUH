@@ -1,0 +1,6118 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/BSSAP_COMBA/tags/BSSAP_COMBA-1.2.0/scripts/bssap_utils.tsm $
+#
+# $Author: roger $
+#
+# Description: BSSAP Utilities
+#
+# $Rev: 57398 $
+#
+# $Date: 2012-12-18 10:53:46 +0100 (Tue, 18 Dec 2012) $
+##############################################################
+
+# SVN Revision Checking #
+set url "\$URL: http://memo.prisma/svn/tm/scriptProt/BSSAP_COMBA/tags/BSSAP_COMBA-1.2.0/scripts/bssap_utils.tsm $"
+set rev "\$Rev: 57398 $"
+logv0 "[GetName $url]: version [Version "script" $url $rev]"
+
+##############################################################
+# BSSAP Constants
+##############################################################
+
+# Ssn (SCCP Subsystem number = BSSAP)
+global ssn
+set ssn 254
+
+##############################################################
+# Cause 
+##############################################################
+
+# It returns the cause meant by cause hex value
+# (see TS 3GPP 08.08 par. 3.2.2.5 ,
+#   TS 3GPP 08.08 par. 3.2.2.22 
+#   and TS 3GPP 04.18 Annex F )
+
+proc BssapGetProtocolCause { prot val } {
+
+	if { [string equal $prot "BSSAP"] } {
+		return [GetBssapCause $val]
+	} elseif { [string equal $prot "RR"] } {
+		return [GetRrCause $val]
+	} else {	
+		return "Unexpected Protocol Value ($prot)"
+	}
+}
+
+proc GetBssapCause { val } {
+
+	#switch on cause value
+	switch -exact -- $val {
+		"0x00"	{ return "Radio interface message failure" }
+		"0x01"	{ return "Radio interface failure" }
+		"0x02"	{ return "Uplink quality" }
+		"0x03"	{ return "Uplink strength" }
+		"0x04"	{ return "Downlink quality" }
+		"0x05"	{ return "Downlink strength" }
+		"0x06"	{ return "Distance" }
+		"0x07"	{ return "O and M intervention" }
+		"0x08"	{ return "Response to MSC invocation" }
+		"0x09"	{ return "Call control" }
+		"0x0a"	{ return "Radio interface failure, reversion to old channel" }
+		"0x0b"	{ return "Handover successful" }
+		"0x0c"	{ return "Better Cell" }
+		"0x0d"	{ return "Directed Retry" }
+		"0x0e"	{ return "Joined group call channel" }
+		"0x0f"	{ return "Traffic" }
+		"0x20"	{ return "Equipment failure" }
+		"0x21"	{ return "No radio resource available" }	
+		"0x22"	{ return "Requested terrestrial resource unavailable" }
+		"0x23"	{ return "CCCH overload" }
+		"0x24"	{ return "Processor overload" }
+		"0x25"	{ return "BSS not equipped" }
+	    "0x26"	{ return "MS not equipped" }
+	    "0x27"	{ return "Invalid cell" }
+		"0x28"	{ return "Traffic Load" }
+		"0x29"	{ return "Preemption" }
+		"0x30"	{ return "Requested trancoding/rate adaption unavailable" }
+		"0x31"	{ return "Circuit pool mismatch" }
+		"0x32"	{ return "Switch circuit pool" }
+		"0x33"	{ return "Requested speech version unavailable" }
+		"0x34"	{ return "LSA not allowed" }
+		"0x40"	{ return "Ciphering algorithm not supported" }
+		"0x50"	{ return "Terrestrial circuit already allocated" }
+		"0x51"	{ return "Invalid message contents" }
+		"0x52"	{ return "Information element or field missing" }
+		"0x53"	{ return "Incorrect value" }
+		"0x54"	{ return "Unknown Message type" }
+		"0x55"	{ return "Unknown Information Element" }
+		"0x60"	{ return "Protocol Error between BSS and MSC" }
+		"0x61"	{ return "VGCS/VBS call non existent" }
+		default { return "Unexpected Cause Val ($val)" }
+	}
+}
+
+proc GetRrCause { val } {
+
+	#switch on cause value
+	switch -exact -- $val {
+		"0x00"	{ return "Normal event" }
+		"0x01"	{ return "Abnormal release, unspecified" }
+		"0x02"	{ return "Abnormal release, channel unaccetable" }
+		"0x03"	{ return "Abnormal release, timer expired" }
+		"0x04"	{ return "Abnormal release, no activity on the radio path" }
+		"0x05"	{ return "Pre-emptive release" } 
+		"0x06"	{ return "UTRAN configuration unknown" }
+		"0x08"	{ return "Handover impossible, timing advance out of range" }
+		"0x09"	{ return "Channel mode unacceptable" }
+		"0x0a"	{ return "Frequency not implemented" }
+		"0x0c"	{ return "Lower layer failure" }
+		"0x41"	{ return "Call already cleared" }
+		"0x5f"	{ return "Semantically incorrect message" }
+		"0x60"	{ return "Invalid mandatory information" }
+		"0x61"	{ return "Message type non-existent or not implemented" }
+		"0x62"	{ return "Message type non non compatible with protocol state" }
+		"0x64"	{ return "Conditional IE error" }
+		"0x65"	{ return "No cell allocation available" }
+		"0x6f"	{ return "Protocol error unspecified" }
+		default { return "Unexpected Cause Val ($val)" }
+	}
+}
+
+##############################################################
+# Traffic Resources
+##############################################################
+
+proc GetBlkTs { blkts } {
+
+	if {[IsVoid $blkts]} {
+		return ""
+	}
+
+	set ts_list [split $blkts :]
+	foreach item $ts_list {
+
+		set first [lindex [split $item -] 0]
+		set last [lindex [split $item -] end]
+		set diff [expr {$last - $first}]
+		while { $diff >= 0 } {
+			lappend blk_list [expr {$first + $diff}]
+			incr diff -1
+		}
+	}
+
+	if {[info exist blk_list]} {
+		return $blk_list
+	} else {
+		return ""
+	}
+}
+
+proc GetAvailableCics { } {
+	global gTotalCics
+
+	return $gTotalCics
+}
+
+proc CreateTrafficRes { } {
+	
+	# Global Variables
+	global __net_side __ss7_stk_db __bsc_db glTrfDb glImplicitBscId
+	global glCheck
+
+	# Multi MGW management
+	set glCheck 0; #initialization
+
+	# Init Cic Resource Management
+	set first_ts 1
+	set last_ts 32
+    # we have ts=1 to ts=32; ts=0 is reserved -- ts 32 ??
+	set maxtimeslot [expr {$last_ts - $first_ts}]; 
+	set ncics 0
+	set nbsc 0
+	set nqueues 1000
+
+	# Cic Init
+	foreach bscid [array names glTrfDb] {
+		incr nbsc
+		#log "CreateTrafficRes bscid=$bscid"
+		foreach trlinkid [DbGetIndexList $glTrfDb($bscid)] {
+			#log "CreateTrafficRes trlinkid=$trlinkid"
+			set n_blk_ts [llength [GetBlkTs [DbGet $glTrfDb($bscid) $trlinkid BlkTs]]]
+			set n_ts [expr {$maxtimeslot - $n_blk_ts}]
+			incr ncics +$n_ts
+			# Save the unique bscid
+			if { ![string compare $__net_side "bss"] } {
+				set glImplicitBscId $bscid
+			}
+			logv1 "CreateTrafficRes: nbsc=$nbsc; bscid=$bscid; trlinkid=$trlinkid --> number_blk_ts=$n_blk_ts; n_ts=$n_ts; --> ncics=$ncics"; #cDEBUG
+		}
+	}
+
+	incr nbsc
+
+	logv1 "CreateTrafficRes: gTotalCics=ncics=$ncics; nbsc=$nbsc"
+	
+	# Save the number of cics to let it available to CC layer for special Alcatel feature
+	global gTotalCics
+	set gTotalCics $ncics
+
+
+	cicInit $nbsc $nqueues $ncics
+
+	# Cic Create
+	foreach bscid [array names glTrfDb] {
+		logv1 "DEBUG: ----------- bscid=$bscid ------------"; #cDEBUG
+		foreach trlinkid [DbGetIndexList $glTrfDb($bscid)] {
+			logv1 "DEBUG: ----------- trlinkid=$trlinkid ------------"; #cDEBUG
+			set pcm_val [DbGet $glTrfDb($bscid) $trlinkid Pcm]
+			set pool_type [DbGet $glTrfDb($bscid) $trlinkid PoolType]
+
+			# setting cic values
+			for { set ts $first_ts } { $ts <= $last_ts} { incr ts } {
+				# building cic(ts) with pcm_val and ts
+				set cic($ts) [expr {$pcm_val * 32}]
+				set cic($ts) [expr {$cic($ts) + $ts}]
+			}
+
+			# unset cics listed in "TsBlocked"
+			foreach k [GetBlkTs [DbGet $glTrfDb($bscid) $trlinkid BlkTs]] {
+				unset cic($k)
+			}
+
+			# cic schema
+			# 32 --------- 24 ---------- 16 --------- 8 --------- 0
+			#  |<- bsc id ->|             |                       |
+			#  |            |<- pool id ->|                       |
+			#  |            |             |<---    queue id   --->|
+			#
+			set queue_id [DbGet $glTrfDb($bscid) $trlinkid QueueId]
+			# Was: $queue_id < 100
+			if { 1 } {
+				logv1 "CreateTrafficRes: queue_id=$queue_id pool_type=$pool_type"
+				logv1 "CreateTrafficRes: bscid=$bscid"
+				set cickey $queue_id
+				#set cickey [expr {[expr {$pool_type << 16}] + $cickey}]
+				set cickey [expr $cickey + ($pool_type << 16)]
+				#set cickey [expr {[expr {$bscid << 24}] + $cickey}]
+				set cickey [expr $cickey + ($bscid << 24)]
+				logv1 "CreateTrafficRes: cickey=$cickey"
+				for { set ts 1 } { $ts < $last_ts } { incr ts } {
+					if { [info exists cic($ts)]} {
+						#log "CreateTrafficRes: cickey=$cickey $cic($ts)"
+						if { ![string compare $__net_side "cn"] } {
+							# CICEXT
+							#set cicExt [expr $cic($ts) + ($bscid << 16)]
+							set cicExt $cic($ts)
+							#log "CreateTrafficRes: cickey=$cickey $cic($ts) $cicExt"
+						} else {
+							set cicExt $cic($ts)
+							
+							# Save the BscId for the BSC side
+							#log "CreateTrafficRes: BSC side: saving the BscId=$bscid"
+							global gBscId
+							set gBscId $bscid
+						}
+						#cicCreate $cickey $cic($ts)
+						#cicCreate $cickey $cicExt
+						# NEW ALEX VERSION
+						cicCreate $bscid $cickey $cic($ts)
+						#log "CreateTrafficRes: cickey=$cickey cic(ts) $cic($ts) ts=$ts"
+					}
+				}
+			}
+			
+			# Disconnect existing switched resources
+			set lsuPcmIdx [DbGetIdx $glTrfDb($bscid) Pcm $pcm_val]
+			set lsuPcm [DbGet $glTrfDb($bscid) $lsuPcmIdx LsuPcm]
+
+			if { [DbFieldExists $glTrfDb($bscid) PcmType] && [DbGet $glTrfDb($bscid) $lsuPcmIdx PcmType] == 1 } {
+				# STM-1 mapped PCM
+				set stm1PcmLine [DbGet $glTrfDb($bscid) $lsuPcmIdx Stm1Line]
+				log "CreateTrafficRes: stm1PcmLine=$stm1PcmLine - lsuPcm=$lsuPcm; lsuPcmIdx=$lsuPcmIdx; glTrfDb($bscid)=$glTrfDb($bscid); bscid=$bscid"
+				append lsuPcm -
+				append lsuPcm $stm1PcmLine
+			}
+
+			if { ![IsVoid $lsuPcm] && [string equal $__net_side "cn"] } {
+				for { set ts 1 } { $ts < $last_ts } { incr ts } {
+					if { [info exists cic($ts)]} {
+						set dpc [DbGet [DbGetName $__bsc_db] $bscid Spc]
+						set ss7db [DbGetName $__ss7_stk_db]
+						
+						# &&&&&&&&&&&&&&&&&&&&&&&& #
+						# Carlo TDM MultiMGW -start-
+						LogDb [DbGetName $__bsc_db]; #cDEBUG
+						set dpc [DbGet [DbGetName $__bsc_db] $bscid Spc]
+						log "CreateTrafficRes: bscid=$bscid --> bsc_spc=$dpc"; #cDEBUG
+
+						global __multi_mgw
+						if { [info exists __multi_mgw] && $__multi_mgw } {
+							log "CreateTrafficRes: multi_mgw management"; #cDEBUG
+							set opc 	0; # initialization
+							set found 	$glCheck; # initialization
+							foreach linkid [DbGetIndexList $ss7db] {
+								log "linkid=$linkid"; #cDEBUG
+								set opcIdx $linkid
+								if { [DbGet $ss7db $linkid Dpc] == $dpc && $glCheck <= [DbSize $ss7db] } {
+									log "glCheck=$glCheck; found=$found"; #cDEBUG
+									if { $glCheck >= 1 && $found == $glCheck } {
+										log "already found in the Db $ss7db one or more others entries about the Spc of the BSC: Spc_Bsc=$dpc"
+										incr found -1
+										log "glCheck=$glCheck --- found=$found"; #cDEBUG
+										if { !$found && !$glCheck || $glCheck > $found && !$found } {
+											set opcIdx $linkid
+											incr found
+											log "----> opcIdx=$opcIdx -- found=$found"; #cDEBUG
+										}
+									} elseif { !$glCheck } {
+										set opcIdx $linkid
+										incr found
+										log "-> opcIdx=$opcIdx; found=$found"; #cDEBUG
+									}
+									set newOpc [DbGet $ss7db $linkid Opc]
+									if { !$opc || $opc != 0 && $newOpc == $opc } {
+										set opc [DbGet $ss7db $linkid Opc]
+										incr glCheck
+										if { $glCheck == 1 } {
+											# esco dal ciclo alla prima passata
+											break
+										}
+									} else {
+										abort "CreateTrafficRes: ERROR: more than one value of Opc has been found: $opc and $newOpc"
+									}
+									#break
+								} elseif { $glCheck > [DbSize $ss7db] } {
+									return
+								}
+							}
+							if {$glCheck >= 1} {
+								log "CreateTrafficRes: Opc=$opc about Dpc=$dpc"
+							} else {
+								abort "Dpc=$dpc Not Found in SS7 Db ($ss7db)"
+							}
+						} else {
+							set opcIdx [DbGetIdx $ss7db Dpc $dpc]
+						}
+						LogDb $ss7db; #cDEBUG
+						log "====> opcIdx=$opcIdx"; #cDEBUG
+						# - end-
+						# &&&&&&&&&&&&&&&&&&&&&&&& #
+
+						#set opcIdx [DbGetIdx $ss7db Dpc $dpc]; # old management --TODO DELETE--
+						set spc [DbGet $ss7db $opcIdx Opc]
+						set stkid [DbGet $ss7db $opcIdx StkId]
+						
+						log "LINKSET number $opcIdx between Opc=$spc <--> StkId=$stkid"; #cDEBUG
+
+						if { ![DbFieldExists $glTrfDb($bscid) PcmType] || ![DbGet $glTrfDb($bscid) $lsuPcmIdx PcmType] } {
+							# Electrical PCM
+							#SendPcmDisconnect $spc $stkid $lsuPcm $ts 0xffffffff 0xff 2
+
+							# Carlo: Workaround disconnect ONLY TRAFFIC RESOURCES (no the Signalling Resources)
+							log "trlinkid=$trlinkid; isSplitted=[isSplitted]"
+							# blk_ts is the list of the timeslots blocked for the signalling
+							set blk_ts [GetBlkTs [DbGet $glTrfDb($bscid) $trlinkid BlkTs]]
+							log "blk_ts=$blk_ts --> numberOfTimeSlotsBlocked=[llength $blk_ts]"; #cDEBUG
+							if { ![isSplitted] || [isSplitted] && [ismaster] } {
+							# 31 is the max number of timeslot for pcm (excluding the ts=0 the possible useful ts are 1..31) 
+								for { set ts_not_signalling 1 } { $ts_not_signalling <= 31 } { incr ts_not_signalling } {
+								# Disconnection only for the timeslot not assigned to signalling (usually the 16th ts)
+									if { [lsearch -integer $blk_ts $ts_not_signalling] != -1 } {	
+										SendPcmDisconnect $spc $stkid $lsuPcm $ts_not_signalling 0xffffffff 0xff 2
+									}
+								}
+							}
+							break; # nel caso della disconnect delle sole risorse di traffico non ciclo piu sull' indice ts
+
+						} elseif { [DbGet $glTrfDb($bscid) $lsuPcmIdx PcmType] == 1 } {
+							# STM1 mapped PCM <-- other STM1 mapped PCM or DPHONE
+							SendMixedStm1PcmDisconnect $spc $stkid $lsuPcm $ts 0xffffffff 0xff 2 ?
+						} else {
+							logscr "CreateTrafficRes: ERROR --> PcmType=[DbGet $glTrfDb($bscid) $lsuPcmIdx PcmType] have to be only 0 or 1"
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+# It provides a traffic resource (cic)
+proc GetTrfCic { bscid cic fail cic_ext reset_queueid_index perm_index } {
+
+	global glMsDb glMsId glBssapDb
+
+	upvar 1 $cic cic_val
+	upvar 1 $fail failure
+	upvar 1 $cic_ext cicExt
+	upvar 1 $perm_index permIndex 
+
+	# Set Cic Key
+	if { [DbFieldExists $glMsDb QueueIdList] && ![IsVoid [DbGet $glMsDb $glMsId QueueIdList]] } {
+		set queueList [DbGet $glMsDb $glMsId QueueIdList]
+		set queueList [split $queueList "-"]
+		set len [llength $queueList]
+
+		if { $reset_queueid_index } {
+			# ASG_REQ case
+			set index 0
+		} else {
+			# HOV_REQ case
+			set index [DbGet $glBssapDb $glMsId QueueIdListIndex]
+			incr index
+			# Move on the next element in the list
+			if { $index == $len } {
+				#log "GetTrfCic: resetting index"
+				set index 0
+			}	
+		}
+	
+		DbSet $glBssapDb $glMsId QueueIdListIndex $index
+		set queueId [lindex $queueList $index]
+
+	} else {
+		set queueId [DbGet $glMsDb $glMsId QueueId]
+	}
+
+	set cickey $queueId
+	#log "GetTrfCic: cickey=$cickey glMsId=$glMsId"
+
+	# Get Pool Type
+	set permIndex [GetPoolByChannel $bscid pool_type failure unavaList $queueId]
+
+	#log "GetTrfCic bscid=$bscid cic=$cic"
+	if { [info exists failure] } {
+		log "GetTrfCic: WARNING: failure=$failure"
+		if { $failure == "0x22" } {
+			log "GetTrfCic: Requested TDM terrestrial resource unavailable"
+		}
+		# Failure	
+		return 
+	}
+	
+	set cickey [expr {[expr {$pool_type << 16}] + $cickey}]
+	set cickey [expr {[expr {$bscid << 24}] + $cickey}]
+
+	#log "GetTrfCic bscid=$bscid cickey=$cickey"
+
+	# CICEXT
+	set cic_val [cicNext $bscid $cickey]
+	if { $cic_val < 0 } {
+		set failure "cicNextError"
+		return
+	}
+
+	#TMA-467 bug fixing ... Carlo: tobe tested --start--
+	#set cicExt $cic_val 
+	logv1 "GetTrfCic: Cic=$cic_val"
+	set cicExt [GetExtCic $bscid $cic_val]
+	logv1 "GetTrfCic: CicExt=$cicExt"
+
+	# Remove the upper bits used to identify BSC
+	######set cic_val [expr $cic_val & 0x0000FFFF]
+	# -- end TMA-467 --
+
+	if { $cic_val < 0 } {
+		# Error getting traffic resource
+		switch -glob -- $cic_val {
+			"-[23]" {
+				# No resource available (-2) / Invalid Cic (-3)
+				set failure 0x22; # "Requested terrestrial resource unavailable"
+			}
+			default { abort "GetTrfCic: unexpected error value ($cic_val)" }
+		}
+		unset cic_val
+	} else {
+		logv1 "BSSAP: Assigning Cic $cic_val"
+	}
+}
+
+proc GetFrSpeechVersion1PoolList { } {
+
+	return [list 1 3 5 7 10 13 20 21 22 25 26 27 28 29 30 31 32 34 35 39]
+}
+
+proc GetFrSpeechVersion2PoolList { } {
+
+	return [list 4 5 6 7 10 13 20 21 22 25 26 27 28 29 30 31 32 34 35 39]
+}
+
+proc GetFrSpeechVersion3PoolList { } {
+
+	return [list 23 24 25 26 27 28 29 30 31 32 35 39]
+}
+
+proc GetFrSpeechVersion4PoolList { } {
+
+	return [list 36 37 38 39 40 41]
+}
+
+proc GetFrSpeechVersion5PoolList { } {
+	
+	return [list 36 37 38 39 40 41]
+}
+
+proc GetHrSpeechVersion1PoolList { } {
+
+	return [list 2 6 7 10 13 20 21 22 27 28 29 30 31 32 35 39]
+}
+
+proc GetHrSpeechVersion2PoolList { } {
+
+	return "?"
+}
+
+proc GetHrSpeechVersion3PoolList { } {
+
+	return [list 2 6 7 10 13 20 21 22 27 28 29 30 31 32 35 39]
+}
+
+proc GetFrData3_6PoolList { } {
+
+	return [GetFrData12PoolList]
+}
+
+proc GetFrData6PoolList { } {
+
+	return [GetFrData12PoolList]
+}
+
+proc GetFrData12PoolList { } {
+
+	return [list 1 3 4 5 6 7 9 10 11 12 13 18 19 20 21 22 24 25 26 \
+		27 28 29 30 31 32 33 34 35 38 39 40 41 50]
+}
+
+proc GetFrData14_5PoolList { } {
+
+	return [list 18 19 21 22 26 28 30 32 33 34 35 38 39 40 41]
+}
+
+proc GetHrData3_6PoolList { } {
+
+	return [GetHrData6PoolList]
+}
+
+proc GetHrData6PoolList { } {
+
+	return [list 2 3 6 7 9 10 11 12 13 18 19 20 21 22 \
+		27 28 29 30 31 32 33 34 35 39 40 41]
+}
+
+# It provides a list of pool numbers (see TS 3GPP 3.2.2.45)
+# supporting a specific channel type
+proc GetPoolListByChannel { pool_l failure speechIndex } {
+
+	# Global Variables
+	global glBssapDb glMsId
+
+	# Pool list and Failure variable
+	upvar 1 $pool_l pool_list
+	upvar 1 $failure cause
+
+	# Channel Info
+	set spi [DbGet $glBssapDb $glMsId Spi]
+	set ch_rate [DbGet $glBssapDb $glMsId ChannelRate]
+	set perm_speech [DbGet $glBssapDb $glMsId PermSpeech]
+	set datarate [DbGet $glBssapDb $glMsId DataRate]
+
+	log "GetPoolListByChannel spi=$spi ch_rate=$ch_rate perm_speech=$perm_speech datarate=$datarate"
+
+	
+	if { [info exist cause] } {
+		log "GetPoolListByChannel(A): P1 cause=$cause"
+	} else {
+		log "GetPoolListByChannel(A): P1 cause inexistent"
+	}
+
+	log "GetPoolListByChannel(A): pool_l=$pool_l speechIndex=$speechIndex spi=$spi"
+	
+	switch -exact -- $spi {
+		"01" {
+			# Speech 
+			if { ![IsVoid $perm_speech] } {
+				# Old version with just a check of the first element
+				#set spver [uctoh [expr { [hgetb $perm_speech 0] & 0x7f}]]
+				# New version scans all the elements
+				set spver [uctoh [expr { [hgetb $perm_speech $speechIndex] & 0x7f}]]
+				log "GetPoolListByChannel: spver=$spver"; #cDEBUG
+			}
+			switch -regexp -- $ch_rate {
+				"(08)" {
+					# Full Rate
+					switch -exact -- $spver {
+						"01" 	{ set pool_list [GetFrSpeechVersion1PoolList] }
+						"11" 	{ set pool_list [GetFrSpeechVersion2PoolList] }
+						"21" 	{ set pool_list [GetFrSpeechVersion3PoolList] }
+						"41"	{ set pool_list [GetFrSpeechVersion4PoolList] }
+						"42"	{ set pool_list [GetFrSpeechVersion5PoolList] }
+						default { set cause 0x33; # "Requested speech version unavailable" } 
+					}
+				}	
+				"(0a|1a|0f|1f)" {
+					# Full Rate (preferred) or Half Rate
+					switch -exact -- $spver {
+						"01" 	{ set pool_list [GetFrSpeechVersion1PoolList] }
+						"11" 	{ set pool_list [GetFrSpeechVersion2PoolList] }
+						"21" 	{ set pool_list [GetFrSpeechVersion3PoolList] }
+						"41"	{ set pool_list [GetFrSpeechVersion4PoolList] }
+						"42"	{ set pool_list [GetFrSpeechVersion5PoolList] }
+						"05" 	{ set pool_list [GetHrSpeechVersion1PoolList] }
+						"15"    { set pool_list [GetHrSpeechVersion2PoolList] }
+						"25" 	{ set pool_list [GetHrSpeechVersion3PoolList] }
+						default { set cause 0x33; # "Requested speech version unavailable" } 
+					}
+				}
+				"(09)" {
+					# Half Rate
+					switch -exact -- $spver {
+						"05" 	{ set pool_list [GetHrSpeechVersion1PoolList] }
+						"15"    { set pool_list [GetHrSpeechVersion2PoolList] }
+						"25" 	{ set pool_list [GetHrSpeechVersion3PoolList] }
+						default { set cause 0x33; # "Requested speech version unavailable" } 
+					}
+				}
+				"(0b|1b)" {
+					# Half Rate (preferred) or Full Rate
+					switch -exact -- $spver {
+						"05" 	{ set pool_list [GetHrSpeechVersion1PoolList] }
+						"15"    { set pool_list [GetHrSpeechVersion2PoolList] }
+						"25" 	{ set pool_list [GetHrSpeechVersion3PoolList] }
+						"01" 	{ set pool_list [GetFrSpeechVersion1PoolList] }
+						"41"	{ set pool_list [GetFrSpeechVersion4PoolList] }
+						"42"	{ set pool_list [GetFrSpeechVersion5PoolList] }
+						"11" 	{ set pool_list [GetFrSpeechVersion2PoolList] }
+						"21" 	{ set pool_list [GetFrSpeechVersion3PoolList] }
+						default { set cause 0x33; # "Requested speech version unavailable" } 
+					}
+				}
+				default { set cause 0x30; # "Requested trancoding/rate adaption unavailable" } 
+			}
+		}
+		"02" {
+			# Data
+			log "GetPoolListByChannel: ch_rate=$ch_rate, datarate=$datarate"
+			switch -regexp -- $ch_rate {
+				"(08|0a|1a)" {
+					# Full Rate (preferred)
+					switch -exact -- $datarate {
+						"14"	-
+						"13"	-
+						"12"	{ set pool_list [GetFrData3_6PoolList] }
+						"11"	{ set pool_list [GetFrData6PoolList] }
+						"10"	{ set pool_list [GetFrData12PoolList] }
+						"3a"	-
+						"39"	-
+						"18"	{ set pool_list [GetFrData14_5PoolList] }
+						default { set cause 0x30; # "Requested trancoding/rate adaption unavailable" } 
+					}
+				}
+				"(09|0b|1b)" {
+					# Half Rate (preferred)
+					switch -exact -- $datarate {
+						"14"	-
+						"13"	-
+						"12"	{ set pool_list [GetHrData3_6PoolList] }
+						"11"	{ set pool_list [GetHrData6PoolList] }
+						default { set cause 0x30; # "Requested trancoding/rate adaption unavailable" } 
+					}
+				}	
+				default { set cause 0x30; # "Requested trancoding/rate adaption unavailable" } 
+			}
+
+		}
+		"03" {
+			# signalling 
+			abort "Request of Traffic Cic with Signalling Indicator ($spi)"
+		}
+		default {abort "Speech Indicator Unknown"}
+	}
+
+	if { [info exist cause] } {
+		log "GetPoolListByChannel(B): P2 cause=$cause"
+	} else {
+		log "GetPoolListByChannel(B): P2 cause inexistent"
+		log "GetPoolListByChannel(B): pool_list=$pool_list spver=$spver" 
+		# The perm speech has been found
+	}
+}
+
+# It provides a pool number (see TS 3GPP 3.2.2.45)
+# supporting a specific channel type and
+# available for a specific BSC
+proc GetPoolByChannel { bscid pool_val failure unavaList msQueueId } {
+
+	# Global Variables
+	global glTrfDb glBssapDb glMsId 
+
+	# Pool Value and Failure variable
+	upvar 1 $pool_val pool
+	upvar 1 $failure cause
+	upvar 1 $unavaList unavailableList
+
+	set perm_speech [DbGet $glBssapDb $glMsId PermSpeech]
+	set numPermSpeech [expr [string length $perm_speech] / 2]
+	set perSpeechIndex 0
+	set compatibleSpeechFound 0
+	set retCause 0x22; # "Requested terrestrial resource unavailable"
+
+	log "GetPoolByChannel perm_speech=$perm_speech"
+	log "GetPoolByChannel numPermSpeech=$numPermSpeech"
+
+
+	while { !$compatibleSpeechFound && [expr $perSpeechIndex < $numPermSpeech] } {
+	
+		GetPoolListByChannel pool_list cause $perSpeechIndex
+
+		log "GetPoolByChannel pool_list=$pool_list; perSpeechIndex=$perSpeechIndex"
+
+if { 1 } {
+		foreach trlinkid [DbGetIndexList $glTrfDb($bscid)] {
+			log "GetPoolByChannel trlinkid=$trlinkid"
+			set pool_type [DbGet $glTrfDb($bscid) $trlinkid PoolType]
+			log "GetPoolByChannel pool_type=$pool_type"
+			set retCause 0x31; # "Circuit pool mismatch"
+			if { [lsearch $pool_list $pool_type] != "-1" } {
+				#Carlo: pool_type è stato trovato all'interno di pool_list
+				set queue_id [DbGet $glTrfDb($bscid) $trlinkid QueueId]
+
+				#log "GetPoolByChannel: queue_id=$queue_id"
+				#log "GetPoolByChannel: trlinkid=$trlinkid"
+				#log "GetPoolByChannel: pool_type=$pool_type"
+				set retCause 0x22; # "Requested terrestrial resource unavailable"
+
+				log "GetPoolByChannel msQueueId=$msQueueId queue_id=$queue_id; retCause=$retCause"
+
+				if { $msQueueId == $queue_id } {
+					set avail [trfAvail $bscid $pool_type $queue_id]
+					if { $avail > 0 } {	
+						# found the rigth pool !!
+						set pool $pool_type
+						set compatibleSpeechFound 1
+						log "Pool found = $pool_type index=$perSpeechIndex"
+						break
+						#return
+					}
+				}
+			}
+		}
+} else {
+		foreach trlinkid [DbGetIndexList $glTrfDb($bscid)] {
+			set pool_type [DbGet $glTrfDb($bscid) $trlinkid PoolType]
+			set retCause 0x31; # "Circuit pool mismatch"
+			if { [lsearch $pool_list $pool_type] != "-1" } {
+				set queue_id [DbGet $glTrfDb($bscid) $trlinkid QueueId]
+
+				#log "GetPoolByChannel: queue_id=$queue_id"
+				#log "GetPoolByChannel: msQueueId=$msQueueId"
+				#log "GetPoolByChannel: trlinkid=$trlinkid"
+				#log "GetPoolByChannel: pool_type=$pool_type"
+				set retCause 0x22; # "Requested terrestrial resource unavailable"
+
+				if { $msQueueId == $queue_id } {
+					set avail [trfAvail $bscid $pool_type $queue_id]
+					if { $avail > 0 } {	
+						# found the rigth pool !!
+						set pool $pool_type
+						set compatibleSpeechFound 1
+						log "Pool found = $pool_type index=$perSpeechIndex"
+						break
+						#return
+					} else {
+						log "cic not available for pool_type=$pool_type bscid=bscid queue_id=$queue_id"
+						set notAvail 1
+					}
+				}
+			}
+		}
+		}
+		incr perSpeechIndex
+	}
+
+	if { 1 } {
+		if { $compatibleSpeechFound } {
+			unset retCause
+			set perSpeechIndex [expr $perSpeechIndex - 1]
+			log "-- Index found=$perSpeechIndex --"
+		} else {
+			set cause $retCause
+			set perSpeechIndex -1
+		}
+		return $perSpeechIndex
+	} else {
+		if { $compatibleSpeechFound } {
+			unset retCause
+			set perSpeechIndex [expr $perSpeechIndex - 1]
+			log "Index found=$perSpeechIndex"
+		} else {
+			# Patch the ret cause, because the pool was available in trafficDb, but the resource was not available"
+			if { $notAvail } {
+				set retCause 0x22
+			}
+			set cause $retCause
+			set perSpeechIndex -1
+		}
+		return $perSpeechIndex
+	}
+}
+
+# It controls if any resource is available for 
+# this "bscid/pool_type/queue_id" combination
+proc trfAvail { bscid pool_type queue_id } {
+
+	set cickey $queue_id
+	set cickey [expr {[expr {$pool_type << 16}] + $cickey}]
+	set cickey [expr {[expr {$bscid << 24}] + $cickey}]
+
+	return [cicAvail $bscid $cickey]
+}
+
+proc SendPcmConnect { spc stkid pcmOut tsOut pcmIn tsIn mode } {
+
+	new		OM_PCM_CODEC_CONNECT s
+	wr		s Spc $spc
+	wr		s StkId $stkid
+
+	if { ![string compare $pcmOut "DPHONE"] } {
+		# PPU number
+		append data	[uitoh 0]
+		# Originating Line
+		append data	[uitoh $pcmIn]
+		# Destination dPhone number
+		append data	[uctoh $tsOut]
+		# Originating Number (Ts)
+		append data	[uctoh $tsIn]
+		# Direction
+		append data	[uctoh $mode]
+		# Resource Type DPHONE
+		append data	03
+	} elseif { ![string compare $pcmIn "DPHONE"] } {
+		# PPU number
+		append data	[uitoh $pcmOut]
+		# Originating Line
+		append data	[uitoh 0]
+		# Destination line number (Ts)
+		append data	[uctoh $tsOut]
+		# Originating dphone number
+		append data	[uctoh $tsIn]
+		# Direction
+		append data	[uctoh $mode]
+		# Resource Type DPHONE
+		append data	01
+	} else {
+		# Destination Line
+		append data	[uitoh $pcmOut]
+		# Originating Line
+		append data	[uitoh $pcmIn]
+		# Destination Number (Ts)
+		append data	[uctoh $tsOut]
+		# Originating Number (Ts)
+		append data	[uctoh $tsIn]
+		# Direction
+		append data	[uctoh $mode]
+		# Resource Type (always PCM)
+		append data	00
+	}
+
+	wr		s Data $data
+	send    s
+	LogOutputMsg $s
+}
+
+proc SendPcmDisconnect { spc stkid pcmOut tsOut pcmIn tsIn mode } {
+
+	new		OM_PCM_CODEC_DISCONNECT s
+	wr		s Spc $spc
+	wr		s StkId $stkid
+
+	if { ![string compare $pcmOut "DPHONE"] } { 
+		# Destination Line
+		append data	[uitoh 0]
+		# Originating Line
+		append data	[uitoh $pcmIn]
+		# Destination Number (Ts)
+		append data	[uctoh $tsOut]
+		# Originating Number (Ts)
+		append data	[uctoh $tsIn]
+		# Direction was: [uctoh $mode]
+		append data	02
+		# Resource Type DPHONE
+		append data	03
+	} elseif { ![string compare $pcmIn "DPHONE"] } {
+		# Destination Line
+		append data	[uitoh $pcmOut]
+		# Originating Line
+		append data	[uitoh 0]
+		# Destination Number (Ts)
+		append data	[uctoh $tsOut]
+		# Originating Number (Ts)
+		append data	[uctoh $tsIn]
+		# Direction was: [uctoh $mode]
+		append data	02
+		# Resource Type DPHONE
+		append data	01
+	} else {
+		# Destination Line
+		append data	[uitoh $pcmOut]
+		# Originating Line
+		append data	[uitoh $pcmIn]
+		# Destination Number (Ts)
+		append data	[uctoh $tsOut]
+		# Originating Number (Ts)
+		append data	[uctoh $tsIn]
+		# Direction
+		append data	[uctoh $mode]
+		# Resource Type PCM
+		append data	00
+	}
+
+	wr		s Data $data
+	send    s
+	LogOutputMsg $s
+}
+
+######################################################################
+######################################################################
+######################################################################
+
+proc SendMixedStm1PcmConnect { spc stkid pcmOut tsOut pcmIn tsIn mode toFrom } {
+
+	log "SendMixedStm1PcmConnect: Connection with STM-1 mapped PCMs"
+
+	new		OM_PCM_STM_CODEC_CONNECT s
+	wr		s Spc $spc
+	wr		s StkId $stkid
+
+	if { $toFrom == 4 } {
+		# to: stm from: stm
+		set ToFrom 04
+
+		set pcm_out    		 [lindex [split $pcmOut -] 0]
+		set stm1PcmOutLine   [lindex [split $pcmOut -] 1]
+
+		set pcm_in	   		 [lindex [split $pcmIn -] 0]
+		set stm1PcmInLine    [lindex [split $pcmIn -] 1]
+
+		log "SendMixedStm1PcmConnect: pcmOut=$pcmOut; stm1PcmOutLine=$stm1PcmOutLine; pcm_out=$pcm_out; tsOut=$tsOut; pcmIn=$pcmIn; pcm_in=$pcm_in; stm1PcmInLine=$stm1PcmInLine; tsIn=$tsIn; mode=$mode; ToFrom=$ToFrom"; #cDEBUG
+		
+		log "STM1 line=$stm1PcmInLine pcm=$pcm_in ts=$tsIn --> STM1 line=$stm1PcmOutLine pcm=$pcm_out ts=$tsOut"; #cDEBUG
+
+		# Destination Line PCM
+		append data	[ustoh $pcm_out]
+
+		# Destination Line STM-1
+		append data	[ustoh $stm1PcmOutLine]
+
+		# Originating Line PCM
+		append data	[ustoh $pcm_in]
+
+		# Originating Line STM-1
+		append data	[ustoh $stm1PcmInLine]
+	} elseif { $toFrom == 5 } {
+		# to: stm from: pcm
+		set ToFrom 05
+
+		set pcm_out    		 [lindex [split $pcmOut -] 0]
+		set stm1PcmOutLine   [lindex [split $pcmOut -] 1]
+
+		set pcm_in	   		 [lindex [split $pcmIn -] 0]
+
+		log "SendMixedStm1PcmConnect: pcmOut=$pcmOut; stm1PcmOutLine=$stm1PcmOutLine; pcm_out=$pcm_out; tsOut=$tsOut; pcmIn=$pcmIn; pcm_in=$pcm_in; tsIn=$tsIn; mode=$mode; ToFrom=$ToFrom"; #cDEBUG
+		
+		log "PCM $pcm_in $tsIn --> STM1 line=$stm1PcmOutLine pcm=$pcm_out ts=$tsOut"; #cDEBUG
+
+		# Destination Line PCM
+		append data	[ustoh $pcm_out]
+		# Destination Line STM-1
+		append data	[ustoh $stm1PcmOutLine]
+		# Originating Line PCM
+		append data	[ustoh $pcm_in]
+		append data 0000; # the Oline.Pcm.Stm1 field must be set to 0 (see ss7_om.h)
+
+	} elseif { $toFrom == 6 } {
+		# to: pcm from: stm
+		set ToFrom 06
+		set pcm_out    		 [lindex [split $pcmOut -] 0]
+
+		set pcm_in	   		 [lindex [split $pcmIn -] 0]
+		set stm1PcmInLine    [lindex [split $pcmIn -] 1]
+		
+		log "SendMixedStm1PcmConnect: pcmOut=$pcmOut; pcm_out=$pcm_out; tsOut=$tsOut; pcmIn=$pcmIn; stm1PcmInLine=$stm1PcmInLine; pcm_in=$pcm_in; tsIn=$tsIn; mode=$mode; ToFrom=$ToFrom"; #cDEBUG
+		
+		log "STM1 line=$stm1PcmInLine pcm=$pcm_in ts=$tsIn --> PCM $pcm_out $tsOut"; #cDEBUG
+
+		# Destination Line PCM
+		append data	[ustoh $pcm_out]
+		append data 0000; # the Dline.Pcm.Stm1 field must be set to 0 (see ss7_om.h)
+
+		# Originating Line PCM
+		append data	[ustoh $pcm_in]
+		# Originating Line STM-1
+		append data	[ustoh $stm1PcmInLine]
+	} elseif { $toFrom == 7 || $toFrom == 8 } {
+		if { ![string compare $pcmIn "DPHONE"] } {
+			# to: stm from: codec
+			set ToFrom 07			
+			set pcm_out    		 [lindex [split $pcmOut -] 0]
+			set stm1PcmOutLine   [lindex [split $pcmOut -] 1]
+
+			log "DPHONE $tsIn --> STM1 line=$stm1PcmOutLine pcm=$pcm_out ts=$tsOut"; #cDEBUG
+			
+			# Destination Line PCM
+			append data	[ustoh $pcm_out]
+			# Destination Line STM-1
+			append data	[ustoh $stm1PcmOutLine]
+			# Originating Line DPHONE
+			append data	[uitoh 0]
+		} elseif { ![string compare $pcmOut "DPHONE"] } {
+			# to: codec from: stm
+			set ToFrom 08
+
+			set pcm_in	   		 [lindex [split $pcmIn -] 0]
+			set stm1PcmInLine    [lindex [split $pcmIn -] 1]
+
+			if { [IsEmpty $stm1PcmInLine] || [IsVoid $stm1PcmInLine] } {
+				log "SendMixedStm1PcmConnect: WARNING!!"; #cDEBUG
+			}			
+
+			log "STM1 line=$stm1PcmInLine pcm=$pcm_in ts=$tsIn --> DPHONE $tsOut"; #cDEBUG
+
+			# Destination Line DPHONE			
+			append data [uitoh 0]
+			# Originating Line PCM
+			append data	[ustoh $pcm_in]
+			# Originating Line STM-1
+			append data	[ustoh $stm1PcmInLine]
+		} else {
+			logscr "SendMixedStm1PcmConnect: WARNING: any DPHONE used but toFrom=$toFrom"
+		}
+	} else {
+		logscr "SendMixedStm1PcmConnect: WARNING: the range of possible values of toFrom is from 0 to 8 included"
+	}
+
+	# Destination Number (Ts)
+	append data	[uctoh $tsOut]
+	# Originating Number (Ts)
+	append data	[uctoh $tsIn]
+	# Direction
+	append data	[uctoh $mode]
+	# Resource Type (PCM or STM-1 or DPHONE)
+	append data $ToFrom
+
+	wr		s Data $data
+	send    s
+	LogOutputMsg $s
+}
+
+######################################################################
+proc SendMixedStm1PcmDisconnect { spc stkid pcmOut tsOut pcmIn tsIn mode toFrom } {
+
+	log "SendMixedStm1PcmDisconnect: Disconnection with STM-1 mapped"
+
+	new		OM_PCM_STM_CODEC_DISCONNECT s
+	wr		s Spc $spc
+	wr		s StkId $stkid
+
+	if { [IsVoid $toFrom] } {
+		if { ![string compare $pcmOut "DPHONE"] } {
+			# to: codec from: stm
+			set ToFrom 08
+			# Destination Line DPHONE
+			append data	[uitoh 0]
+			# Originating Line (case of pcmIn=0xffffffff: any originating active line)
+			append data	[uitoh $pcmIn]
+
+		#  Carlo TODO forse manca il caso sotto: check
+		# to: stm from: pcm
+		# set ToFrom 5
+
+		} else {
+			# to: stm from: stm
+			set ToFrom 04
+			
+			set pcm_out    		 [lindex [split $pcmOut -] 0]
+			set stm1PcmOutLine   [lindex [split $pcmOut -] 1]
+			# Destination Line PCM
+			append data	[ustoh $pcm_out]
+			# Destination Line STM-1
+			append data	[ustoh $stm1PcmOutLine]
+			# Originating Line (case of pcmIn=0xffffffff: any originating active line)
+			append data	[uitoh $pcmIn]
+		}
+	}
+
+	if { $toFrom == 4 } {
+		set ToFrom 04
+		# to: stm from: stm
+		set pcm_out    		 [lindex [split $pcmOut -] 0]
+		set stm1PcmOutLine   [lindex [split $pcmOut -] 1]
+
+		if { $pcmIn != 0xffffffff } { 
+			set pcm_in	   		 [lindex [split $pcmIn -] 0]
+			set stm1PcmInLine    [lindex [split $pcmIn -] 1]
+
+			#log "SendMixedStm1PcmDisconnect: pcmOut=$pcmOut; stm1PcmOutLine=$stm1PcmOutLine; pcm_out=$pcm_out; tsOut=$tsOut; pcmIn=$pcmIn; pcm_in=$pcm_in; stm1PcmInLine=$stm1PcmInLine; tsIn=$tsIn; mode=$mode; ToFrom=$ToFrom"; #cDEBUG
+
+			log "STM $stm1PcmInLine $pcm_in $tsIn --> STM $stm1PcmOutLine $pcm_out $tsOut"; #cDEBUG
+
+		} elseif { $pcmIn == 0xffffffff } {
+			log "SendMixedStm1PcmDisconnect: pcmOut=$pcmOut; stm1PcmOutLine=$stm1PcmOutLine; pcm_out=$pcm_out; tsOut=$tsOut; pcmIn=$pcmIn; tsIn=$tsIn; mode=$mode; ToFrom=$ToFrom"; #cDEBUG
+		}
+
+		# Destination Line PCM
+		append data	[ustoh $pcm_out]
+		# Destination Line STM-1
+		append data	[ustoh $stm1PcmOutLine]
+
+		# Originating Line (case of pcmIn=0xffffffff: any originating active line)
+		if { $pcmIn != 0xffffffff } {
+			# Originating Line PCM
+			append data	[ustoh $pcm_in]
+			# Originating Line STM-1
+			append data	[ustoh $stm1PcmInLine]
+		} elseif { $pcmIn == 0xffffffff } {
+			# Originating Line
+			append data	[uitoh $pcmIn]
+		}
+	} elseif { $toFrom == 5 } {
+		set ToFrom 05
+		# to: stm from: pcm
+		set pcm_out    		 [lindex [split $pcmOut -] 0]
+		set stm1PcmOutLine   [lindex [split $pcmOut -] 1]
+
+		if { $pcmIn != 0xffffffff } { 
+			set pcm_in	   		 [lindex [split $pcmIn -] 0]
+
+			log "PCM $pcm_in $tsIn --> STM $stm1PcmOutLine $pcm_out $tsOut"; #cDEBUG
+		} else {
+			log "PCM $pcmIn $tsIn --> STM $stm1PcmOutLine $pcm_out $tsOut"; #cDEBUG
+		}
+	
+		# Destination Line PCM
+		append data	[ustoh $pcm_out]
+		# Destination Line STM-1
+		append data	[ustoh $stm1PcmOutLine]
+
+		if { $pcmIn != 0xffffffff } {
+			# Originating Line PCM
+			append data	[ustoh $pcm_in]
+		} elseif { $pcmIn == 0xffffffff } {
+			# Originating Line
+			append data	[uitoh $pcmIn]
+		}
+		append data 0000; # the Oline.Pcm.Stm1 field must be set to 0 (see ss7_om.h)
+	} elseif { $toFrom == 6 } {
+		set ToFrom 06
+		# to: pcm from: stm
+		set pcm_out    		 [lindex [split $pcmOut -] 0]
+		
+		if { $pcmIn != 0xffffffff } { 
+			set pcm_in	   		 [lindex [split $pcmIn -] 0]
+			set stm1PcmInLine    [lindex [split $pcmIn -] 1]
+
+			#log "SendMixedStm1PcmDisconnect: pcmOut=$pcmOut; pcm_out=$pcm_out; tsOut=$tsOut; pcmIn=$pcmIn; stm1PcmInLine=$stm1PcmInLine; pcm_in=$pcm_in; tsIn=$tsIn; mode=$mode; ToFrom=$ToFrom"; #cDEBUG
+		
+			log "STM $stm1PcmInLine $pcm_in $tsIn --> PCM $pcm_out $tsOut"; #cDEBUG
+		} else {
+			log "STM $stm1PcmInLine $pcmIn $tsIn --> PCM $pcm_out $tsOut"; #cDEBUG
+		}
+
+		# Destination Line PCM
+		append data	[ustoh $pcm_out]
+		append data 0000; # the Dline.Pcm.Stm1 field must be set to 0 (see ss7_om.h)
+
+		if { $pcmIn != 0xffffffff } {
+			# Originating Line PCM
+			append data	[ustoh $pcm_in]
+			# Originating Line STM-1
+			append data	[ustoh $stm1PcmInLine]
+		} elseif { $pcmIn == 0xffffffff } {
+			# Originating Line
+			append data	[uitoh $pcmIn]
+		}
+	} elseif { $toFrom == 7 || $toFrom == 8 } {
+		if { ![string compare $pcmIn "DPHONE"] } {
+			# to: stm from: codec
+			set ToFrom 07
+			set pcm_out    		 [lindex [split $pcmOut -] 0]
+			set stm1PcmOutLine   [lindex [split $pcmOut -] 1]
+
+			log "DPHONE $tsIn Disconnection --> STM $stm1PcmOutLine $pcm_out $tsOut"; #cDEBUG
+
+			# Destination Line PCM
+			append data	[ustoh $pcm_out]
+			# Destination Line STM-1
+			append data	[ustoh $stm1PcmOutLine]
+			# Originating Line DPHONE
+			append data	[uitoh 0]
+		} elseif { ![string compare $pcmOut "DPHONE"] } {
+			# to: codec from: stm
+			set ToFrom 08
+			# Destination Line DPHONE
+			append data	[uitoh 0]
+
+			if { $pcmIn != 0xffffffff } {
+				set pcm_in           [lindex [split $pcmIn -] 0]
+    	        set stm1PcmInLine    [lindex [split $pcmIn -] 1]
+
+				log "STM $stm1PcmInLine $pcm_in $tsIn Disconnection --> DPHONE $tsOut"; #cDEBUG
+
+				# Originating Line PCM
+				append data	[ustoh $pcm_in]
+				# Originating Line STM-1
+				append data	[ustoh $stm1PcmInLine]
+			} elseif { $pcmIn == 0xffffffff } {
+				# Originating Line
+				append data	[uitoh $pcmIn]
+			}
+		} else {
+			logscr "SendMixedStm1PcmDisconnect: WARNING: any DPHONE used but toFrom=$toFrom"
+		}
+	} else {
+		#logscr "SendMixedStm1PcmDisconnect: WARNING: the range of possible values of toFrom is from 0 to 8 included"
+	}
+
+	# Destination Number (Ts)
+	append data	[uctoh $tsOut]
+	# Originating Number (Ts)
+	append data	[uctoh $tsIn]
+	# Direction
+	append data	[uctoh $mode]
+	# Resource Type (PCM or STM-1 or DPHONE)
+	append data $ToFrom
+
+	wr		s Data $data
+	send    s
+	LogOutputMsg $s
+}
+
+######################################################################
+proc DisconnectResources { msid dbname } {
+
+	# Global Variables
+	global glBssapDb glMsId
+
+	# Reset Traffic Resource
+	set connString [DbGet $dbname $msid CicConnection] 
+
+	logv4 "DisconnectResources: msid=$msid; CicConnection=$connString"
+
+	if { ![IsVoid $connString] } {
+		set pcm1 [lindex $connString 5]; #Input
+		set ts1  [lindex $connString 6]
+		set pcm2 [lindex $connString 1]; #Output
+		set ts2 [lindex $connString 2]
+
+		# beware: here the pcm1 and pcm2 are for the true lsuPcm1 and lsuPcm2	
+		#// TMA-381 (0915_mgw.rar) added this if 
+		if { ![IsVoid $pcm1] && ![IsVoid $pcm2] } {
+			# case with Traffic Resources
+			set spc [DbGet $glBssapDb $glMsId Spc]
+			set stkid [DbGet $glBssapDb $glMsId StkId]
+			logv4 "DisconnectResources: pcm1=$pcm1 pcm2=$pcm2"
+
+			logv4 "DisconnectResources: pcm2_0=[lindex [split $pcm2 "-"] 0]; pcm1_0=[lindex [split $pcm1 "-"] 0]"; #cDEBUG
+			logv4 "DisconnectResources: pcm2_1=[lindex [split $pcm2 "-"] 1]; pcm1_1=[lindex [split $pcm1 "-"] 1]"; #cDEBUG
+
+			if { ![string compare $pcm1 "DPHONE"] || ![string compare $pcm2 "DPHONE"] } {
+				logv4 "DisconnectResources: (A)"
+				if { ![string compare $pcm1 "DPHONE"] && [IsEmpty [lindex [split $pcm2 "-"] 1]] || \
+						 ![string compare $pcm2 "DPHONE"] && [IsEmpty [lindex [split $pcm1 "-"] 1]] } {
+					logv4 "DisconnectResources: (A1) Electrical PCMs <--> DPHONE"
+
+					# Disconnect Mono-Directional (mode=2)
+					SendPcmDisconnect $spc $stkid $pcm2 $ts2 $pcm1 $ts1 2
+
+					#Carlo aggiunta seconda disconnect monodirezionale nel senso inverso (sembra nn funzionare la discon bidir)
+					# Disconnect Mono-Directional (mode=2) in the opposite sense
+					SendPcmDisconnect $spc $stkid $pcm1 $ts1 $pcm2 $ts2 2
+
+				} elseif { ![string compare $pcm1 "DPHONE"] && ![IsEmpty [lindex [split $pcm2 "-"] 1]] } {
+					logv4 "DisconnectResources: (A2) dPHONE --> STM1 PCMs (=$pcm2)"
+				
+					# Disconnect Bi-Directional (mode=3)
+					SendMixedStm1PcmDisconnect $spc $stkid $pcm2 $ts2 $pcm1 $ts1 3 7
+
+				} elseif { ![string compare $pcm2 "DPHONE"] && ![IsEmpty [lindex [split $pcm1 "-"] 1]] } {
+					logv4 "DisconnectResources: (A3) STM1 PCMs (=$pcm1) --> dPHONE"
+
+					# Disconnect Bi-Directional (mode=3)
+					SendMixedStm1PcmDisconnect $spc $stkid $pcm2 $ts2 $pcm1 $ts1 3 8
+
+				} else {
+					logscr "DisconnectResources: WARNING: any connection between STM-1 mapped PCM or Electrical PCM and DPHONE"
+				}
+			} else {
+				logv4 "DisconnectResources: (B)"
+
+				if { [IsVoid [DbGet $glBssapDb $glMsId PcmType]] && [IsEmpty [lindex [split $pcm2 "-"] 1]] && [IsEmpty [lindex [split $pcm1 "-"] 1]] } {
+					# All Electrical PCM
+					logv4 "DisconnectResources: (B1)"
+
+					# Disconnect Bi-Directional (mode=3)
+					#SendPcmDisconnect $spc $stkid $pcm2 $ts2 $pcm1 $ts1 3
+
+					# Disconnect Mono Directional (mode=2)
+					SendPcmDisconnect $spc $stkid $pcm2 $ts2 $pcm1 $ts1 2
+
+				} elseif { [IsEmpty [DbGet $glBssapDb $glMsId PcmType]] && [IsEmpty [lindex [split $pcm2 "-"] 1]] && [IsEmpty [lindex [split $pcm1 "-"] 1]] } {
+					# All Electrical PCM
+					logv4 "DisconnectResources: (B1-bis)"
+					# Disconnect Mono Directional (mode=2)
+					SendPcmDisconnect $spc $stkid $pcm2 $ts2 $pcm1 $ts1 2
+
+				} elseif { ![DbGet $glBssapDb $glMsId PcmType] && [IsEmpty [lindex [split $pcm2 "-"] 1]] && [IsEmpty [lindex [split $pcm1 "-"] 1]] } {
+					# All Electrical PCM
+					logv4 "DisconnectResources: (B1-ter)"
+					# Disconnect Mono Directional (mode=2)
+					SendPcmDisconnect $spc $stkid $pcm2 $ts2 $pcm1 $ts1 2
+
+				} elseif { [DbGet $glBssapDb $glMsId PcmType] == 1 && ![IsEmpty [lindex [split $pcm2 "-"] 1]] && ![IsEmpty [lindex [split $pcm1 "-"] 1]] } {
+					# All STM-1 mapped PCM 
+					logv4 "DisconnectResources: All STM-1 mapped PCMs --> pcm1=$pcm1; pcm2=$pcm2"; #cDEBUG
+					logv4 "DisconnectResources: (B2)"
+
+					# Carlo TO DEBUG cfgfsys  --------------- #
+					#exec cat /mnt/arrabbiata/res/switch/Connect > /home/carlom/atm1Sdh_Debug
+					# Disconnect Bi-Directional (mode=3)
+					#SendMixedStm1PcmDisconnect $spc $stkid $pcm2 $ts2 $pcm1 $ts1 3 4
+					#after 3000
+					#abort "abort dopo pausa di 3 sec"
+					# --------------------------------------- #
+
+					# Disconnect Mono-Directional (mode=2)
+					SendMixedStm1PcmDisconnect $spc $stkid $pcm2 $ts2 $pcm1 $ts1 2 4
+
+				} elseif { [DbGet $glBssapDb $glMsId PcmType] == 1 && [IsEmpty [lindex [split $pcm2 "-"] 1]] && ![IsEmpty [lindex [split $pcm1 "-"] 1]] } {
+					# PCM 1: STM-1 mapped; PCM 2: Electrical 
+					logv4 "DisconnectResources: PCM 1: STM-1 mapped --> PCM 2: Electrical; pcm1=$pcm1; pcm2=$pcm2"; #cDEBUG
+					logv4 "DisconnectResources: (B3)"
+					# Disconnect Mono-Directional (mode=2)
+					SendMixedStm1PcmDisconnect $spc $stkid $pcm2 $ts2 $pcm1 $ts1 2 6
+				} elseif { ![DbGet $glBssapDb $glMsId PcmType] && ![IsEmpty [lindex [split $pcm2 "-"] 1]] && [IsEmpty [lindex [split $pcm1 "-"] 1]] } {
+					# PCM 1: Electrical; PCM 2: STM-1 mapped
+					logv4 "DisconnectResources: PCM 1: Electrical --> PCM 2: STM-1 mapped;  pcm1=$pcm1; pcm2=$pcm2"; #cDEBUG
+					logv4 "DisconnectResources: (B4)"
+					# Disconnect Mono-Directional (mode=2)
+					SendMixedStm1PcmDisconnect $spc $stkid $pcm2 $ts2 $pcm1 $ts1 2 5
+				} else {
+					logscr "DisconnectResources: WARNING: PcmType=[DbGet $glBssapDb $glMsId PcmType]; [IsEmpty [lindex [split $pcm2 "-"] 1]]; [IsEmpty [lindex [split $pcm1 "-"] 1]]"
+				}
+			}
+			DbSet $dbname $msid CicConnection "?"
+		} else {
+			# case with NO Traffic Resources (only Signalling)
+			logv4 "DisconnectResources: any disconnection done in case of NO Testing of the Traffic Resources"
+		}
+	}
+}
+
+##############################################################
+# Cell Identifier Utilities
+##############################################################
+proc GetApIdByCellIdfr { lac cellid } {
+	global _sig
+
+	foreach apid [DbGetIndexList $::glIuhDb] {
+
+		if { $lac == [DbGet $::glIuhDb $apid LAC] && $cellid == [DbGet $::glIuhDb $apid CellIdentity] } {
+			return $apid
+		}
+	}
+
+	logscr "GetApIdByCellIdfr: Cell id unknown with LAC=$lac, id=$cellid"
+	return -1
+
+}
+
+proc GetBscIdByCellIdfr { lac cellid btsdb } {
+	global _sig
+
+	upvar 1 $btsdb dbvar
+
+	#log "GetBscIdByCellIdfr: btsdb=$btsdb"
+
+	foreach bscid [array names dbvar] {
+
+		#log "GetBscIdByCellIdfr: bscid=$bscid"
+
+		set cellKey $lac
+		append cellKey "_" $cellid; #TODO: use a procedure to create the key
+		if { [DbKeyExists $dbvar($bscid) LacCellId $cellKey] } {
+			return $bscid
+		}
+	}
+
+	if { ![string compare [lindex $_sig 0] "HOV_RQRD"] } {
+		log "GetBscIdByCellIdfr: Cell id unknown in Hov Rqrd"
+		return -2
+	} else {
+		logscr "Cell id unknown with LAC=$lac, id=$cellid"
+		return -1
+	}
+}
+
+# "Cell Identifier" Info (see TS 3GPP 08.08 par. 3.2.2.17)
+proc GetCellInfo { cell_idfr } {
+
+	#Carlo: nota: cell_idfr inizia dall'ottetto numero 3 (esclude cioè element identifier e length)
+	# inoltre l'ordine dei bit nell'otteto è da sinistra a dx (cioe il bit 0 è quello piu a sx cioè l'msb))
+
+	# Cell identification discriminator
+	set disc [hbits [hocts $cell_idfr 0] 4 7]
+
+	log "GetCellInfo: cell_idfr=$cell_idfr --> disc=$disc"
+
+	switch -exact -- $disc {
+		"0000"	{ set lac [hocts $cell_idfr 4 5];\
+				  set ci [hocts $cell_idfr 6 7] }
+		"0001"	{ set lac [hocts $cell_idfr 1 2];\
+				  set ci [hocts $cell_idfr 3 4] }
+		"0010"	{ set lac "?";\
+				  set ci [hocts $cell_idfr 1 2] }
+		default	{ set lac "?"; set ci "?";\
+		          logscr "Cell Id discriminator unknown ($disc)" }
+	}
+
+	if { [IsVoid $lac] && $disc != "0010" } {
+		log "GetCellInfo: WARNING: lac is void !!!"
+	} elseif { ![IsVoid $lac] } {
+		log "GetCellInfo: lac=$lac"
+	}
+
+	if { ![IsVoid $ci] } {
+		log "GetCellInfo: ci=$ci"
+	} else {
+		log "GetCellInfo: WARNING: ci is void !!!"
+	}
+
+	return [list $lac $ci]
+}
+
+proc GetPlmnInfo { cell_idfr } {
+
+	set vplmn [string index $cell_idfr 2]
+	append vplmn [string index $cell_idfr 3]
+	append vplmn [string index $cell_idfr 4]
+	append vplmn [string index $cell_idfr 5]
+	append vplmn [string index $cell_idfr 6]
+	append vplmn [string index $cell_idfr 7]
+
+ 	log "GetPlmnInfo: cell_idfr=$cell_idfr --> vplmn=$vplmn"; #cDEBUG
+	return $vplmn
+}
+
+proc GetCellIdentifier { lac ci {idx "?"} } {
+
+	global glBssapPlmn glMsDb glMsId
+
+	if { [DbFieldExists $glMsDb SysInfoLAI] } {
+		if { $idx == "?" } {
+			log "WARNING: idx=$idx"
+			set lai [DbGet $glMsDb $glMsId SysInfoLAI]
+		} else { 
+			set lai [DbGet $glMsDb $idx SysInfoLAI]
+		}
+		set plmn [ComposePlmn $lai]
+		log "GetCellIdentifier: MsId=$idx; lac_24008=$lac; lai=$lai; plmn=$plmn"; #cDEBUG
+	} else {
+		set plmn $glBssapPlmn
+		log "GetCellIdentifier: MsId=$idx; plmn=$plmn"; #cDEBUG
+	}
+
+	switch -regexp -- $plmn:$lac:$ci {
+		{[[:alnum:]]+:[[:alnum:]]+:[[:alnum:]]+} {set disc 00}
+		{\?:[[:alnum:]]+:[[:alnum:]]+} 			 {set disc 01}
+		{\?:\?:[[:alnum:]]+} 					 {set disc 02}
+		default				   					 {set disc "?"}
+	}
+
+	switch -exact -- $disc {
+		"00" {set cell_idfr $disc$plmn$lac$ci}	
+		"01" {set cell_idfr $disc$lac$ci}	
+		"02" {set cell_idfr $disc$ci}	
+		default	{set cell_idfr "?"}
+	}
+
+	return $cell_idfr
+}
+
+##############################################################
+# Channel Utilities
+##############################################################
+
+# "Channel Type" (see TS 3GPP 08.08 par. 3.2.2.11)
+proc GetChannelType { spi ch_rate perm_speech datarate } {
+
+	# Global Variables
+	global glBssapDb glMsId
+
+	# Channel Type (Speech/data indicator)
+	if { ![IsVoid $spi] } {
+		set channel_type $spi
+	} else {
+		# default value
+		set channel_type 03; # Spi=signalling
+	}
+	# Channel Type (Channel Rate)
+	if { ![IsVoid $ch_rate] } {
+    	append channel_type $ch_rate
+	} else {
+		# default value
+		append channel_type 0000; # ChannelType=SDCCH + octet spare 
+	}
+	# Channel Type (Speech Version; optional parameter)
+	if { ![IsVoid $perm_speech] } {
+    	append channel_type $perm_speech
+	} 
+	# Channel Type (CS Data Rate; optional parameter)
+	if { ![IsVoid $datarate] } {
+    	append channel_type $datarate
+	} 
+
+	log " GetChannelType: channel_type=$channel_type"
+	return $channel_type
+}
+
+# Strip Channel Infos by
+# "Channel Type" (see TS 3GPP 08.08 par. 3.2.2.11)
+#
+# we dont use it anymore
+proc GetChannelTypeInfo { ch_type } {
+
+	# Initialize optional parameters
+	set perm_speech "?"
+	set datarate "?"
+	
+	# Speech/data indicator
+	set spi 0
+	append spi [string index $ch_type 1] 
+
+	# Channel Rate
+	set ch_rate [string range $ch_type 2 3]
+
+	# Additional Parameters
+	if { [string length $ch_type] > 4 } {
+		# Permitted Speech Version
+		if { [string eq $spi "01"] } {
+			set perm_speech [string range $ch_type 4 end]
+		# CS Data Rate (transparent mode supported only)
+		} elseif { [string eq $spi "02"] } {
+			set datarate [string range $ch_type 4 end]
+		}
+	} 
+
+	return [list $spi $ch_rate $perm_speech $datarate]
+}
+
+# "Chosen Channel" (see TS 3GPP 08.08 par. 3.2.2.33)
+proc GetChosenChan { spi spch_ver } {
+#The channel mode field is coded as follows:
+#Bit
+#8765	meaning
+#0000	no channel mode indication
+#1001	speech (full rate or half rate)
+#1110	data, 14.5 kbit/s radio interface rate
+#1011	data, 12.0 kbit/s radio interface rate
+#1100	data, 6.0 kbit/s radio interface rate
+#1101	data, 3.6 kbit/s radio interface rate
+#1000	signalling only
+#0001	data, 29.0 kbit/s radio interface rate
+#0010	data, 32.0 kbit/s radio interface rate
+#0011	data, 43.5 kbit/s radio interface rate
+#0100	data, 43.5 kbit/s downlink and 14.5 kbit/s uplink
+#0101	data, 29.0 kbit/s downlink and 14.5 kbit/s uplink
+#0110	data, 43.5 kbit/s downlink and 29.0 kbit/s uplink
+#0111	data, 14.5 kbit/s downlink and 43.5 kbit/s uplink
+#1010	data, 14.5 kbit/s downlink and 29.0 kbit/s uplink
+#1111	data, 29.0 kbit/s downlink and 43.5 kbit/s uplink
+#All other values are reserved.
+#The channel field is coded as follows:
+#Bit
+#4321	meaning
+#0000	None (see note)
+#0001	SDCCH
+#1000	1 Full rate TCH
+#1001	1 Half rate TCH
+#1010	2 Full Rate TCHs
+#1011	3 Full Rate TCHs
+#1100	4 Full Rate TCHs
+#1101	5 Full Rate TCHs
+#1110	6 Full Rate TCHs
+#1111	7 Full Rate TCHs
+#0100	8 Full Rate TCHs
+
+	switch -exact -- $spi {
+		"01" {\
+			# speech 0x01=FR 0x11=EFR
+			#765 4321	meaning
+			#000 0001	GSM speech full rate version 1
+			#001 0001	GSM speech full rate version 2
+			#010 0001	GSM speech full rate version 3
+			#000 0101	GSM speech half rate version 1
+			#001 0101	GSM speech half rate version 2
+			#010 0101	GSM speech half rate version 3
+
+			# current time Comba need to support FR/EFR
+		 	set ch_mode 9
+			switch -exact -- $spch_ver {
+				"01" {set channel 8; # 1 Full rate TCH }
+				"11" {set channel a; # 2 Full rate TCH }
+				"05" {set channel 9; # 1 Half rate TCH }
+				default {set channel 8; # 1 Full rate TCH}
+			}
+		}\
+		default {set ch_mode 0; set channel 0}
+		}
+
+		set chosen_ch $ch_mode
+		append chosen_ch $channel
+
+	return $chosen_ch
+}
+
+
+# "Chosen Channel" (see TS 3GPP 08.08 par. 3.2.2.33)
+proc GetChosenChannel { spi ch_rate } {
+
+	switch -exact -- $spi {
+		"01" {\
+			# speech 
+			# current time Comba need to support FR/EFR
+		 	set ch_mode 9
+			switch -exact -- $ch_rate {
+				"08" {set channel 8; # Full rate TCH }
+				"09" {set channel 9; # Half rate TCH }
+				"0a" {set channel 8; # Full rate TCH }
+				"0b" {set channel 9; # Half rate TCH }
+				"1a" {set channel 8; # Full rate TCH }
+				"1b" {set channel 9; # Half rate TCH }
+				default {set channel 8; # Full rate TCH}
+			}
+		}\
+		"02" {\
+			# data (Warning: Hardcoded 14.5 kbits radio interface)
+		 	set ch_mode e
+			switch -regexp -- $ch_rate {
+				{08} {set channel 8; # Full rate TCH }
+				{09} {set channel 9; # Half rate TCH }
+				{0a} {set channel 8; # Full rate TCH }
+				{0b} {set channel 9; # Half rate TCH }
+				{1a} {set channel 8; # Full rate TCH }
+				{1b} {set channel 9; # Half rate TCH }
+				{2[0-7]} {set num_tch [string index $ch_rate 1];\
+						  if {$num_tch == "1"} {set num_tch 0};\
+					      set channel [expr {8 + $num_tch}]; # Full rate TCHs }
+				default {set channel 8; # Full rate TCH}
+			}
+		}\
+		"03" {\
+			# signalling 
+		 	set ch_mode 1
+			switch -exact -- $ch_rate {
+				"00" {set channel 1; # SDCCH }
+				"02" {set channel 1; # SDCCH }
+				"03" {set channel 1; # SDCCH }
+				"08" {set channel 8; # Full rate TCH }
+				"09" {set channel 9; # Half rate TCH }
+				default {set channel 1; # SDCCH}
+			}
+		}\
+		default {set ch_mode 0; set channel 0}
+		}
+
+		set chosen_ch $ch_mode
+		append chosen_ch $channel
+
+	return $chosen_ch
+}
+
+# "Current Channel Type 1" (see TS 3GPP 08.08 par. 3.2.2.49)
+proc GetCurrChType1 { spi ch_rate } {
+
+	switch -exact -- $spi {
+		"01" {\
+			# speech 
+		 	set ch_mode 1
+			switch -exact -- $ch_rate {
+				"08" {set channel 8; # Full rate TCH }
+				"09" {set channel 9; # Half rate TCH }
+				"0a" {set channel 8; # Full rate TCH }
+				"0b" {set channel 9; # Half rate TCH }
+				"1a" {set channel 8; # Full rate TCH }
+				"1b" {set channel 9; # Half rate TCH }
+				default {set channel 8; # Full rate TCH}
+			}
+		}\
+		"02" {\
+			# data (Warning: Hardcoded 14.5 kbits radio interface)
+		 	set ch_mode 6
+			switch -regexp -- $ch_rate {
+				{08} {set channel 8; # Full rate TCH }
+				{09} {set channel 9; # Half rate TCH }
+				{0a} {set channel 8; # Full rate TCH }
+				{0b} {set channel 9; # Half rate TCH }
+				{1a} {set channel 8; # Full rate TCH }
+				{1b} {set channel 9; # Half rate TCH }
+				{2[0-7]} {set num_tch [string index $ch_rate 1];\
+						  if {$num_tch == "1"} {set num_tch 0};\
+					      set channel [expr {8 + $num_tch}]; # Full rate TCHs }
+				default {set channel 8; # Full rate TCH}
+			}
+		}\
+		"03" {\
+			# signalling 
+		 	set ch_mode 0
+			switch -exact -- $ch_rate {
+				"00" {set channel 1; # SDCCH }
+				"02" {set channel 1; # SDCCH }
+				"03" {set channel 1; # SDCCH }
+				"08" {set channel 8; # Full rate TCH }
+				"09" {set channel 9; # Half rate TCH }
+				default {set channel 1; # SDCCH}
+			}
+		}\
+		default {abort "Speech Indicator unknown"}
+		}
+
+		set curr_ch_type1 $ch_mode
+		append curr_ch_type1 $channel
+
+	return $curr_ch_type1
+}
+# Strip Channel Infos by
+# "Current Channel Type 1" (see TS 3GPP 08.08 par. 3.2.2.49)
+proc GetCurrChType1Info { curr_ch_type } {
+
+	set ch_mode [string index $curr_ch_type 0]
+	set channel [string index $curr_ch_type 1]
+
+	switch -exact -- $ch_mode {
+		"0" {\
+			# signalling 
+		 	set spi 03
+			switch -exact -- $channel {
+				"1" {set ch_rate 00; # SDCCH }
+				"8" {set ch_rate 08; # Full rate TCH }
+				"9" {set ch_rate 09; # Half rate TCH }
+				default {set ch_rate 00; # SDCCH}
+			}
+		}\
+		"1" {\
+			# speech 
+		 	set spi 01
+			switch -exact -- $channel {
+				"8" {set ch_rate 08; # Full rate TCH }
+				"9" {set ch_rate 09; # Half rate TCH }
+				default {set ch_rate 08; # Full rate TCH}
+			}
+		}\
+		"2" {\
+			# data 
+			# TODO not supported yet
+			set spi "?"
+			set ch_rate "?"
+		}\
+		default {abort "Speech Indicator unknown"}
+	}
+
+	return [list $spi $ch_rate]
+}
+
+# Setting Channel Type infos by RR Establish Cause
+# (see 3GPP TS 24.008 Annex L par. L.1)
+proc SetChannelType { estcause } {
+
+	# Global Variables
+	global _sig glMsDb glBssapDb glMsId
+
+	# Setting Speech/data indicator and Channel Rate
+	# Warning: hardcoded channel rate
+	switch -exact -- $estcause {
+		"Originating CS Speech Call"				{ set spi 01; set ch_rate 08 }
+		"Originating CS Speech or Video Call"		{ set spi 01; set ch_rate 08 }
+		"Originating CS Data Call"					{ set spi 01; set ch_rate 08 }
+		"CS Emergency Call"							{ set spi 01; set ch_rate 08 }
+		"Call Re-establishment"						{ set spi 01; set ch_rate 08 }
+		"Location Update"							{ set spi 03; set ch_rate 01 }
+		"IMSI Detach"								{ set spi 03; set ch_rate 01 }
+		"MO SMS via CS Domain"						{ set spi 01; set ch_rate 08 }
+		"Supplementary service activation"			{ set spi 03; set ch_rate 01 }
+		"Answer to Circuit Switched Paging" 		{ set spi 03; set ch_rate 01 }
+		"Location services"							{ set spi 03; set ch_rate 01 }
+		"Voice Group Call"							{ set spi 01; set ch_rate 08 }
+		"Subsequent Talker Uplink Request"  		{ return -2 }
+		default	 	                        		{ logscr "Unexpected Establish Cause \
+                                                      ($estcause)"
+                                              return -1 }
+	}	
+	DbSet $glBssapDb $glMsId Spi $spi
+	DbSet $glBssapDb $glMsId ChannelRate $ch_rate
+
+	# Setting Permitted Speech
+	set bearercap1 [DbGet $glMsDb $glMsId BearerCap1]
+	set speechpres [hbits [string range $bearercap1 0 1] 0]
+	set extbcap [string range $bearercap1 2 end]
+	set spver [SpeechVersion $speechpres $extbcap]
+	DbSet $glBssapDb $glMsId PermSpeech $spver
+}
+
+##############################################################
+# Reset Instances
+##############################################################
+
+#Carlo Workaround for TMA-382 for Alcatel Shangai 21/09/2010 -start-
+proc GetBscIdByOpc { spc } {
+	global glBscDb __ss7_stk_db
+
+	set ss7db [DbGetName $__ss7_stk_db]
+
+	LogDb $ss7db; #cDEBUG
+	logv4 "GetBscIdByOpc: for BscId=1 --> Opc=[DbGet $ss7db 1 Opc]; Dpc=[DbGet $ss7db 1 Dpc]"; #cDEBUG
+
+	for { set i 1 } { $i <= [DbSize $ss7db] } { incr i } {
+		if { [DbGet $ss7db $i Dpc] == $spc } {
+			set bscId $i
+			logv4 "GetBscIdByOpc: Dpc=spc=$spc --> bscId=$bscId"
+			return $bscId
+		} else {
+			logv4 "for i=$i --> Dpc=[DbGet $ss7db $i Dpc] is different from $spc"
+			continue
+		}
+	}
+
+	# Carlo 19/01/2011 - workaround for Alcatel Velizy -start-#
+	foreach i [DbGetIndexList $ss7db] {
+		if { [DbGet $ss7db $i Opc] == $spc } {
+			set bscId $i
+			logv4 "GetBscIdByOpc: Opc=spc=$spc --> bscId=$bscId"
+			return $bscId
+		} else {
+			logv4 "for i=$i --> Opc=[DbGet $ss7db $i Opc] is different from $spc"
+			continue
+		}
+	}
+	# -end- #
+
+	logscr "GetBscIdByOpc: ERROR: spc=$spc isn't found in the SS7 Db ($ss7db) for any entry"
+	return -1
+}
+
+##############################################################
+proc GetBscIdBySpc { spc } {
+	global glBscDb __net_side __ss7_stk_db
+
+	set ss7db [DbGetName $__ss7_stk_db]
+	if { ![string compare $__net_side "cn"] } {
+		set field Dpc
+		log "__net_side = cn --> field=$field"
+	} else {
+		set field Opc
+	}
+
+	log "GetBscIdBySpc: field=$field"; #cDEBUG
+	LogDb $ss7db; #cDEBUG
+
+	#Carlo Workaround for TMA-381 for Alcatel Shangai 16/09/2010 -start-
+	log "GetBscIdBySpc: for BscId=1 --> Opc=[DbGet $ss7db 1 Opc]; Dpc=[DbGet $ss7db 1 Dpc]"
+
+	for { set i 1 } { $i <= [DbSize $ss7db] } { incr i } {
+		if { [DbGet $ss7db $i $field] == $spc } {
+			set bscId $i
+			log "new version ****** GetBscIdBySpc: field=$field spc=$spc --> bscId=$bscId ******"
+			return $bscId
+		} else {
+			log "for i=$i --> $field=[DbGet $ss7db $i $field] is different from $spc"
+			continue
+		}
+	}
+	log "new version ****** ERROR: GetBscIdBySpc: spc=$spc isn't found in SS7 Db ($ss7db) in the field:$field for any entry"
+	return -1
+}
+
+proc CicReleaseExt { cic args } {
+	# The passed cic does not contains the BscId information in higher bytes
+	if { [llength $args] != 0 } {
+		set spc [lindex $args 0]
+		logv4 "CicReleaseExt: cic=$cic; spc=$spc"
+		
+		#TMA-382
+		#set bscId [GetBscIdBySpc $spc]
+		set bscId [GetBscIdByOpc $spc]
+
+		#Carlo PATCH 08/03/2010 start
+		logv4 "CicReleaseExt: bscId=$bscId"
+		if { $bscId == -1 } {
+			logv4 "CicReleaseExt: WARNING: BscId not found for the spc=$spc!"; #cDEBUG
+			return -1
+		}
+		# stop PATCH		
+
+		#set cic [expr ($bscId << 16) + $cic]
+		
+		if { ![IsVoid $cic] } {
+			cicRelease $bscId $cic
+		} else {
+			logv4 "CicReleaseExt: cic=$cic is void"
+		}
+	} else {
+		global gBscId
+		logv4 "CicReleaseExt: bss side: using unique bsc id=$gBscId"
+		if { ![IsVoid $cic] } {
+			cicRelease $gBscId $cic
+		} else {
+			logv4 "CicReleaseExt: Cic=$cic is void"
+		}
+	}
+}
+
+proc CicReleaseExtMS { cic msId } {
+	global glBssapDb
+	set spcStkIdCid [DbGet $glBssapDb $msId SpcStkIdCid]
+	set spc [lindex [split $spcStkIdCid -] 0]
+	if { [CicReleaseExt $cic $spc] == -1 } {
+		logv4 "CicReleaseExtMS: WARNING: CicReleaseExt wasn't done"
+		return -1
+	} else {
+		return 1
+	}
+}
+
+proc CicBlockExt { cic spc } {
+	
+	set bscId [GetBscIdBySpc $spc]
+	logv4 "CicBlockExt cic=$cic dpc(or stkId)=$spc BSC=$bscId"
+	#set cicExt [expr $cic + ($bscId << 16)]
+	set res [cicBlock $bscId $cic]
+
+	if { $res != 0 }  {
+		logscr "CicBlockExt: ERROR $res"	
+	}
+
+	return $res
+}
+
+proc CicUnblockExt { cic spc } {
+	
+	set bscId [GetBscIdBySpc $spc]
+	#set cicExt [expr $cic + ($bscId << 16)]
+	log "CicUnblockExt cic=$cic spc=$spc BSC=$bscId"
+	set res [cicUnblock $bscId $cic]
+	
+	return $res
+}
+
+# Remove or change SS7 link for this instance
+proc BssapMovInst { index } {
+
+	global glBssapDb glAoip glMsId
+
+	log "BssapMovInst: index = $index"
+
+	# Get Target Connection
+	set apIdcontextId [DbGet $glBssapDb $index ApIdContextIdTarget]
+
+	log "BssapMovInst: Target ApIdContextId = $apIdcontextId"
+	if { [IsVoid $apIdcontextId] } {
+		# Reset Instance if no target
+		log "BssapMovInst: resetting instance"
+		BssapResetInst $index
+	} else {
+		log "BssapMovInst: New ApIdContextId"
+		# Store New ApIdContextId
+		set apId [lindex [split $apIdcontextId "-"] 0]
+		set contextId [lindex [split $apIdcontextId "-"] 1]
+		DbSet $glBssapDb $index ApIdContextId $apIdcontextId
+		DbSet $glBssapDb $index ApId $apId
+		DbSet $glBssapDb $index ContextId $contextId
+
+		# Remove ApIdContextIdTarget
+		DbSet $glBssapDb $index ApIdContextIdTarget "?"
+
+		# Cell Identification: Target --> Serving
+		DbSet $glBssapDb $index LAC [DbGet $glBssapDb $index LACTarget]
+		DbSet $glBssapDb $index CellId [DbGet $glBssapDb $index CellIdTarget]
+		DbSet $glBssapDb $index LACTarget "?"
+		DbSet $glBssapDb $index CellIdTarget "?"
+	}
+}
+
+# Reset instance
+proc BssapResetInst { index } {
+
+	global glBssapDb glAoip __net_side
+
+	# CICEXT
+	set apIdcontextId [DbGet $glBssapDb $index ApIdContextId]
+	set apId [lindex [split $apIdcontextId "-"] 0]
+	set contextId [lindex [split $apIdcontextId "-"] 1]
+
+	log "BssapResetInst AP Id = $apId;Context Id = $contextId"
+
+	# ApIdContextId 
+	DbSet $glBssapDb $index ApIdContextId  "?"
+	DbSet $glBssapDb $index ContextId  "?"
+	
+	# Channel Type
+	DbSet $glBssapDb $index Spi "?"
+	DbSet $glBssapDb $index ChannelRate "?"
+	DbSet $glBssapDb $index PermSpeech "?"
+
+	# Buffer
+	DbSet $glBssapDb $index ApDataReqBuf "?"
+
+	# user plane over IP
+	ClearResources $index
+}
+
+proc PartialResetIpParameters { idx } {
+
+	global glBssapDb
+
+	#DbSet $glBssapDb $idx LocalIp	 "?"
+	DbSet $glBssapDb $idx HoLocalIp	 "?"
+	DbSet $glBssapDb $idx LocalPort "?"
+	DbSet $glBssapDb $idx HoLocalPort "?"
+	DbSet $glBssapDb $idx DestIp "?"
+	DbSet $glBssapDb $idx HoDestIp "?"
+	DbSet $glBssapDb $idx DestPort "?"
+	DbSet $glBssapDb $idx HoDestPort "?"
+	DbSet $glBssapDb $idx SpeechVer "?"
+	DbSet $glBssapDb $idx HoSpeechVer "?"
+	DbSet $glBssapDb $idx SpeechCodec "?"
+	DbSet $glBssapDb $idx PeerMsId "?"
+	DbSet $glBssapDb $idx PpuId "?"
+
+
+}
+
+proc ResetIpKeyParameters { idx } {
+
+	global glBssapDb
+
+	DbSet $glBssapDb $idx IpAddPort "?"
+	DbSet $glBssapDb $idx RtpIdForPpuId "?"
+	DbSet $glBssapDb $idx ContextId "?"
+	DbSet $glBssapDb $idx ContextId "?"
+}
+
+proc BssapPartialReset { startIdx } {
+
+	global glInstNull glBssapDb glMsId
+
+	# Initial State
+	set nstate BssapIdle
+
+	# Reset the Null Instance 
+	DbSet $glBssapDb $glInstNull State $nstate 
+
+	# TMA-436 -start-
+	if { $::glAoip && ![IsEmpty [lindex $::_sig 2]] && ![IsVoid [lindex $::_sig 2]] } {
+	# AUoIP: the optional AInterfaceSelectorForReset IE is present in the RST message received
+		set a_interface_selector [rd ::_sig a_intf_slctr_for_rst]
+		Trace "log" $::__trace_AUoIP BssapPartialReset "a_interface_selector_for_reset=$a_interface_selector"
+		if { $a_interface_selector == 0 } {
+			# reset no resources (all RIP and RTD are equal to 0)
+			log "BssapPartialReset: no reset done because AInterfaceSelectorForReset IE is equal to 0"
+			return 0
+		} elseif { $a_interface_selector == 1 } {
+			log "reset only tdm resources (RTD=1)"
+			Reset_TypeResource $startIdx 0
+		} elseif { $a_interface_selector == 2 } {
+			log "reset only ip resources (RIP=1)"
+			Reset_TypeResource $startIdx 2
+		} elseif { $a_interface_selector == 3 } {
+			log "reset all types of resource"
+			Reset_TypeResource $startIdx 1
+		} else {
+			log "BssapPartialReset: ERROR: a_interface_selector_for_reset=$a_interface_selector : unexpected value!"
+		}
+	# -end-
+	} else {
+	# Standard case (AInterfaceSelectorForReset IE doesn't exist in the RST message)
+		log "BssapPartialReset glInstNull=$glInstNull"; #debug
+
+		Reset_TypeResource $startIdx
+	}
+}
+
+proc Reset_TypeResource { startIdx {typeRst ?} } {
+
+	global glInstNull glBssapDb glMsId
+
+	set idxlist [DbGetIndexList $glBssapDb]
+	
+	# Initial State
+	set nstate BssapIdle
+
+	# Spc and StkId have been set by GetInstSccpConnectionless called by DecSccpNUnitdataInd
+	set currBscSpc [DbGet $glBssapDb $glInstNull Spc]
+	log "Reset_TypeResource: currSpc=$currBscSpc"
+	set currBscStkid [DbGet $glBssapDb $glInstNull StkId]
+	log "Reset_TypeResource: currStkid=$currBscStkid"
+
+	# Reset only instToBeReset number of instances every time Reset_TypeResource is called
+	set instToBeReset 50
+	set currIdx $startIdx
+	set resetCnt 0
+	while { $resetCnt < $instToBeReset } {
+
+		set msId [lindex $idxlist $currIdx]
+		if { ![string is integer -strict $msId] } {
+			# List completed if msId is Null
+			set glMsId 0
+			return -1
+		}
+
+		# Spc and Stkid must match current Bsc
+		set msSpc 		[DbGet $glBssapDb $msId Spc]
+		set msStkId 	[DbGet $glBssapDb $msId StkId]
+
+		set msUpType	[DbGet $glBssapDb $msId UpType] 
+
+		log "Reset_TypeResource: msId=$msId Spc=$msSpc, StkId=$msStkId, msUpType=$msUpType"
+
+		if { [IsVoid $typeRst] } {
+			if { $msId != $glInstNull             && \
+				 [string match $msSpc $currBscSpc] && \
+				 [string match $msStkId $currBscStkid] } {
+
+				if { ![IsVoid [DbGet $glBssapDb $msId SpcStkIdCid]] } {
+					set glMsId $msId
+					set cause "Normal_Event"
+					SendApRelInd $cause
+				}
+
+				# Set State
+				DbSet $glBssapDb $msId State $nstate
+
+				# Reset all params for this instance
+				BssapResetInst $msId
+
+				incr resetCnt
+			}
+		} else {
+		# AUoIP: case of RST msg with the IE 'AInterfaceSelectorForReset'
+			if { $typeRst == $msUpType } {
+				if { $msId != $glInstNull             && \
+					 [string match $msSpc $currBscSpc] && \
+					 [string match $msStkId $currBscStkid] } {
+
+					if { ![IsVoid [DbGet $glBssapDb $msId SpcStkIdCid]] } {
+						set glMsId $msId
+						set cause "Normal_Event"
+						SendApRelInd $cause
+					}
+
+					# Set State
+					DbSet $glBssapDb $msId State $nstate
+
+					# Reset all params for this instance
+					BssapResetInst $msId
+
+					incr resetCnt
+				}
+			} else {
+				log "Reset_TypeResource: typeRst=$typeRst is different from UpType=$msUpType for the msId=$msId"
+			}
+		}
+		incr currIdx
+	}
+
+	return $currIdx
+}
+
+# Reset All instances of current Bsc
+proc BssapAllInstReset { } {
+
+	global glInstNull glBssapDb glMsId
+
+	# Initial State
+
+	set nstate BssapIdle
+
+	
+	# Reset the Null Instance 
+	DbSet $glBssapDb $glInstNull State $nstate 
+
+	set apid_instnull [DbGet $glBssapDb $glInstNull ApId]
+
+	set idxlist [DbGetIndexList $glBssapDb]
+
+	# Replace instance null
+	set idx [lsearch -exact $idxlist $glInstNull]
+	set mslist [lreplace $idxlist $idx $idx]
+
+	log "BssapAllInstReset: apid_instnull=$apid_instnull;idx=$idx; mslist=$mslist"; #cDEBUG
+
+	foreach index $mslist {
+
+		set apid [DbGet $glBssapDb $index ApId]
+		
+		log "BssapAllInstReset: glMsId=$apid; AP ID =$apid;"; #cDEBUG
+	
+		if { [string match $apid $apid_instnull] } {
+
+			# Carlo: the 'if CnSide' adds to support correctly the Global Reset in the AUoIP (the 'BSSAP_AP_REL_IND' is only for CN side).
+			if { [CnSide] } {
+				if { ![IsVoid [DbGet $glBssapDb $index ApIdContextId]] } {
+					set glMsId $index	
+					set cause "Normal_Event"
+					SendApRelInd $cause
+				}
+			}
+
+			# Set State
+			DbSet $glBssapDb $index State $nstate
+
+			# Reset all params for this instance
+			BssapResetInst $index
+		}
+	}
+	
+	# Reset Instance
+	set glMsId 0
+}
+
+proc StartClrCmplteTimer { spcstkidcid } {
+	global glBssapDb glClrCmplteTimerDuration
+
+	set lst [split $spcstkidcid -]
+	set spc [lindex $lst 0]
+	set stkid [lindex $lst 1]
+	set cid [lindex $lst 2]
+
+	# Check if a timer is already running for this link
+	set tmrid [tmclcmp_gettimerbylink $spc $stkid $cid]
+	if { ![string compare $tmrid "NotFound"] } { 
+		set tmrid [tmrnew T_CLEARCOMPLETE $glClrCmplteTimerDuration]
+		log "StartClrCmplteTimer: starting new timer $tmrid for link $spcstkidcid"
+		tmclcmp_inserttimer $tmrid $spc $stkid $cid
+		tmrstart $tmrid
+	} else {
+		log "StartClrCmplteTimer: re-starting an existent timer $tmrid for link $spcstkidcid"
+		tmrstart $tmrid
+	}
+}
+
+proc CleanUpClrCmplteTimer { tmrid } {
+	tmrfree $tmrid
+	tmclcmp_deletetimer $tmrid
+	log "Freeing timer: $tmrid and deleting from ClrCmplte list"
+}
+
+proc StopClrCmplteTimerByLink { spcstkidcid } {
+	set lst [split $spcstkidcid -]
+	set spc [lindex $lst 0]
+	set stkid [lindex $lst 1]
+	set cid [lindex $lst 2]
+
+	set tmrid [tmclcmp_gettimerbylink $spc $stkid $cid]
+
+	if { $tmrid != "NotFound" } {
+		log "Timer found $tmrid for link $spcstkidcid"
+		if { [tmrrunning $tmrid] } {
+			tmrstop $tmrid
+			tmrfree $tmrid
+			tmclcmp_deletetimer $tmrid
+		}
+	} else {
+		log "Timer not found $spcstkidcid"
+	}
+}
+
+proc StartClrCmplteTimer1 { spcstkidcid } {
+	global glBssapDb glClrCmplteTimersArray glClrCmplteTimersLinkArray glClrCmplteTimerDuration
+
+	set t [time {
+
+	set tmrid [tmrnew T_CLEARCOMPLETE $glClrCmplteTimerDuration]
+
+	log "StartClrCmplteTimer: starting timer $tmrid for link $spcstkidcid"
+
+	# Hold the SpcStkIdCid for the SCCP connection to which the CLD_CMD has been sent
+	set glClrCmplteTimersArray($tmrid) $spcstkidcid
+	# And the contrary too
+	set glClrCmplteTimersLinkArray($spcstkidcid) $tmrid
+
+	tmrstart $tmrid
+
+	} ]
+
+	logscr "StartClrCmplteTimer: $t"
+}
+
+proc StopClrCmplteTimerByLink1 { spcstkidcid } {
+	global glClrCmplteTimersLinkArray glClrCmplteTimersArray
+
+	set t [time {
+
+	log "StopClrCmplteTimerByLink: stopping timer for link $spcstkidcid"
+
+	#catch {
+
+	#set timerfound [array names glClrCmplteTimersLinkArray -exact $spcstkidcid]
+	
+	#if { [llength $timerfound] } {
+		set tmrid $glClrCmplteTimersLinkArray($spcstkidcid)
+		if { [tmrrunning $tmrid] } {
+			tmrstop $tmrid
+			tmrfree $tmrid
+
+			unset glClrCmplteTimersLinkArray($spcstkidcid)
+			unset glClrCmplteTimersArray($tmrid)
+
+		}
+	#} else {
+	#	logscr "StopClrCmplteTimerByLink: Error Timer for link $spcstkidcid not found!"
+	#}
+
+	#}
+
+	}]
+
+	logscr "StopClrCmplteTimerByLink: $t"
+
+}
+
+proc NoInstanceSccpHdl { spcstkidcid } {
+
+	# Declare Global Variables
+	global _sig _sigpdu _bssappid
+
+	log "NoInstanceSccpHdl: spcstkidcid: $spcstkidcid"
+	# decoding BSSAP pdu
+	set primName [lindex $_sig 0]
+	set bssapPdu [rd _sig Data]
+	if { ![IsVoid $bssapPdu] } {
+		bssapPduToSig bssapPdu	
+		set msgtype [lindex $_sigpdu 0]
+		if { [string compare $msgtype "CLR_CMPLT"] } {
+			set spc [rd _sig Spc]
+			set stkid [rd _sig StkId]
+			set cid [rd _sig Cid]
+			logscr "NoInstanceSccpHdl: WARNING: No Instance found for Message $msgtype"
+			logscr "Spc = $spc StkId = $stkid Cid = $cid"
+			if { ![string compare $msgtype "CLR_REQ"] } {
+				logscr "Sending another Clr Cmd"
+				StopClrCmplteTimerByLink $spcstkidcid
+				# Send another Clear Command and restart timer
+				SendClrCmdSpcStkIdCid $spcstkidcid [list 6 0 [rd _sigpdu cause]]
+			}
+		} else {
+			log "NoInstanceSccpHdl: Stopping timer for link $spcstkidcid (CLR_CMPLT)"
+			#remcmd $_bssappid "StopClrCmplteTimerByLink $spcstkidcid"
+			StopClrCmplteTimerByLink $spcstkidcid
+			if { [string compare $_sig "SCCP_N_DISCONNECT_IND"] } {
+				SendSccpNDisconnectReq $spcstkidcid "?"
+			}
+		}
+	} else {
+		if { [string compare $primName "SCCP_N_DISCONNECT_IND"] } {
+			set spc [rd _sig Spc]
+			set stkid [rd _sig StkId]
+			set cid [rd _sig Cid]
+			logscr "NoInstanceSccpHdl WARNING: No Instance found for $primName"
+			logscr "NoInstanceSccpHdl Spc = $spc StkId = $stkid Cid = $cid"
+		} else {
+			log "NoInstanceSccpHdl: Stopping timer for link $spcstkidcid (SCCP_N_DISCONNECT_IND)"
+			#remcmd $_bssappid "StopClrCmplteTimerByLink $spcstkidcid"
+			StopClrCmplteTimerByLink $spcstkidcid
+			SendSccpNDisconnectReq $spcstkidcid "?"
+		}
+	}
+}
+
+#set global variable glBssapPlmn with PLMN-Id in HEXSTR format
+#return value: glBssapPlmn
+proc RetrievePLMN { } {
+	global __bssap_plmn glBssapPlmn
+
+	if { [info exists __bssap_plmn] } {
+		set glBssapPlmn $__bssap_plmn
+	} else {
+		global __MCC __MNC
+		if { [info exists __MCC] &&  [info exists __MNC] } {
+			set glBssapPlmn [GetPLMN $__MCC $__MNC]
+		} else {
+			logscr "__bssap_plmn not defined. Please define MCC and MNC for the network under simulation"
+			exit
+		}
+	}
+
+	log "RetrievePLMN: glBssapPlmn=$glBssapPlmn"
+	return $glBssapPlmn
+}
+
+proc SendOverload { args } {
+
+    new OVERLD s
+    # O & M intervention
+
+	if { [llength $args] == 0 } {
+	    wr s cause 07
+	} else {
+		wr s cause [lindex $args 0]
+	}
+
+	SendSccpNUnitdataReq $s
+}
+
+proc IsOpcGsLink { opc } {
+	global glBscDb __net_side
+	
+	if { ![string compare $__net_side "cn"] } {
+		if { [DbKeyExists $glBscDb Dpc $opc] } {
+			set linksetid [DbGetIdx $glBscDb Dpc $opc]
+			set gsLink [DbGet $glBscDb $linksetid GsLink]
+			return $gsLink
+		} else {
+			abort "Opc $opc Not Found in SS7 Db"	
+		}
+	} elseif { ![string compare $__net_side "bss"] } {
+		global __dummy_sgsn
+		if { [info exist __dummy_sgsn] && $__dummy_sgsn } {
+			return 1
+		} else {
+			return 0
+		}
+	} else {
+		abort "IsOpcGsLink: unknown net side = $__net_side"
+	}
+}
+
+##############################################################
+# CICs HANDLER
+##############################################################
+
+proc GetExtCic { bscId cic } {
+	append res $bscId
+	append res "-"
+	append res $cic
+	log "GetExtCic: extended cic= $res"
+
+	return $res
+}
+
+proc GetBscIdByExtCic { cic_ext } {
+	if { ![IsVoid $cic_ext] } {
+		return [lindex [split $cic_ext -] 0]
+	} else {
+		return "?"
+	}
+}
+
+proc GetCicByExtCic { cic_ext } {
+	if { ![IsVoid $cic_ext] } {
+		return [lindex [split $cic_ext -] 1]
+	} else {
+		return "?"
+	}
+}
+
+proc IsCicUsed { cic_ext dbField } {
+
+	global __net_side gBscIdList glBssapDb
+
+	set res "-1"
+
+	if { ![string compare $__net_side "cn"] } {
+		# Search for the cic on all BSCs
+		foreach bscId $gBscIdList {
+			set cic [lindex [split $cic_ext -] 1]
+			log "IsCicUsed: cic=$cic"
+			if { ![IsEmpty $cic] } {
+				log "IsCicUsed: dbField=$dbField; cic_ext=$cic_ext --> cicBycicExt=$cic"; #cDEBUG
+		
+				if { [DbKeyExists $glBssapDb $dbField $cic_ext] } {
+					set idx [DbGetIdx $glBssapDb $dbField $cic_ext]
+					log "IsCicUsed: found idx=$idx about cic_ext=$cic_ext"
+
+					if { ![DbKeyExists $glBssapDb Cic $cic] } {
+						log "IsCicUsed: ERROR: Cic doesn't exist while CicExt exists !!!"
+						return $res
+					} 
+
+					return $idx
+				}
+			}
+		}
+	} elseif { ![string compare $__net_side "bss"] } {
+		if { ![IsEmpty [lindex [split $cic_ext -] 1]] } {
+			log "IsCicUsed: dbField=$dbField; cic_ext=$cic_ext --> cic=[lindex [split $cic_ext -] 1]"; #cDEBUG
+			if { [DbKeyExists $glBssapDb $dbField $cic_ext] } {
+				set idx [DbGetIdx $glBssapDb $dbField $cic_ext]
+				log "IsCicUsed: found idx=$idx about cic_ext=$cic_ext"
+				return $idx
+			}
+		}
+	} else {
+		logscr "IsCicUsed: WARNING"
+	}
+	return $res
+}
+
+proc GetActiveCicsList { } {
+
+	global glBssapDb glMsDb
+
+	set cic_list ""
+	LogDbField $glBssapDb CicExt; #cDEBUG
+	#LogDbField $glBssapDb Cic; #cDEBUG
+	foreach msid [DbGetIndexList $glBssapDb] {
+        set cicExt [DbGet $glBssapDb $msid CicExt]
+		if { ![IsVoid $cicExt] } {
+			log "GetActiveCicsList: msid=$msid --> cicExt=$cicExt"
+			# Check if call is in progress 
+			set idx [IsCicUsed $cicExt CicExt]
+		} else {
+			set idx "-1"
+		}
+
+		if { $idx != "-1" } {
+			set cic [lindex [split $cicExt -] 1]
+			# Check if there are calls what mustn't be released (Carlo 28/09/2011: feature for ASB Shanghay)
+			if { ![DbFieldExists $glMsDb ResNotRel] || ![IsVoid [DbGet $glMsDb $idx ResNotRel]] && ![DbGet $glMsDb $idx ResNotRel] } {
+				if { $cic_list != "" } {
+					append cic_list ","
+				}
+				append cic_list $cic
+			} else {
+				log "GetActiveCicsList: WARNING: cic=$cic about msid=$msid isn't released because the field 'ResNotRel' in the MsDb is equal to 1"
+			}
+		}
+	}
+	return $cic_list
+}
+
+##############################################################
+# IP user plane handling
+##############################################################
+
+proc InitPortNum { } {
+
+	global glPort __net_side
+	if {[string equal $__net_side "cn"] } {
+		set glPort 49152
+	} else {
+		set glPort 49154
+	}
+}
+
+proc GetAUPoIPPort { } {
+
+	global glPort
+	if { ![info exists glPort] } {
+		InitPortNum
+	} else {
+		if { $glPort >= 65535 } {
+			InitPortNum
+		} else {
+			incr glPort 4
+		}
+	}
+	return $glPort
+}
+
+proc GetAUPoIPContainer { add port } {
+
+	set ipaddr [hocts [iptoui $add] 1 4]
+	log "ipaddr: $ipaddr"
+	set hexport [ustoh $port B]
+	log "hexport: $hexport"
+	append container $ipaddr $hexport
+	log "container: $container"
+	return $container
+}
+
+proc GetAUPoIPCallId { } {
+
+	global glCallid
+	if { ![info exists glCallid] } {
+		set glCallid 300
+	} else {
+		incr glCallid
+	}
+	return [uitoh $glCallid B]
+}
+
+proc GetCallIdList { oldValue {oldValueLen 0} {more_Reset ?} } {
+	
+	global glBssapDb 
+	
+	upvar 1 $more_Reset more_Reset_val
+	set call_list ""
+	set i 0
+	upvar 1 $oldValueLen maxCallListLength 
+	set more_Reset_val 0
+
+	foreach msid [DbGetIndexList $glBssapDb] {
+		set callid [DbGet $glBssapDb $msid CallId]
+		if { $msid == 0 } {
+			continue
+		}
+		if { ![IsVoid $callid] } {
+			#append call_list $callid
+			if { $i > 0 } {
+				append call_list $callid
+				incr maxCallListLength 4; #3gpp 48008-960 @3.2.2.106: call Identifier List may include from 1 up to 61 callIdentifier
+								  		  # with 4 octets for every call identifier; it keeps RESET_RESOURCE message below 255 octets.						# in pratica il nostro SS7-SCCP supporta max 247 ottetti (~ 61 interi -> 244 Bytes) come campo Data del msg UnitData.
+				incr more_Reset_val
+			} else {
+				set call_list $callid
+				incr maxCallListLength 4
+				incr more_Reset_val
+			}
+			incr i
+		}
+		if { $oldValueLen >= 244 } {
+			break
+		}
+	}
+
+	set more_Reset_val [expr {$more_Reset_val + $oldValue}]
+	log "GetCallIdList: call_list=$call_list; oldValueLen=$oldValueLen; more_Reset_val=$more_Reset_val"
+	return $call_list
+}
+
+proc GetCallIdListFromSig { calllist } {
+
+	if { [IsVoid $calllist] } {
+		return "?"
+	}
+
+	set res ""
+	for { set i 0 } { $i <= 255 } { incr i 4 } {
+		set j [expr {$i + 3}]
+		set callidH [hocts $calllist $i $j]
+		if { $callidH == "" } {
+			return $res
+		}
+		lappend res $callidH
+	}
+	
+	return $res
+}
+
+proc GetCallIdListForResetIpResource { oldValue {more_Reset ?} } {
+
+	global glMsDb glBssapDb
+
+	upvar 1 $more_Reset moreReset_val
+
+	set call_list ""
+	set call_maxListLength 0
+	set moreReset_val 0
+	set i 0
+
+	log "GetCallIdListForResetIpResource: oldValue=$oldValue"
+
+    foreach msid [DbGetIndexList $glBssapDb] {
+		incr i
+		if { $msid == 0 || ![IsVoid $oldValue] && $oldValue != 0 && $i <= $oldValue } {
+			# in case of oldValue != void, for these mobiles the RESET RESOURCE has already been sent
+			continue
+		}
+
+		if { ![DbFieldExists $glMsDb ResNotRel] || ![IsVoid [DbGet $glMsDb $msid ResNotRel]] && ![DbGet $glMsDb $msid ResNotRel] } {
+			set callid [DbGet $glBssapDb $msid CallId]
+			if { ![IsVoid $callid] } {
+				append call_list $callid
+				incr call_maxListLength 4; #3gpp 48008-960 @3.2.2.106: call Identifier List may include from 1 up to 61 callIdentifier
+										  # with 4 octets for every call identifier; it keeps RESET_RESOURCE message below 255 octets.
+				# in pratica il nostro SS7-SCCP supporta max 247 ottetti (~ 61 interi -> 244 Bytes) come campo Data del msg UnitData.
+				incr moreReset_val
+			}
+			if { $call_maxListLength >= 244 } {
+				break
+			}
+		}
+	}
+	set moreReset_val [expr {$moreReset_val + $oldValue}]
+	log "GetCallIdListForResetIpResource: call_list=$call_list"
+	log "call_maxListLength=$call_maxListLength; moreReset_val=$moreReset_val"
+	return $call_list
+}
+
+proc GetCallIdSeparatedList { oldValue {more_Reset ?} } {
+
+	global glMsDb glBssapDb
+
+	upvar 1 $more_Reset more_Reset_val
+	
+	set i 0
+	set k 0
+	set maxCallListLength 0
+	set more_Reset_val 0
+
+	log "GetCallIdSeparatedList: **** oldValue=$oldValue ****"
+
+    foreach msid [DbGetIndexList $glBssapDb] {
+		incr k
+		#log "k=$k; msid=$msid; oldValue=$oldValue"
+		if { $msid == 0 } {
+			continue
+		}
+
+		if { ![DbFieldExists $glMsDb ResNotRel] || ![IsVoid [DbGet $glMsDb $msid ResNotRel]] && ![DbGet $glMsDb $msid ResNotRel] } {
+			set callid [DbGet $glBssapDb $msid CallId]
+			if { ![IsVoid $callid] } {
+				log "callid=$callid"
+				if { ![IsVoid $oldValue] && $oldValue != 0 && $k <= $oldValue } {
+					# mobiles already considered
+					continue
+					log ">>>>> continue: msid=$msid"
+				}
+				if { $i > 0 } {
+					append call_list " "
+					append call_list $callid
+					incr maxCallListLength 4; #3gpp 48008-960 @3.2.2.106: call Identifier List may include from 1 up to 61 callIdentifier
+										      # with 4 octets for every call identifier; it keeps RESET_RESOURCE message below 255 octets.
+				     # in pratica il nostro SS7-SCCP supporta max 247 ottetti (~ 61 interi -> 244 Bytes) come campo Data del msg UnitData.
+					incr more_Reset_val
+				} else {
+					set call_list $callid
+					incr maxCallListLength 4
+					incr more_Reset_val
+				}
+				incr i
+			} else {
+				incr k -1
+			}
+			if { $maxCallListLength >= 244 } {
+				log ">>>>> ESCO DAL CICLO WHILE"
+				break
+			}
+		} else {
+			incr k -1
+		}
+		#log "---> k=$k; i=$i"
+	}
+
+	if { $more_Reset_val == 0 } {
+		# all the call have been released
+		set call_list ""
+	}
+
+	set more_Reset_val [expr {$more_Reset_val + $oldValue}]
+	log "GetCallIdSeparatedList: call_list=$call_list"
+	log "maxCallListLength=$maxCallListLength; more_Reset_val=$more_Reset_val"
+	return $call_list
+}
+
+proc GetMsIdListFromCallIdList { call_list } {
+
+	set msList ""
+
+	foreach res $call_list {
+		#log "GetMsIdListFromCallIdList: res=$res"; #cDEBUG
+		if { [DbKeyExists $::glBssapDb CallId $res] } {
+			set idx [DbGetIdx $::glBssapDb CallId $res]
+			#log "GetMsIdListFromCallIdList: --> idx=$idx"; #cDEBUG
+				lappend msList $idx
+		} else {
+			log "GetMsIdListFromCallIdList: Cannot find resource: $res in the BssapDb"
+		}
+	}
+	return $msList
+}
+
+proc GetMsIdFromCic { cic } {
+
+	set ms ""
+
+	log "GetMsIdFromCic: cic=$cic"
+	if { [DbKeyExists $::glBssapDb Cic $cic] } {
+		set idx [DbGetIdx $::glBssapDb Cic $cic]
+		log "GetMsIdFromCic: --> idx=$idx"
+			lappend ms $idx
+	} else {
+		log "GetMsIdFromCic: Cannot find resource: $cic in the BssapDb"
+	}
+	return $ms
+}
+
+# resType possible values: 'CallId' for IP and 'Cic' for TDM.
+proc GetMsIdSeparatedList { list resType } {
+
+	set i 0
+
+	if { $resType == "CallId" } {
+		set len [llength  $list ]
+	} else {
+		# case resType == "Cic"
+		set len [llength [split $list ","]]
+	}
+
+	log "GetMsIdSeparatedList: len=$len; resType=$resType"
+
+	if { !$len } {
+		logv4 "GetMsIdSeparatedList: ERROR: TDM resources not found"
+		set msList ?
+	}
+
+	for {set j 0} {$j < $len} {incr j} {
+		if { $resType == "CallId" } {
+			set res [lindex  $list  $j]
+		} else {
+			set res [lindex [split $list ","] $j]
+		}
+
+		log "GetMsIdSeparatedList: res=$res"
+		if { [DbKeyExists $::glBssapDb $resType $res] } {
+			set idx [DbGetIdx $::glBssapDb $resType $res]
+			log "GetMsIdSeparatedList: --> idx=$idx"
+			if { $i > 0 } {
+				append msList "," $idx
+			} else {
+				set msList $idx
+			}
+			incr i
+		} else {
+			log "GetMsIdSeparatedList: Cannot find TDM resource: $res in the BssapDb"
+			set msList ?
+		}
+	}
+	return $msList
+}
+
+proc GetIpAddressFromContainer { container } {
+
+	set name "GetIpAddressFromContainer"
+	Trace "log" $::__trace_AUoIP $name "aoip_tla=$container"
+	if { ![IsVoid $container] && ![IsEmpty $container] } {
+		set ipadd [htoip [hocts $container 0 3]]
+		Trace "log" $::__trace_AUoIP $name "ipadd: $ipadd"
+		return $ipadd
+	} else {
+		abort "GetIpAddressFromContainer: ERROR -> aoip_tla is empty or void"  
+	}
+}
+
+proc GetUdpPortFromContainer { container } {
+	set port [htous [hocts $container 4 5] B]
+	Trace "log" $::__trace_AUoIP "GetUdpPortFromContainer" "port: $port"
+	return $port
+}
+
+proc InitAUoIPPpu { } {
+	
+	set len [llength $::__aoip_ppu_list]
+	set minPpu 129; # 0x80: vedi nota sotto max 128
+
+	for {set i 0} {$i<$len} {incr i} {
+		set ppu [lindex $::__aoip_ppu_list $i]
+		if { $ppu < $minPpu } {
+			# Carlo 30/03/2011: attualmente max ppu virtuale nel multicore è 0x80=128d
+			set minPpu $ppu
+		}
+	}
+	log "InitAUoIPPpu: minPpu=$minPpu"; #cDEBUG
+
+	# Carlo 30/03/2011: HARDCODED to the case of 4 PPUs reali/virtuali --> TODO generalization
+	array set ::glPpuIdNumb {
+	0 0
+	1 0
+	2 0
+	3 0
+	4 0
+	5 0
+	6 0
+	7 0
+	}
+
+	array set ::glmaxNumbForPpu {
+	0 0
+	1 0
+	2 0
+	3 0
+	4 0
+	5 0
+	6 0
+	7 0
+	}
+
+	if { [array size ::glPpuIdNumb] != $len } {
+		log "InitAUoIPPpu: ATTENTION: length glPpuIdNumb=[array size ::glPpuIdNumb] while length of aoip_ppu_list=$len"
+	}
+
+	foreach {PpuId Numb} [array get ::glPpuIdNumb] {
+		if { $minPpu > $PpuId } {
+			set minPpu $PpuId
+		}
+	}
+	return $minPpu
+}
+
+proc GetAUoIPPpu { } {
+
+	global glPpuIdNumb
+
+	set name "GetAUoIPPpu"
+
+	if {![info exists glPpuIdNumb] } {
+		set ppuId [InitAUoIPPpu]
+		set ::glminorPpuId $ppuId
+		set ::glmaxNumbForPpu($ppuId) $glPpuIdNumb($ppuId)
+		Trace "log" $::__trace_AUoIP $name "ppuId=$ppuId; glminorPpuId=$::glminorPpuId; glmaxNumbForPpu($ppuId)=$::glmaxNumbForPpu($ppuId)"
+	} else {
+		foreach {PpuId Numb} [array get glPpuIdNumb] {
+			Trace "log" $::__trace_AUoIP $name "PpuId: $PpuId Numb: $Numb"
+			Trace "log" $::__trace_AUoIP $name "glPpuIdNumb($PpuId)=$glPpuIdNumb($PpuId) is >? than glmaxNumbForPpu($PpuId)=($::glmaxNumbForPpu($PpuId))+1"
+
+			if { $glPpuIdNumb($PpuId) > [expr {$::glmaxNumbForPpu($PpuId) + 1}] } {
+				set ::glmaxNumbForPpu($PpuId) $glPpuIdNumb($PpuId)
+				Trace "log" $::__trace_AUoIP $name "PpuId=$PpuId; glminorPpuId=$::glminorPpuId; glmaxNumbForPpu($PpuId)=$::glmaxNumbForPpu($PpuId)"
+
+				if { $::glminorPpuId == $PpuId } {
+					incr ::glminorPpuId
+					Trace "log" $::__trace_AUoIP $name "glminorPpuId=$::glminorPpuId"
+				}
+			} else {
+				# almeno due RtpId cioe una connessione tra due mobili per ogni PPU prima di incrementare la PPU
+				Trace "log" $::__trace_AUoIP $name "glPpuIdNumb: glMsId=$::glMsId"
+			}
+		}
+		set ::glminorPpuId [expr {int([expr {fmod($::glminorPpuId,[llength $::__aoip_ppu_list])}])}]
+		set ppuId $::glminorPpuId
+	}
+	incr glPpuIdNumb($ppuId)
+	
+	Trace "log" $::__trace_AUoIP $name "ppuId=$ppuId --> glPpuIdNumb($ppuId)=$glPpuIdNumb($ppuId)"
+	Trace "log" $::__trace_AUoIP $name "returned mod [llength $::__aoip_ppu_list] value of ppuId=$ppuId"
+
+	return $ppuId
+}
+
+#la seguente potrebbe dare casini nel caso multiprocess con multiple PPUs or PPU different from the MPU se la ppuid non è gia settata.
+proc MultiPpuAssign { } {
+
+	global glMsId glBssapDb
+
+	set len [llength $::__aoip_ppu_list]
+	Trace "log" $::__trace_AUoIP "MultiPpuAssign" "length of __aoip_ppu_list=$len; __aoip_ppu_list(0)=[lindex $::__aoip_ppu_list 0]"
+	if { $len > 1 || $len == 1 && [lindex $::__aoip_ppu_list 0] != 0 } {
+		# case of multiple PPUs or PPU different from the MPU
+		set ppuId [GetAUoIPPpu]
+		
+		for {set i 0} {$i<$len} {incr i} {
+			#Carlo: next Log affects strongly the test manager performace. Use in debug test only!!!
+			#LogDbRecordsFromFieldValue $glBssapDb PpuId $ppuId
+		}
+
+		DbSet $glBssapDb $glMsId PpuId $ppuId
+	} elseif { $len == 1 && [lindex $::__aoip_ppu_list 0] == 0 } {
+		# use LSUv3C
+		array set ::glPpuIdNumb {
+		0 0
+		}
+		DbSet $glBssapDb $glMsId PpuId 0
+	} else {
+		log "MultiPpuAssign: WARNING: to check in the cfg file the '__aoip_ppu_list' variable"
+	}
+}
+
+proc MultiPpuRelease { {msId ?} } {
+
+	if { [IsVoid $msId] } {
+		set msid $::glMsId
+	} else {
+		set msid $msId
+	}
+
+	set ppuId [DbGet $::glBssapDb $msid PpuId]
+	DbSet $::glBssapDb $msid PpuId "?"
+
+	set len [llength $::__aoip_ppu_list]
+	if {![IsVoid $ppuId]} {
+		if { $::glPpuIdNumb($ppuId) >= 1 } {
+			incr ::glPpuIdNumb($ppuId) -1
+			incr ::glmaxNumbForPpu($ppuId) -1
+			log "MultiPpuRelease: DEBUG: ppuId=$ppuId; glPpuIdNumb=$::glPpuIdNumb($ppuId); glmaxNumbForPpu=$::glmaxNumbForPpu($ppuId)"
+		} else {
+			if { $len == 1 && [lindex $::__aoip_ppu_list 0] == 0 } {
+				# Carlo: in qs caso vi e' solo un unica ppu per cui nn mi interessa tenere traccia del num di connex su ciascuna ppu
+				Trace "log" $::__trace_AUoIP "MultiPpuRelease" "LSUv3C case"
+			} else {
+				log "MultiPpuRelease: WARNING: glPpuIdNumb($ppuId)=$::glPpuIdNumb($ppuId) must be bigger than 0"
+			}
+		}
+	}
+}
+
+proc MultiPpuHandler { {msId ?} } {
+
+	global glMsId glBssapDb
+
+	if { [CnSide] } {
+		if { [IsVoid $msId] } {
+			set ppuId [DbGet $glBssapDb $glMsId PpuId]
+		} else {
+			# msId is the peerId
+			set ppuId [DbGet $glBssapDb $msId PpuId]
+		}
+	} else {
+		set ppuId 0; # utran side I use only the MPU 
+	}	
+	return $ppuId
+}
+
+#### RTCP: to see RFC 3551 p.8 "Port Assignment" #####
+# Carlo: RTP Multiplexing Port must be always even: to see 3gpp 29414-900 §7.3
+#(invece la porta del RTCP e' dispari)
+proc GetLocMuxPort { rem_add } {
+
+	global remoteAddrList glFirst
+
+	log "GetLocMuxPort: RTP port: rtpRemoteAddr=$rem_add"
+
+	set name "GetLocMuxPort"
+	set aoip_address_len 	[llength $::__aoip_address]
+	set aoip_ppu_list_len	[llength $::__aoip_ppu_list]
+
+	log "GetLocMuxPort: aoip_address_len=$aoip_address_len; aoip_ppu_list_len=$aoip_ppu_list_len"
+	Trace "log" $::__trace_AUoIP $name "aoip_address_len=$aoip_address_len; aoip_ppu_list_len=$aoip_ppu_list_len"
+
+	if { $aoip_address_len != $aoip_ppu_list_len } {
+	 	log "GetLocMuxPort: ERROR: to check in the cfg file the values of __aoip_address and of __aoip_ppu_list"
+		log "__aoip_address=$::__aoip_address"
+		log "__aoip_ppu_list=$::__aoip_ppu_list"
+	}
+
+	if { $glFirst } {
+		lappend remoteAddrList $rem_add
+		set glFirst 0
+	} else {
+		Trace "log" $::__trace_AUoIP $name "rem_add=$rem_add; remoteAddrList=$remoteAddrList"
+		if { [lsearch $remoteAddrList $rem_add] == -1 } {
+			lappend remoteAddrList $rem_add
+		} else {
+			log "GetLocMuxPort: $rem_add already present in the remoteAddrList=$remoteAddrList"
+		}
+	}	
+
+	if { ![IsVoid $remoteAddrList] && ![IsEmpty $remoteAddrList] } {
+		set remoteAddrListLen [llength $remoteAddrList]
+	} else {
+		log "GetLocMuxPort: ERROR - no values included in the remoteAddrList"
+	}
+
+	Trace "log" $::__trace_AUoIP $name "remoteAddrList=$remoteAddrList; remoteAddrListLen=$remoteAddrListLen"
+
+	if { $remoteAddrListLen == 1 } {
+		set ::glmuxLocPort [InitRtpMuxPort]
+		set ::glMsNumbForMuxPort($::glmuxLocPort) 1
+	} else {
+		# Carlo : 4500 [Erl] --> max number RTP Mux Port is 74 (148/2) with about 60 Ms multiplexed each time
+		if { [lsearch $remoteAddrList $rem_add] == -1 } {
+			if { $::glmuxLocPort <= 49148 } {
+				incr ::glmuxLocPort 2
+				set ::glMsNumbForMuxPort($::glmuxLocPort) 1
+				Trace "log" $::__trace_AUoIP $name "glmuxLocPort=$::glmuxLocPort --> glMsNumbForMuxPort($::glmuxLocPort)=$::glMsNumbForMuxPort($::glmuxLocPort)"
+			} else {
+				logscr "GetLocMuxPort: WARNING: the max number of UDP ports for the Multiplexer has been reached !"
+				exit
+			}
+		} else {
+			# case of the remote ip address found in the list
+			set indexRemAddList [lsearch $remoteAddrList $rem_add]
+			set index [expr {49000 + [expr {$indexRemAddList * 2}]}]; # indice array
+			set ::glmuxLocPort $index
+			incr ::glMsNumbForMuxPort($index)
+			Trace "log" $::__trace_AUoIP $name "indexRemAddList=$indexRemAddList; index=$index -> glmuxLocPort=$::glmuxLocPort; glMsNumbForMuxPort($index)=$::glMsNumbForMuxPort($index)"
+		}
+	}
+
+	Trace "log" $::__trace_AUoIP $name "glmuxLocPort=$::glmuxLocPort"
+	return $::glmuxLocPort
+}
+
+proc InitRtpMuxPort { } {
+
+	set ::glmuxLocPort 49000
+
+	# this global variable contains the number of mobiles for each Mux Rtp port: initialization of all 74 port
+	for {set i 0} {$i <= 49148} {incr i 2} {
+		set ::glMsNumbForMuxPort($i) 0
+	}
+	return $::glmuxLocPort
+}
+
+###############
+# only for CN side
+proc UPoIPcnSet { aoipMgwAddr port callid { ipAddIndex ? } } {
+
+	global glIpAddIndex __aoip_address glBssapDb
+
+	set name "UPoIPcnSet"
+
+	upvar 1 $aoipMgwAddr aoipMgwAddr_val
+	upvar 1 $port port_val
+	upvar 1 $callid callid_val
+	
+	set port_val [GetAUPoIPPort]
+	set callid_val [GetAUPoIPCallId]
+	#set aoipMgwAddr_val $__aoip_address
+
+	if { ![IsVoid $ipAddIndex] } {
+		set glIpAddIndex $ipAddIndex
+	} else {
+		# Carlo case of LSU Compact -workaround- to be tested-
+		Trace "log" $::__trace_AUoIP $name "LSU Compact case"
+		set glIpAddIndex 0
+	}
+
+	Trace "log" $::__trace_AUoIP $name "glIpAddIndex = $glIpAddIndex, ip number is [llength $__aoip_address]"
+	
+	set aoipMgwAddr_val [lindex $__aoip_address $glIpAddIndex]
+
+	# TMA-425 -start-
+	while { [DbKeyExists $glBssapDb IpAddPort $aoipMgwAddr_val-$port_val] } {
+		log "UPoIPcnSet: Port=$port_val already assigned"
+		set port_val [GetAUPoIPPort]
+	}
+	while { [DbKeyExists $glBssapDb CallId $callid_val] } {
+		log "UPoIPcnSet: CallId=$callid_val already assigned"
+		set callid_val [GetAUPoIPCallId]
+	}
+	# -end-
+
+	log "Assigned MGW IP Address is $aoipMgwAddr_val"
+	incr glIpAddIndex
+	if { $glIpAddIndex > [expr {[llength $__aoip_address] - 1}] } {
+		Trace "log" $::__trace_AUoIP $name "glIpAddIndex = $glIpAddIndex,greater than ip number:[llength $__aoip_address] -1,set glIpAddIndex 0"
+		set glIpAddIndex 0
+	} else {
+		Trace "log" $::__trace_AUoIP $name "glIpAddIndex = $glIpAddIndex,less than ip number:[llength $__aoip_address] -1"
+	}
+}
+
+proc UPoIPcnGet { aupoip_container ip_add port } {
+
+	upvar 1 $ip_add ip_add_val
+	upvar 1 $port port_val
+
+	set ip_add_val [GetIpAddressFromContainer $aupoip_container]
+	set port_val [GetUdpPortFromContainer $aupoip_container]
+
+	Trace "log" $::__trace_AUoIP "UPoIPcnGet" "ip_add_val=$ip_add_val; port_val=$port_val"
+}
+
+###########################
+proc ActivateAoipResources { loc_ip_add loc_port des_ip_add des_port } {
+
+	global glBssapDb glMsId
+
+	set name "ActivateAoipResources"
+
+	#set speech_ver 0x[hocts [DbGet $glBssapDb $glMsId SpeechVer] 0 0]
+
+	#Trace "log" $::__trace_AUoIP $name "speech_ver=$speech_ver"
+
+	#set codecType [expr {$speech_codec & 0x0f}]
+	#set codecType 0
+	set pt 96
+	# 0 = gsm fr
+	# 1 = gsm hr
+	# 2 = gsm efr
+	# 3 = amr fr
+	# 4 = amr hr
+	# 9 = amr wb
+
+	#Trace "log" $::__trace_AUoIP $name "SpeechVer=$SpeechVer"
+
+	# Carlo: FR Payload Type is set 96 as required by Comba
+	#switch -exact -- $codecType {
+	#	"0"    { set pt 96 }
+	#	"1"    { set pt 111 }
+	#	"2"    { set pt 110 }
+	#	"3"    { set pt 112 }
+	#	"4"    { set pt 112 }
+	#	"9"    { set pt 113 }
+	#	default { logscr "Unexpected codecType = $codecType" ; exit}
+	#}
+
+	if { [info exists ::__RTCP_active] && $::__RTCP_active } {
+		if { $::__RTCP_active == 1 } {
+			log "ActivateAoipResources: RTCP is active"
+		} elseif { $::__RTCP_active == 2 } {
+			log "ActivateAoipResources: RTCP is active but it is started by peer (ASB feature)."
+		} else {
+			log "ActivateAoipResources: WARNING: unexpected value (__RTCP_active=$::__RTCP_active)"
+		}
+		set rtcp $::__RTCP_active
+
+		if { ![info exists ::__RTCP_void_reply] || !$::__RTCP_void_reply } {
+			set mux 1
+			log "ActivateAoipResources: RTCP with RTP Multiplexer activated"
+			if { [info exists ::__headerCompr] && $::__headerCompr } {
+				set cp 1
+				log "ActivateAoipResources: RTP Header Compression activated"
+			} else {
+				set cp 0
+			}
+		} else {
+			# RTP-8 (Carlo feature requered by ASB Shanghai): MGW should reply to BSC with 'void' RTCP with (MUXM = 0, CPM = 0, SELM = 00) 			  in case the MGW doesn't support the RTP multiplexing.
+			set rtcp [expr { $rtcp | 0x80 }]
+			log "ActivateAoipResources: __RTCP_void_reply=$::__RTCP_void_reply --> rtcp=$rtcp"
+			set mux 0
+			set cp 0
+		}
+
+		if { [info exists ::__RTCP_NULLAPP] && $::__RTCP_NULLAPP } {
+			# RTP-7 and TMA-463 (Carlo feature requered by ASB Shanghai): MGW sends RTCP with NULL 'Application Specific Data' field.
+			set rtcp [expr { $rtcp | 0x40 }]
+			log "ActivateAoipResources:  __RTCP_NULLAPP=$::__RTCP_NULLAPP --> rtcp=$rtcp"
+		} else {
+			log "ActivateAoipResources: __RTCP_NULLAPP doesn't exist or is equal to 0"
+		}
+
+		if { [info exists ::__aoip_rtp_No_Mux] } {
+			# Number of sent RTP pkt before start RTCP
+			set	rtpNoMux $::__aoip_rtp_No_Mux
+		} else {
+			set rtpNoMux 0
+		}
+		log "ActivateAoipResources: rtpNoMux=$rtpNoMux"
+		set locMuxPort [GetLocMuxPort $des_ip_add]
+	} else {
+		log "ActivateAoipResources: RTCP isn't active (exists__RTCP_active=[info exists ::__RTCP_active]; RTCP_active=$::__RTCP_active)"
+		set rtcp 0
+		set mux 0
+		set cp 0
+		set rtpNoMux 0
+		set locMuxPort 0
+	}
+	# Comba Ap side,one Tstm use one PPU for RTP
+	if { [info exists ::__aoip_ppu_list] } {
+		set ppuId [lindex $::__aoip_ppu_list 0]
+		log "ActivateAoipResources: ppuId=$ppuId"
+	} else {
+		logscr "RTP PPU is not defined,Please check cfg file"
+		exit
+	}
+
+	new RTP_OPEN_CMD s
+	wr s Inst 0
+	wr s Iti 20; # EXP_TimeStamp (calcolato ognivolta): Carlo RTP-4
+	wr s LocalAdd $loc_ip_add
+	wr s RemoteAdd $des_ip_add
+	wr s LocalPort $loc_port
+	wr s RemotePort $des_port
+	global __net_side
+	if {[string equal $__net_side "cn"] } {
+		wr s Mode 2
+	} else {
+		wr s Mode 1
+	}
+	wr s Pt $pt
+	wr s Freq 1000; # Timestamp clock frequency: 1000 cycles al sec <--> ms; [T=20ms]; (see email 28/04/11)
+	wr s RTCP_active $rtcp
+	wr s Mux $mux
+	wr s Cp $cp
+	wr s RtpNoMux $rtpNoMux
+	wr s LocMuxPort $locMuxPort
+	wr s Cname	"noname"
+	LogOutputMsg $s
+	send s
+}
+
+# this procedure allows to set the Syncronization Source field to a value different from random
+proc SyncronizationSourceSetting { } {
+
+	global _sig
+
+	# Retrieve from the RTP_OPEN_ACK
+	set inst  [rd _sig Inst]
+	set rtpId [rd _sig RtpId]
+
+	log "SyncronizationSourceSetting: rtpId=$rtpId; inst=$inst"
+
+	new RTP_CTRL_SET_SSRC_CMD s
+
+	wr s Inst 	$inst
+	wr s RtpId	$rtpId
+	wr s Ssrc 	$::__aoip_rtp_ssrc; #Syncronization Source
+
+	LogOutputMsg $s
+	send s
+}
+proc GetTypeFromSpeechVer { specVer } {
+	switch -exact -- $specVer {
+		"01"    { logscr "GSM speech full rate version 0" ;	set type "GSM_FR" }
+		"05"    { logscr "GSM speech half rate version 1" ; 	set type "GSM_HR" }
+		"11"    { logscr "GSM speech enhanced full rate version 2" ; 	set type "GSM_EFR" }
+		default { logscr "Unexpectec codecType = $codecType " ; exit }
+	}
+	return type
+}	
+proc ConfigureAoipResources { } {
+
+	global _sig glBssapDb glMsId __aoip_short_circuit glIuhDb
+ 
+	LogInputSig
+
+	set name "ConfireturngureAoipResources"
+
+	set rtpId [rd _sig RtpId]
+	set inst  [rd _sig Inst]
+	set rtpinst $rtpId-$inst
+
+	logv4 "ConfigureAoipResources: rtpId=$rtpId; inst=$inst --> rtpinst=$rtpinst"
+
+	# Check if rtpinst conflict#
+	if { ![DbKeyExists $glBssapDb RtpIdForPpuId $rtpinst] } {
+		DbSet $glBssapDb $glMsId RtpIdForPpuId $rtpinst
+	} else {
+		logscr "ConfigureAoipResources: ERROR: rtpinst=$rtpinst already exists in BssapDb for MsId=[DbGetIdx $glBssapDb RtpIdForPpuId $rtpinst]"
+		exit
+		}
+	set ppuId  $inst
+	# Choose file
+	if { [IsVoid [DbGet $glBssapDb $glMsId SpeechVer]] } {
+		logv4 "ConfigureAoipResources:FATAL ERROR: 'SpeechVer' field in the glBssapDb for the MsId=$glMsId is void"
+		LogDb $glBssapDb
+	}
+	#set speech_ver 0x[hocts [DbGet $glBssapDb $glMsId SpeechVer] 0 0 ]
+	
+	#set codecType [expr {$codec & 0x0f}]
+	#set codecType 0
+	#Trace "log" $::__trace_AUoIP $name "codecType=$codecType"
+	
+	#switch -exact -- $codecType {
+	#	"0"    { logscr "GSM speech full rate version 0" ;				set code "GSM_FR" }
+	#	"1"    { logscr "GSM speech half rate version 1" ; 				set code "GSM_HR" }
+	#	"2"    { logscr "GSM speech enhanced full rate version 2" ; 	set code "GSM_EFR" }
+	#	"3"    { logscr "AMR speech full rate version 3" ; 				set code "AMR_FR_122" }
+	#	"4"    { logscr "AMR speech half rate version 4" ; 				set code "AMR_HR_590" }
+	#	"9"    { logscr "AMR speech wide band version 9" ; 				set code "AMR_WB" }
+	#	default { logscr "Unexpectec codecType = $codecType " ; exit }
+	#}
+	# To support different Speech Code
+	set codetype [GetTypeFromSpeechVer [DbGet $glBssapDb $glMsId SpeechVer]]
+	log "ConfigureAoipResources: ----------  SpeechVer=$codetype  ----------------- "
+	set fid [remcmd $::_ompid "AoipGetFid $codetype"]	
+	
+	if { ![IsVoid $fid] } {
+		Trace "log" $::__trace_AUoIP $name "fid=$fid"
+		Trace "log" $::__trace_AUoIP $name "glMsId=$glMsId; CalledMsNum=[DbGet $::glMsDb $glMsId CalledMsNum]"
+		if { ![IsVoid [DbGet $::glMsDb $glMsId CalledMsNum]] } {
+			# Mobile Originating: in this case always it sounds the file by PLAY_OPEN
+			new RAB_OPEN_CMD s
+			wr s Inst $ppuId
+			wr s Id $rtpId
+			wr s Type 3; # Discard
+			wr s RabId 0
+			LogOutputMsg $s
+			send s
+
+			new PLAY_OPEN_CMD s
+			wr s Inst $ppuId
+			wr s Id $rtpId
+			wr s Fid $fid
+			wr s Iti 20
+			LogOutputMsg $s
+			send s
+		
+			new START_CMD s
+			wr s Inst $ppuId
+			wr s Id $rtpId
+			LogOutputMsg $s
+			send s
+			return 1
+		} else {
+			if { [info exists ::__aoip_redir_voice] && $::__aoip_redir_voice == 1 } {
+				# Mobile Terminating: case of reverse redirect
+				new RAB_OPEN_CMD s
+				wr s Inst $ppuId
+				wr s Id $rtpId
+				wr s Type 1; # reverse redirect
+				wr s RabId 0
+				LogOutputMsg $s
+				send s
+				return 2
+			} else {
+				# Mobile Terminating: case where it sounds the file therefore there is the PLAY_OPEN
+				new RAB_OPEN_CMD s
+				wr s Inst $ppuId
+				wr s Id $rtpId
+				wr s Type 3; # Discard
+				wr s RabId 0
+				LogOutputMsg $s
+				send s
+
+				new PLAY_OPEN_CMD s
+				wr s Inst $ppuId
+				wr s Id $rtpId
+				wr s Fid $fid
+				wr s Iti 20
+				LogOutputMsg $s
+				send s
+			
+				new START_CMD s
+				wr s Inst $ppuId
+				wr s Id $rtpId
+				LogOutputMsg $s
+				send s
+				return 1
+			}
+		}
+	} else {
+		logscr "Voice File ID is void, please check configuration"
+		return 0
+	}
+}
+
+proc ClearResources { index {type ?} } {
+
+	global glBssapDb
+
+	set name "ClearResources"
+	set rtpIdforPpu [DbGet $glBssapDb $index RtpIdForPpuId]
+	Trace "log" $::__trace_AUoIP $name "rtpIdforPpu=$rtpIdforPpu"
+	set rtpId [lindex [split $rtpIdforPpu -] 0]
+	set inst  [lindex [split $rtpIdforPpu -] 1]
+	set rtpinst $rtpId-$inst
+
+	Trace "log" $::__trace_AUoIP $name "type=$type; rtpId = $rtpId - ppuid=$inst --> rtpinst=$rtpinst"
+
+	if { ![IsVoid $rtpId] && ![IsVoid $inst] } {
+
+		set ppuId $inst
+	
+		# Carlo 22/04/2011: WORKAROUND for TMA-417 -----
+		if { [IsVoid $ppuId] } {
+	  		log "ClearResources: WARNING: riporto errore per debugging Carlo --> setto quindi uguale alla Inst della CLR_CMPLT ricevuta"
+			set ppuId $inst
+		}; # -----
+
+		Trace "log" $::__trace_AUoIP $name "index=$index; rtpId=$rtpId; PpuId=$ppuId"
+
+		#set speech_ver	[DbGet $glBssapDb $index SpeechVer]
+		set codetype [GetTypeFromSpeechVer [DbGet $glBssapDb $index SpeechVer]]
+		set fid [remcmd $::_ompid "AoipGetFid $codetype"]
+	
+		Trace "log" $::__trace_AUoIP $name "fid=$fid"
+		Trace "log" $::__trace_AUoIP $name "rtpinst=$rtpId-$ppuId"
+		if { [IsVoid $fid] || [MsSide] && [info exists ::__aoip_redir_voice] && $::__aoip_redir_voice == 1 } {
+			new RAB_CLOSE_CMD s
+			wr s Inst $ppuId
+			wr s Id $rtpId
+			LogOutputMsg $s
+			send s
+	
+			new RTP_CLOSE_CMD s
+			wr s Inst $ppuId
+			wr s RtpId $rtpId
+			LogOutputMsg $s
+			send s
+		} else {
+
+			new TERMINATE_CMD s
+			wr s Inst $ppuId
+			wr s Id $rtpId
+			LogOutputMsg $s
+			send s
+	
+			new PLAY_CLOSE_CMD s
+			wr s Inst $ppuId
+			wr s Id $rtpId
+			LogOutputMsg $s
+			send s
+	
+			new RAB_CLOSE_CMD s
+			wr s Inst $ppuId
+			wr s Id $rtpId
+			LogOutputMsg $s
+			send s
+	
+			new RTP_CLOSE_CMD s
+			wr s Inst $ppuId
+			wr s RtpId $rtpId
+			LogOutputMsg $s
+			send s
+		}
+	} else {
+		log "ClearResources: $glBssapDb cleanup of all IP parameters"
+		PartialResetIpParameters $index
+		ResetIpKeyParameters $index
+
+		}
+}
+
+proc RcvRabCloseAck { } {
+
+	global glMsId
+
+	LogInputSig
+
+	log "RcvRabCloseAck: glMsId=$glMsId"
+
+	#PartialResetIpParameters $glMsId ; # deleted (to see TMA-443 regarding issue EXT HOV)
+}
+
+proc RcvRtpCloseAck { } {
+
+	global _sig glMsId glBssapDb
+
+	LogInputSig
+
+	set rtpid [rd _sig RtpId]
+	set inst [rd _sig Inst]
+	
+	set rtpinst $rtpid
+	append rtpinst -
+	append rtpinst $inst
+	
+	log "RcvRtpCloseAck: rtpinst=$rtpinst --> glMsId=$glMsId"
+	
+	# Reset of the IP key parameters
+	ResetIpKeyParameters $glMsId ; # deleted (to see TMA-443 regarding issue EXT HOV)
+}
+
+# TMA-473
+proc RcvRtpCloseAckIdle { } {
+
+	RcvRtpCloseAck
+
+	PartialResetIpParameters $::glMsId
+	ResetIpKeyParameters $::glMsId
+}
+
+proc SwitchAoipResourcesAfterRtpCloseAck { } {
+
+	log "SwitchAoipResourcesAfterRtpCloseAck: glMsId=$::glMsId"
+
+	RcvRtpCloseAck
+
+	# Reset of the IP key parameters
+	ResetIpKeyParameters $::glMsId
+
+	SwitchAoipResources
+			
+	nextstate WaitRtpOpenAckHo
+}
+
+proc SwitchAoipResources { } {
+
+	global glBssapDb glMsId
+
+	#ClearResources $glMsId "SwitchAoipResources"; #TMA-455
+
+	set localIp		[DbGet $glBssapDb $glMsId HoLocalIp]
+	set localPort	[DbGet $glBssapDb $glMsId HoLocalPort]
+	set remoteIp	[DbGet $glBssapDb $glMsId HoDestIp]
+	set remotePort	[DbGet $glBssapDb $glMsId HoDestPort]	
+
+	DbSet $glBssapDb $glMsId LocalIp $localIp
+	DbSet $glBssapDb $glMsId LocalPort $localPort
+	DbSet $glBssapDb $glMsId IpAddPort $localIp-$localPort
+	DbSet $glBssapDb $glMsId DestIp $remoteIp
+	DbSet $glBssapDb $glMsId DestPort $remotePort
+
+	DbSet $glBssapDb $glMsId SpeechVer [DbGet $glBssapDb $glMsId HoSpeechVer]
+	DbSet $glBssapDb $glMsId SpeechCodec [DbGet $glBssapDb $glMsId HoSpeechCodec]
+	DbSet $glBssapDb $glMsId ServingUpType [DbGet $glBssapDb $glMsId TargetUpType]
+
+	ActivateAoipResources $localIp $localPort $remoteIp $remotePort
+}
+
+proc RcvAoipHovCmplt { } {
+
+	global glMsId glBssapDb
+
+	set upType		[DbGet $glBssapDb $glMsId UpType]
+	set tgtUpType	[DbGet $glBssapDb $glMsId TargetUpType]
+
+	if { $upType } {
+	# from IP to -->
+		if { $tgtUpType } {
+			# --> IP
+			ClearResources $glMsId 1
+			set result 1
+		} elseif { $tgtUpType == 0 } {
+			# --> TDM
+			ClearResources $glMsId
+			set result 0
+		}
+	} else {
+	# from TDM to -->
+		log "RcvAoipHovCmplt: case TDM -->"
+		if { $tgtUpType } {
+			# --> IP
+			ClearResources $glMsId 1
+			set result 1
+		} elseif { $tgtUpType == 0 } {
+			# --> TDM
+			log "RcvAoipHovCmplt: case TDM --> TDM"
+			set result 0
+		}
+	}
+	return $result
+}
+
+##############################################################
+# Mixed IP/TDM user plane handling
+##############################################################
+
+proc CheckCodecList { } {
+
+	set result ?
+
+	if { [MsSide] } {
+		set result [CheckMscPcl ? AoipBssScl]
+	} else {
+		log "CheckCodecList: ERROR : the side isn't Ms but we are in the bssap_bsc.tsm"
+	}
+	return $result
+}
+
+proc SetUpNumber { type } {
+
+	if { ![IsVoid $type] && $type == "TDM" } {
+		set res 0
+	} elseif { ![IsVoid $type] && $type == "IP" } {
+		set res 2
+	} elseif { ![IsVoid $type] && $type == "MIXED" } {
+		set res 1
+	} else {
+		log "SetUpNumber: ERROR: type=$type isn't supported"
+	}
+	return $res
+}
+
+proc upCheck { } {
+
+	global glBssapDb glMsId glAoip
+
+	set result ?
+
+	if { $glAoip } {
+		if { ![IsVoid [DbGet $glBssapDb $glMsId UpType]] } {
+			set result [DbGet $glBssapDb $glMsId UpType]
+		} else {
+			set result [CheckMscPcl]; # 0:TDM; 1:MIXED; 2:IP
+		}
+		if { [IsVoid $result] } {
+			log "upCheck: ERROR: result=$result"
+			LogDb $glBssapDb
+		}
+	} else {
+		log "upCheck: WARNING: to check the configuration: only in case of A over IP it is possible to use this proc"
+	}
+	
+	Trace "log" $::__trace_AUoIP "upCheck" "result=$result"	
+	return $result
+} 
+
+proc CheckMscPcl { {init ?} {codecList ?} } {
+
+	global glMsDb glMsId
+	
+	set name "CheckMscPcl"
+
+	if { ![IsVoid $init ] && $init } {
+		if { ![IsVoid $codecList] } {
+			set AoipCodecList $codecList
+		} elseif { [MsSide] } {
+			set AoipCodecList AoipBssScl
+		} else {
+			set AoipCodecList AoipMscPcl
+		}
+		logscr "CheckMscPcl: AoipCodecList=$AoipCodecList"; #cDEBUG
+
+		# done only during the init of the bssap_cn
+		if { [DbFieldExists $glMsDb $AoipCodecList] } {
+			# check if for at least 1 mobile the MSC preferred Codec List allowed the transport over TDM
+			foreach msid [DbGetIndexList $glMsDb] {
+				Trace "log" $::__trace_AUoIP $name "msid=$msid"
+				if { $AoipCodecList != "AoipTargetMscPcl" } {
+					set upTypeForMsId [UserPlaneTypeByCodec $msid]
+				} else {
+					log "DEBUG: compare MscPcl and targetMscPcl"	
+					set upTypeForMsId [UserPlaneTypeByCodec $msid $AoipCodecList]
+				}				
+
+				if { $init == 2 } {
+					set up_type [SetUpNumber $upTypeForMsId]
+					DbSet $::glBssapDb $msid UpType $up_type
+					DbSet $::glBssapDb $msid InitMscUpType $up_type
+					Trace "log" $::__trace_AUoIP $name "upType_saved_in_Db=[DbGet $::glBssapDb $msid UpType] for the msid=$msid"
+				}
+				
+				if { $upTypeForMsId == "TDM" } {
+					if { [info exists ::tdmAllowed] && $::tdmAllowed == 2 } {
+	 					# Mixed IP/TDM
+						set ::tdmAllowed 1
+						if { $init == 1 } {
+							break
+						}
+					} else {
+						# TDM
+						set ::tdmAllowed 0
+					}
+					log "CheckMscPcl: UP over TDM is allowed"
+				} elseif { $upTypeForMsId == "MIXED" } {
+					# Mixed IP/TDM
+					set ::tdmAllowed 1
+					if { $init == 1 } {
+						break
+					}
+				} else {
+					# this mobile in the cycle has UserPlane IP
+					if { [info exists ::tdmAllowed] && $::tdmAllowed == 0 } {
+						# Mixed IP/TDM
+						set ::tdmAllowed 1
+						if { $init == 1 } {
+							break
+						}
+					} else {
+						# IP
+						set ::tdmAllowed 2
+						#log "CheckMscPcl: UP over TDM is not allowed!"
+					}
+				}
+			}
+			if { [info exists ::tdmAllowed] } {
+				return $::tdmAllowed
+			} else {
+				log "CheckMscPcl: UserPlane over TDM isn't allowed!"
+	 			return 2
+			}	
+		} else {
+			log "CheckMscPcl: '$AoipCodecList' in the $glMsDb doesn't exist therefore only UP over TDM is allowed"
+			return 0
+		}
+	} else {
+		set upType [UserPlaneTypeByCodec]
+		if { [string equal $upType "TDM"] } {
+			log "CheckMscPcl: Only UP over TDM is allowed"
+			return 0
+		} else {
+			if { [string equal $upType "IP"] } {
+				# UP over IP is always allowed"
+				if { [info exists ::tdmAllowed] && !$::tdmAllowed } {
+					Trace "log" $::__trace_AUoIP $name "(::tdmAllowed=$::tdmAllowed)"
+					log "CheckMscPcl: Mixed IP/TDM user plane are allowed"
+					return 1
+				} elseif { [info exists ::tdmAllowed] && $::tdmAllowed == 1 } {
+					Trace "log" $::__trace_AUoIP $name "(::tdmAllowed=$::tdmAllowed)"
+					log "CheckMscPcl: Mixed IP/TDM"
+					return 1
+				} elseif { [info exists ::tdmAllowed] && $::tdmAllowed == 2 } {
+					Trace "log" $::__trace_AUoIP $name "(::tdmAllowed=$::tdmAllowed)"
+					log "CheckMscPcl: UP over TDM isn't allowed"
+					return 2; #IP
+				} else {
+					log "CheckMscPcl: UP over TDM is not allowed!"
+					return 2 ; #IP
+				}
+			} elseif { [string equal $upType "MIXED"] } {
+				log "CheckMscPcl: Mixed IP/TDM user plane is allowed"
+				return 1
+			} else {
+				log "CheckMscPcl: ERROR"
+			}
+		}
+	}
+}
+
+proc UserPlaneTypeByCodec { {msid ?} {tgtMscPcl ?} } {
+
+	global glMsDb glMsId
+
+	if { ![IsVoid $msid] } {
+		set msId $msid
+	} else {
+		set msId $glMsId
+	}
+
+	if { [MsSide] } {
+		set AoipCodecList AoipBssScl
+	} else {
+		if { [IsVoid $tgtMscPcl] } {
+			set AoipCodecList AoipMscPcl
+		} else {
+			log "UserPlaneTypeByCodec: DEBUG: compare between AoipMscPcl and TargetMscPcl"
+			set AoipCodecList AoipTargetMscPcl
+		}
+	}
+	
+	set tranportType	[GetUpFromCodec $msId $AoipCodecList]
+
+	return $tranportType
+}
+
+proc GetUpFromCodec { msId {AoipCodecListName ?} {AoipCodecList ?} } {
+
+	global glMsDb
+
+	set name "GetUpFromCodec"
+	set transport "?"
+
+	if { [DbEntryExists $glMsDb $msId] } {
+		if { [DbFieldExists $glMsDb $AoipCodecListName] && \
+			![IsEmpty [DbGet $glMsDb $msId $AoipCodecListName]] && \
+			![IsVoid [DbGet $glMsDb $msId $AoipCodecListName]] || \
+			![IsVoid $AoipCodecListName] && ![IsEmpty $AoipCodecListName] && \
+			$AoipCodecListName == 0 && ![IsVoid $AoipCodecList] } {
+
+			if { ![IsVoid AoipCodecListName] } {
+				if { $AoipCodecListName != 0 } {
+					set codeclist	[DbGet $glMsDb $msId $AoipCodecListName]
+				} else {
+					# case of Bss Supported Codec List
+					if { ![IsVoid $AoipCodecList] } {
+						set codeclist $AoipCodecList
+						Trace "log" $::__trace_AUoIP $name "codeclist = $codeclist"
+					} else {
+						log "GetUpFromCodec: WARNING: $AoipCodecList is Void!"
+					}
+				}
+			} else {
+				if { [DbFieldExists $glMsDb AoipTargetMscPcl] } {
+					# INTERNAL HO COMMAND case (only on the CN side)
+					set codeclist	[DbGet $glMsDb $msId AoipTargetMscPcl]
+				} else {
+					log "GetUpFromCodec: WARNING: 'AoipTargetMscPcl' doesn't exist in the $glMsDb .. to check the Db"
+					return $transport
+				}
+			}
+			Trace "log" $::__trace_AUoIP $name "codeclist=$codeclist"
+
+			set	transport [UP_Discriminator $codeclist]
+
+			logv1 "GetUpFromCodec: transport=$transport"
+
+			if { [IsVoid $transport] } {
+				#set transport "TDM"; #Carlo:TODO si potrebbe pensare che nel peggiore dei casi almeno trasporto over TDM sia supportato
+				log "transport=$transport is void"
+			}
+
+			#log "GetUpFromCodec: codec_list=$codec_list"; #cDEBUG
+			#log "GetUpFromCodec: msId=$msId: subPar_list=$subPar_list --> subParBinList=$subParBinList --> transport=$transport"; #cDEBUG
+		} else {
+
+			LogDb $glMsDb ; #cDEBUG
+			log "GetUpFromCodec: WARNING: to check the field AoipCodecListName for the mobile $msId in the $glMsDb"
+			set transport "TDM"; #Carlo:TODO si puo' pensare che nel peggiore dei casi almeno il trasporto over TDM sia supportato
+		}
+	} else {
+		logscr "GetUpFromCodec: ERROR: mobile $msId doesn't exist in the $glMsDb"
+		# case of real mobiles unknown
+		if { !$::glAoip || !$::glUpType } {
+			set transport "TDM"
+		} elseif { $::glAoip && $::glUpType == 2 } {
+			set transport "IP"
+		} elseif { $::glAoip && $::glUpType == 1 } {
+			# UP 'Mixed IP/TDM case'
+			set transport "MIXED"
+		} else {
+			log "GetUpFromCodec: ERROR: the userplane must be defined"
+			exit
+		}
+	}
+	return $transport
+}
+
+# this proc is used with the parameter upTypeFromFirstCodec in the ASG_CMPLT in the case of BssScl of type MIXED
+proc UP_Discriminator { codeclist {upTypeFromFirstCodec ?} } {
+
+	set name "UP_Discriminator"
+	set transport "?"
+	set codec_list ""
+	set subPar_list ""
+	set codecType_list ""
+
+	Trace "log" $::__trace_AUoIP $name "codeclist=$codeclist"
+
+	for {set i 0} {$i < [string length $codeclist]} {incr i} {
+		if { $i != 0} {
+			append codec_list - 
+			append subPar_list ,
+			append codecType_list ,
+		}
+		append subPar_list [string range $codeclist $i $i]
+		set k [expr $i + 1]
+		set codecType [string range $codeclist $k $k]
+		append codecType_list $codecType
+		set j $i
+		Trace "log" $::__trace_AUoIP $name "i=$i; k=$k; j=$j; codecType=$codecType"
+		if { $codecType == 0 || $codecType == 1 || $codecType == 2 } {
+			# FR HR EFR (all long 1 Byte)
+			set i [expr $i + 1]
+			Trace "log" $::__trace_AUoIP $name "FR HR EFR"
+		} elseif { $codecType == 3 } {
+			# AMR-FR (long 3 Bytes)
+			set i [expr $i + 5]
+			Trace "log" $::__trace_AUoIP $name "AMR-FR"
+		} elseif { $codecType == 4 } {
+			# AMR-HR (long 3 Bytes)
+			set i [expr $i + 5]
+			Trace "log" $::__trace_AUoIP $name "AMR-HR"
+		} elseif { $codecType == 9 } {
+			# AMR-WB (long 2 Bytes)
+			set i [expr $i + 3]
+			Trace "log" $::__trace_AUoIP $name "AMR-WB"
+		} else {
+			set i [expr $i + 1]; #Carlo workaround per test interno 02/08/2011
+			log "UP_Discriminator: WARNING: (string range $codeclist $i $i) = [string range $codeclist $i $i] : maybe other type of codec"
+		}
+
+		Trace "log" $::__trace_AUoIP $name "codecType=$codecType; codec=[string range $codeclist $j $i] --> codec_list=$codec_list"
+		append codec_list [string range $codeclist $j $i]
+	}
+	
+	Trace "log" $::__trace_AUoIP $name "codec_list=$codec_list; subPar_list=$subPar_list; codecType_list=$codecType_list"
+
+	#log "subPar_list=$subPar_list"
+	set IP_support   0
+	set TDM_support  0
+
+	for { set i 0 } { $i < [string length $subPar_list] } { set i [expr $i + 1] } {
+		if { ![IsEmpty [lindex [split $subPar_list ","] $i]]  && ![IsVoid [lindex [split $subPar_list ","] $i]] } {
+
+			set subParMsb [lindex [split $subPar_list ","] $i]
+			#log "subParMsb=$subParMsb"
+
+			set subParFI [expr 0x$subParMsb & 0x8]; #FI
+			#log "subParFI=$subParFI"
+
+			set subParPT [expr 0x$subParMsb & 0x6]; #PT
+			#log "subParPT=$subParPT"
+
+			if { $subParFI } {
+				#AUPoIP with compressed speech via RTP/UDP/IP is preferred by the MSC
+				set IP_support 1
+			}
+			if { $subParPT } {
+				#Transport of PCM via TDM is preferred by the MSC
+				set TDM_support 1
+				log "UP_Discriminator: TDM supported"
+			}
+
+		}
+
+		if { $IP_support && !$TDM_support } {
+			set transport "IP"
+		} elseif { !$IP_support && $TDM_support } {
+			set transport "TDM"
+		} elseif { $IP_support && $TDM_support } {
+			set transport "MIXED"
+		} else {
+			log "ERROR: tranport supported must be TDM type or IP type"
+		}
+		if { ![IsVoid $upTypeFromFirstCodec] && $upTypeFromFirstCodec } {
+			# UP of BssScl is MIXED IP/TDM --> it need choose between IP and TDM regarding the MscPcl
+
+			#Carlo TODO (si puo' per esm pensare di fare sempre IP in qs caso ovvero se a0 diventa 80, se a1 diventa 81)	
+
+
+		}
+	}
+
+	if { [IsVoid $transport] } {
+		#set transport "TDM"; #Carlo:TODO si potrebbe pensare che nel peggiore dei casi almeno il trasporto over TDM sia supportato
+		abort "transport=$transport is void"
+	}
+
+	#log "UP_Discriminator: codec_list=$codec_list"; #cDEBUG
+	#log "UP_Discriminator: msId=$msId --> transport=$transport"; #cDEBUG
+
+	return $transport
+}
+
+proc MscPclIncludeBssScl { mscPclName bscScl } {
+
+	set result [List1_Include_List2_or_viceversa $mscPclName $bscScl]
+
+	if { ![IsVoid $result] && !$result } {
+		log "MscPclIncludeBssScl: no speech codec MSC preferred is included among those BSS supported for UP IP"
+	}
+	return $result
+}
+
+proc BssSclIncludeMscPcl { bscSclName mscPcl } {
+
+	set result [List1_Include_List2_or_viceversa $bscSclName $mscPcl]
+
+	if { ![IsVoid $result] && !$result } {
+		log "BssSclIncludeMscPcl: no speech codec BSS Supported Codec List is included among those MSC preferred for UP IP"
+	}
+	return $result
+}
+
+proc List1_Include_List2_or_viceversa { listName1 listValue2 } {
+
+	global glMsId glMsDb
+
+	set result 0
+
+	if { [DbFieldExists $glMsDb $listName1] } {
+		set list1_value [DbGet $glMsDb $glMsId $listName1]
+
+		set isCodecTypeListIncluded [IsCodecTypeListIncluded $list1_value $listValue2]
+
+		if { $isCodecTypeListIncluded } {
+			set result 1
+		} elseif { $isCodecTypeListIncluded == 0 } {
+			log "List1_Include_List2_or_viceversa: $list1_value includes $listValue2 as userplane IP"
+		} else {
+			log "List1_Include_List2_or_viceversa: $list1_value and $listValue2 don't include one another"
+		}
+	} else {
+		log "List1_Include_List2_or_viceversa: $listName1 field doesn't exist in the $glMsDb --> to check the $glMsDb"
+	}
+	return $result
+}
+
+##############################################################
+#check if strn2 is included in the strn1
+proc IsCodecTypeListIncluded { strn1 strn2 {indexCodecType ?} {targetMscUpType ?} } {
+
+	set name "IsCodecTypeListIncluded"
+	set result 0
+
+	upvar 1 $indexCodecType idxCodecTypeList
+
+	set idxCodecTypeList ?; #Carlo workaround per test interno 02/08/2011
+
+	set codecTypeList1 [CodecTypeListByCodecList $strn1]
+	set codecTypeList2 [CodecTypeListByCodecList $strn2]
+
+	Trace "log" $::__trace_AUoIP $name "strn1=$strn1; strn2=$strn2"
+	Trace "log" $::__trace_AUoIP $name "codecTypeList1=$codecTypeList1; codecTypeList2=$codecTypeList2"
+
+	if { ![CodecSelectionByBsc] } {
+		for {set i 0} {$i <= [string length $codecTypeList1]} {incr i} {
+			for {set j 0} {$j <= [string length $codecTypeList2]} {incr j} {
+				if { [string index $codecTypeList1 $i] == [string index $codecTypeList2 $j]} {
+					Trace "log" $::__trace_AUoIP $name "(string index $codecTypeList1 $i)=[string index $codecTypeList1 $i]"
+					set result 1
+					set idxCodecTypeList $i
+					break
+				}
+			}
+			if {$result} {
+				break
+			}
+		}
+	} elseif { [CodecSelectionByBsc] } {
+		Trace "log" $::__trace_AUoIP $name "__BscChooseCodec=$::__BscChooseCodec --> it is the BSS that choose the codec (ALU Shanghai feature)"
+
+		if { [IsVoid $targetMscUpType] } {
+			return 1
+		}
+
+		set m 1
+		#Carlo: naturalmente si sceglie il primo codec del codeclist del MSC che corrisponde ad uno dei codec preferiti dal BSC
+		for {set i 0} {$i <= [string length $codecTypeList1]} {incr i} {
+			incr m
+			if { [string index $codecTypeList1 $i] == 0 || [string index $codecTypeList1 $i] == 1 ||\
+			     [string index $codecTypeList1 $i] == 2 } {
+				set m_tmp $m
+				incr m
+				#log "0-1-2: m_tmp=$m_tmp"
+			} elseif { [string index $codecTypeList1 $i] == 3 || [string index $codecTypeList1 $i] == 4 } {
+				set m_tmp $m
+				incr m 5
+				#log "3-4: m_tmp=$m_tmp"
+			} elseif { [string index $codecTypeList1 $i] == 9 } {
+				set m_tmp $m
+				incr m 3
+				#log "9: m_tmp=$m_tmp"
+			} else {
+				log "WARNING: codec unrecognized"
+				set m_tmp $m
+				incr m; #Carlo workaround 02/08/2011
+				#log "unrecognized: m_tmp=$m_tmp"
+			}
+			
+			#log "i=$i --> m=$m"
+			#log "m_tmp=$m_tmp"
+			
+			set n 1 
+			for {set j 0} {$j <= [string length $codecTypeList2]} {incr j} {
+				incr n	
+				if { [string index $codecTypeList2 $j] == 0 || [string index $codecTypeList2 $j] == 1 ||\
+			             [string index $codecTypeList2 $j] == 2 } {
+					set n_tmp $n
+					incr n
+					#log "0-1-2: n_tmp=$n_tmp"
+				} elseif { [string index $codecTypeList2 $j] == 3 || [string index $codecTypeList2 $j] == 4 } {
+					set n_tmp $n
+					incr n 5
+					#log "3-4: n_tmp=$n_tmp"
+				} elseif { [string index $codecTypeList2 $j] == 9 } {
+					set n_tmp $n
+					incr n 3
+					#log "9: n_tmp=$n_tmp"
+				} else {
+					log "WARNING: codec unrecognized !!!"
+					set n_tmp $n
+					incr n; #Carlo workaround 02/08/2011
+					#log "unrecognized: n_tmp=$n_tmp"
+				}
+			
+				#log "j=$j --> n=$n"
+				#log "n_tmp=$n_tmp"
+		
+				log "DEBUG: codecTypeList1=$codecTypeList1 --> [string index $codecTypeList1 $i]; codecTypeList2=$codecTypeList2 --> [string index $codecTypeList2 $j]"
+				log "*** DEBUG: strn1=$strn1 --> [string index $strn1 [expr {$m_tmp-2}]]; strn2=$strn2 --> [string index $strn2 [expr {$n_tmp-2}]]"
+				
+				if { ![IsEmpty [string index $codecTypeList1 $i]] && ![IsVoid [string index $codecTypeList1 $i]] && [string index $codecTypeList1 $i] == [string index $codecTypeList2 $j] || ![IsEmpty [string index $codecTypeList1 $i]] && ![IsVoid [string index $codecTypeList1 $i]] && [string index $codecTypeList1 $i] == "A" || ![IsEmpty [string index $codecTypeList1 $i]] && ![IsVoid [string index $codecTypeList1 $i]] && [string index $codecTypeList1 $i] == "a" } {
+					set result 2
+					log "OK: targetMscUpType=$targetMscUpType"; #cDEBUG
+					if { [string index $strn1 [expr {$m_tmp-2}]] == [string index $strn2 [expr {$n_tmp-2}]] || [string index $strn1 [expr {$m_tmp-2}]] == "A" || [string index $strn1 [expr {$m_tmp-2}]] == "a" || [string index $strn2 [expr {$n_tmp-2}]] == "A" || [string index $strn2 [expr {$n_tmp-2}]] == "a" } {
+						if {[string equal $targetMscUpType "TDM"] && [string index $strn2 [expr {$n_tmp-2}]] == 2 ||\
+								[string equal $targetMscUpType "TDM"] && [string index $strn1 [expr {$m_tmp-2}]] == 2 } {
+							log "TDM"
+							Trace "log" $::__trace_AUoIP $name "(string index $codecTypeList1 $i)=[string index $codecTypeList1 $i]"
+							set result 1
+							set idxCodecTypeList $i
+							break
+						} elseif {[string equal $targetMscUpType "IP"] && [string index $strn2 [expr {$n_tmp-2}]] == 8 } {
+							log "IP"
+							Trace "log" $::__trace_AUoIP $name "(string index $codecTypeList1 $i)=[string index $codecTypeList1 $i]"
+							set result 1
+							set idxCodecTypeList $i
+							break
+						} elseif {[string equal $targetMscUpType "MIXED"] && [string index $strn2 [expr {$n_tmp-2}]] == 10 || \
+								[string equal $targetMscUpType "MIXED"] && [string index $strn2 [expr {$n_tmp-2}]] == 2 || \
+								[string equal $targetMscUpType "MIXED"] && [string index $strn2 [expr {$n_tmp-2}]] == 8 } {
+							log "MIXED: or IP or TDM"
+							Trace "log" $::__trace_AUoIP $name "(string index $codecTypeList1 $i)=[string index $codecTypeList1 $i]"
+							set result 1
+							set idxCodecTypeList $i
+							break
+						} else {
+							log "ERROR!: (string index $strn1 [expr {$m_tmp-2}])=[string index $strn1 [expr {$m_tmp-2}]]" 
+							log "(string index $strn2 [expr {$n_tmp-2}])=[string index $strn2 [expr {$n_tmp-2}]]"
+						}
+					}
+				}
+				#log "n_tmp=$n_tmp"
+			}
+			if { $result == 1 } {
+				break
+			}
+			#log "m_tmp=$m_tmp"
+		}
+	} else {
+		log "IsCodecTypeListIncluded: WARNING"
+		set idxCodecTypeList ?
+	}
+
+	Trace "log" $::__trace_AUoIP $name "i=$i --> idxCodecTypeList=$idxCodecTypeList; result=$result"
+
+	if { [IsVoid $idxCodecTypeList] } {
+		log "IsCodecTypeListIncluded: ERROR: idxCodecTypeList is equal to void"
+	}
+
+	return $result
+}
+
+##############################################################
+proc IsCodecTypeIncluded { codecList codec } {
+
+	set name "IsCodecTypeIncluded"
+	set result 0
+
+	set codecTypeList1 [CodecTypeListByCodecList $codecList]
+
+	set codecType2 [string range $codec 1 1]
+
+	Trace "log" $::__trace_AUoIP $name "codecList=$codecList --> codecTypeList1=$codecTypeList1"
+	Trace "log" $::__trace_AUoIP $name "codec=$codec --> codecTypeList1=$codecTypeList1"
+
+	for {set i 0} {$i <= [string length $codecTypeList1]} {incr i} {
+		if { [string index $codecTypeList1 $i] != ","  && [string index $codecTypeList1 $i] == $codecType2 } {
+			set result 1
+			break
+		}
+	}
+	Trace "log" $::__trace_AUoIP $name "i=$i; result=$result"
+	return $result
+}
+
+##############################################################
+proc CodecFromCodecList { codeclist idxCodecType } {
+
+	set name "CodecFromCodecList"
+	set codec ?
+
+	incr idxCodecType
+
+	set codeclistLength [string length $codeclist]
+	Trace "log" $::__trace_AUoIP $name "codeclist=$codeclist; codeclistLength=$codeclistLength; idxCodecType+1=$idxCodecType"
+
+	for {set i 0} {$i < $codeclistLength} {incr i} {
+		set k [expr $i + 1]
+		set codecType [string range $codeclist $k $k]
+		set j $i
+		Trace "log" $::__trace_AUoIP $name "i=$i; k=$k; j=$j; codecType=$codecType"
+		if { $codecType == 0 || $codecType == 1 || $codecType == 2 } {
+			# FR HR EFR (all long 1 Byte)
+			set i [expr $i + 1]
+			incr idxCodecType -1
+		} elseif { $codecType == 3 } {
+			# AMR-FR (long 3 Bytes)
+			set i [expr $i + 5]
+			incr idxCodecType -1
+		} elseif { $codecType == 4 } {
+			# AMR-HR (long 3 Bytes)
+			set i [expr $i + 5]
+			incr idxCodecType -1
+		} elseif { $codecType == 9 } {
+			# AMR-WB (long 2 Bytes)
+			set i [expr $i + 3]
+			incr idxCodecType -1
+		} else {
+			Trace "log" $::__trace_AUoIP $name "WARNING: i=$i; codecType=$codecType"
+			# Carlo 04/05/2011: qui possibilità di errori TODO check
+		}
+		if { $idxCodecType == 0 } {
+	 		set codec [string range $codeclist $j $i]
+			break
+		}
+	}
+
+	return $codec
+}
+
+##############################################################
+proc CodecTypeListByCodecList { codecList } {
+
+	set name "CodecTypeListByCodecList"
+
+	log "CodecTypeListByCodecList: codecList=$codecList"	
+
+	for {set nibble1 0} {$nibble1 < [string length $codecList]} {incr nibble1} {
+		set nibble0 [expr $nibble1 + 1]
+		set codecType [string range $codecList $nibble0 $nibble0]
+		#Trace "log" $::__trace_AUoIP $name "nibble0=$nibble0; codecType=$codecType"
+		append codecType_list $codecType
+		if { $codecType == 0 || $codecType == 1 || $codecType == 2 } {
+			# FR HR EFR (all long 1 Byte)
+			incr nibble1
+		} elseif { $codecType == 3 } {
+			# AMR-FR (long 3 Bytes)
+			set nibble1 [expr $nibble1 + 5]
+		} elseif { $codecType == 4 } {
+			# AMR-HR (long 3 Bytes)
+			set nibble1 [expr $nibble1 + 5]
+		} elseif { $codecType == 9 } {
+			# AMR-WB (long 2 Bytes)
+			set nibble1 [expr $nibble1 + 3]
+		} else {
+			log "CodecTypeListByCodecList: WARNING: (string range $codecList $nibble1 $nibble1) = [string range $codecList $nibble1 $nibble1] .. maybe other type of codec"
+		}
+	}
+	return $codecType_list
+}
+
+################################################################################################################################
+# proc usata nel caso in cui il BssScl è di tipo MIXED (quindi la scelta del codec nella lista avviene in base al tipo di codec)
+#input: BssScl; MscPcl
+#output: userPlaneType
+#out: codecType (passaggio come indirizzo)
+proc FirstCodecBssSclIncludedInMscPcl { codecList_bss codecList_msc {codec ?} {codecType ?} } {
+
+	set name "FirstCodecBssSclIncludedInMscPcl"
+	set result -1
+	set transport ?
+
+	upvar 1 $codecType tgtCodecType
+	upvar 1 $codec codecValue
+
+	set tgtCodecType ?
+	set codecValue ?
+
+	log "codecList_bss=$codecList_bss; codecList_msc=$codecList_msc"
+
+	#--------- start: da rivedere qs primo if ----- #
+	if { ![CodecSelectionByBsc] } {
+		for {set i 0} {$i <= [string length $codecList_bss]} {incr i} {
+			for {set j 0} {$j <= [string length $codecList_msc]} {incr j} {
+				if { [string index $codecList_bss $i] == [string index $codecList_msc $j]} {
+					log "(string index $codecList_bss $i)=[string index $codecList_msc $i]"
+					set result 1
+					set idxCodecTypeList $i
+					break
+				}
+			}
+			if {$result == 1} {
+				break
+			}
+		}
+	#--------- end: da rivedere ----- #
+
+	} elseif { [CodecSelectionByBsc] } {
+		log "it is the BSS that choose the codec"
+		## variable m used for bss,n used for msc
+		for {set m 0} {$m < [string length $codecList_bss]} {incr m} {
+
+			set bss_codectype [string range $codecList_bss [expr {$m+1}] [expr {$m+1}]]
+
+			if { $bss_codectype == 0 || $bss_codectype == 1 || $bss_codectype == 2 } {
+				# FR HR EFR (all long 1 Byte)
+				set m_tmp $m
+				incr m
+			} elseif { $bss_codectype == 3 || $bss_codectype == 4 } {
+				# AMR-FR or AMR-HR (long 3 Bytes)
+				set m_tmp $m
+				incr m 5
+			} elseif { $bss_codectype == 9 } {
+				# AMR-WB (long 2 Bytes)
+				set m_tmp $m
+				incr m 3
+			} else {
+				logscr "WARNING: codec unrecognized"
+				set m_tmp $m
+				log "unrecognized: m_tmp=$m_tmp"
+				incr m
+			}
+			set bss_codec_value [string range $codecList_bss $m_tmp $m]
+			log "bsc codec value is : $bss_codec_value"
+			
+			log "length $codecList_msc = [string length $codecList_msc]"
+			
+			for {set n 0} {$n < [string length $codecList_msc]} {incr n} {
+				
+				set msc_codectype [string range $codecList_msc [expr {$n+1}] [expr {$n+1}]]
+				
+				if { $msc_codectype == 0 || $msc_codectype == 1 || $msc_codectype == 2 } {
+					# FR HR EFR (all long 1 Byte)
+					set n_tmp $n
+					incr n
+				} elseif { $msc_codectype == 3 || $msc_codectype == 4 } {
+					# AMR-FR or AMR-HR (long 3 Bytes)
+					set n_tmp $n
+					incr n 5
+				} elseif { $msc_codectype == 9 } {
+					# AMR-WB (long 2 Bytes)
+					set n_tmp $n
+					incr n 3
+				} else {
+					logscr "WARNING: codec unrecognized !"
+					set n_tmp $n
+					log "unrecognized: n_tmp=$n_tmp"
+					incr n
+				}
+			
+				set msc_codec_value [string range $codecList_msc $n_tmp $n]
+				log "msc codec value is : $msc_codec_value"
+		
+				log "*** DEBUG: codecList_bss=$codecList_bss --> $bss_codec_value; codecList_msc=$codecList_msc --> $msc_codec_value"
+				
+				set bss_codec_except_up [string range $bss_codec_value 1 [string length $bss_codec_value]]
+				set bss_up [string range $bss_codec_value 0 0]
+				set msc_codec_except_up [string range $msc_codec_value 1 [string length $msc_codec_value]]
+				set msc_up [string range $msc_codec_value 0 0]
+				
+				if { $bss_codec_except_up == $msc_codec_except_up } {
+					## codec type is same,except up flag. Continue to judge UP flag
+					log "(BSS UP) is = (0x$bss_up); (MSC UP) is = (0x$msc_up)"
+					log "jiangtao for test: value of & is: [expr 0x$bss_up & 0x$msc_up]"
+					if { [expr 0x$bss_up & 0x$msc_up] == 0 } {
+						log "mismatch,continue to search"
+						set result 0
+					} else {
+						if { [expr 0x$bss_up & 0x$msc_up] == 2 } {
+							set transport "TDM"
+							set tgtCodecType 0
+							set codecValue ""
+							append codecValue "2"
+							append codecValue $msc_codec_except_up
+						} else {
+							set transport "IP"
+							set tgtCodecType 2
+							set codecValue ""
+							append codecValue "8"
+							append codecValue $msc_codec_except_up
+						}
+						set result 1
+						break
+					} 
+				}
+
+			} 
+			## loop for mscCodecList
+			if { $result == 1 } {
+				log "match!!"
+				break
+			}
+		} 
+		## loop for bssCodecList
+		log "ecodec_selected=$codecValue"
+	}  
+	## case  codec selected by BSC
+
+	return $transport
+}
+
+##############################################################
+# return 1 if INT_HOV is possible
+# return 0 if INT_HOV isn't possible
+# Carlo: dal BSC può arrivare solo up o di tipo IP o TDM; il Mixed non è preso in considerazione
+# up1: source up type; up2: tgtBssScl
+proc CheckPossibility_IntHov_ByUpTypes { up1 up2 } {
+
+	logv1 "CheckPossibility_IntHov_ByUpTypes: up1=$up1 --> up2=$up2"; #cDEBUG
+
+	if { ![IsVoid $up1] && $up1 == "IP" } {
+	  		set result 1
+			logv1 "CheckPossibility_IntHov_ByUpTypes: IP-->IP and IP-->TDM are always possible!"
+
+	} elseif { ![IsVoid $up1] && $up1 == "TDM" } {
+		if { ![IsVoid $up2] && $up2 != "TDM" && $up2 != "MIXED" } {
+			set result 1                                                                  	
+			logv1 "CheckPossibility_IntHov_ByUpTypes: TDM-->IP is possible!"
+		} elseif { ![IsVoid $up2] && $up2 == "TDM" } {
+			set result 0
+			logv1 "CheckPossibility_IntHov_ByUpTypes: TDM-->TDM is not possible!"
+		} elseif { ![IsVoid $up2] && $up2 == "MIXED" } {
+			set result 0; # hardcoded (for the true it would be necessary to discriminate tdm respect ip)
+			logv1 "CheckPossibility_IntHov_ByUpTypes: TDM-->MIXED .... to handle"
+		}
+	} elseif { ![IsVoid $up1] && $up1 == "MIXED" } {
+		if { ![IsVoid $up2] && $up2 != "TDM" && $up2 != "MIXED" } {
+			set result 1                                                                  	
+			logv1 "CheckPossibility_IntHov_ByUpTypes: TDM-->IP and IP-->IP are possible!"
+		} else {
+			# the case TDM --> TDM is not possible; to chech the codec values supported
+
+			# Carlo TODO DA FINIRE ... discriminare caso TDM -> IP (possibile) da TDM -> TDM (non possibile)
+			set result 0; # hardcoded (for the true it would be necessary to discriminate tdm respect ip)
+			logv1 "CheckPossibility_IntHov_ByUpTypes: WARNING: TODO (up2=$up2)"	
+		}
+	} else {
+		set result 0
+		logv1 "CheckPossibility_IntHov_ByUpTypes: unexpected type of UserPlane"
+	}
+
+	if { $result } {
+		logv1 "CheckPossibility_IntHov_ByUpTypes: Internal HOV allowed"
+	} else {
+		logv1 "CheckPossibility_IntHov_ByUpTypes: Internal HOV isn't allowed"
+	}
+	return $result
+}
+
+##############################################################
+proc UpSupportedFromCodec { codec } {
+
+	set name "UpSupportedFromCodec"
+	set result 0
+	set nibble0 [string range $codec 0 0]
+
+	log "UpSupportedFromCodec: codec=$codec --> nibble0=$nibble0"
+
+			###############################
+			# 7  6  5  4  #   3  2  1  0  #
+			###############################
+			# FI PI PT TF #      TYPE     #
+			###############################
+#e.g.:
+			###############################
+# IP:		# 1	 0	0  0  #		          #
+			###############################
+# MIXED:	# 1	 0	1  0  #		          #
+			###############################
+
+	if { $nibble0 == 8 || $nibble0 == 9 || $nibble0 == 12 || $nibble0 == 13 } {
+	 	# FI=1, PT=0 --> 8
+		set result 12
+		log "$name: IP"
+	} elseif { $nibble0 == 10 || $nibble0 == 11 || $nibble0 == 14 || $nibble0 == 15 } {
+	 	# FI=1, PT=1 --> 10=0xA
+		set result 11
+		log "$name: MIXED IP/TDM"
+	} elseif { $nibble0 == 2 || $nibble0 == 3 || $nibble0 == 6 || $nibble0 == 7 } {
+	 	# FI=0, PT=1 --> 2
+		set result 10
+		log "$name: TDM"
+
+	} else {
+		log "$name: nothing type of UP is allowed"
+	}
+	return $result
+}
+
+##############################################################
+proc GetFirstSpeechCodecFromCodecList { codecList } {
+	
+	set name "GetFirstSpeechCodecFromCodecList"
+
+	set lenCodecList [string length $codecList]
+	if { [expr {$lenCodecList % 2}] == 0 } {
+		if { [expr {$lenCodecList / 2}] == 1 } {
+			# codec list contains just one codec (GSM FR; GSM HR; GSM EFR)
+			set selectedCodec $codecList
+		} elseif { [expr {$lenCodecList / 2}] > 1 } {
+			# the selected codec is the first of the list (rule hardcoded) !!!
+			# or the unique codec in the list in case of AMR-FR or AMR-HR or AMR-WB
+			
+			set codecTypeList [CodecTypeListByCodecList $codecList]
+			Trace "log" $::__trace_AUoIP $name "codecTypeList=$codecTypeList"
+
+			set firstCodecTypeList [string range $codecTypeList 0 0]
+
+			Trace "log" $::__trace_AUoIP $name "firstCodecTypeList=$firstCodecTypeList"
+
+			if {$firstCodecTypeList == 0 || $firstCodecTypeList == 1 || $firstCodecTypeList == 2 } {
+				# GSM-FR or GSM-HR or GSM-EFR
+	  			set selectedCodec [string range $codecList 0 1]
+			} elseif { $firstCodecTypeList == 3 || $firstCodecTypeList == 4 } {
+				# AMR-FR or AMR-HR
+	  			set selectedCodec [string range $codecList 0 5]
+			} elseif { $firstCodecTypeList == 9 } {
+				# AMR-WB
+	  			set selectedCodec [string range $codecList 0 3]
+			} else {
+				set selectedCodec ?
+				log "$name: WARNING: maybe other type of codec (at the moment not supported)"
+			}
+			Trace "log" $::__trace_AUoIP $name "selectedCodec=$selectedCodec"
+		} else {
+			log "GetFirstSpeechCodecFromCodecList: ERROR: the codecList=$codecList must have length greater than or equal to 1 Byte"
+			exit
+		}
+	} else {
+		log "GetFirstSpeechCodecFromCodecList: ERROR: the codecList=$codecList  must have length multiple of the Byte"
+		exit
+	}
+	
+	return $selectedCodec
+}
+
+proc IntHovEnqNeeded { } {
+
+	global glMsDb glMsId
+
+	set intHovEnq_needed 0
+
+	if { [DbFieldExists $glMsDb IntHoEnquiryAfterAssCmplt] } {
+		set intHovEnq_needed [DbGet $glMsDb $glMsId IntHoEnquiryAfterAssCmplt]
+	}
+	return $intHovEnq_needed
+}
+
+######################################################################
+# Compare between the serving codec list and the target codec list
+proc Match_MscPcl_TargetMscPcl { } {
+
+	set srvUpMsc [CheckMscPcl 1 AoipMscPcl]
+
+	set tgtUpMsc [CheckMscPcl 1 AoipTargetMscPcl]
+
+	log "Match_MscPcl_TargetMscPcl: srvUpMsc=$srvUpMsc; tgtUpMsc=$tgtUpMsc"
+
+	if { $srvUpMsc == "MIXED" || $srvUpMsc == $tgtUpMsc } {
+		set result 1
+	} else {
+		set result 0
+	}
+	return $result
+}
+
+##############################################################
+# Common utilities for IP UserPlane
+##############################################################
+proc RandomMscPclGenerator { } {
+
+	global glMsId glBssapDb glMsDb
+
+	if { [IsVoid [DbGet $glBssapDb $glMsId AoipMscPcl]] } {
+		# first generation of the Preferred Codec List (Pcl) is obtained from the value stored in the CommonDb
+		set mscPcl [DbGet $glMsDb $glMsId AoipMscPcl]
+		log "RandomMscPclGenerator: AoipMscPcl in the $glBssapDb is void then it use the value stored in the CommonDb"
+		DbSet $glBssapDb $glMsId AoipMscPcl $mscPcl
+	} else {
+		# subsequents generations of the Pcl are pseudo-casual
+		set num [DbGet $glBssapDb $glMsId AoipMscPcl]
+		log "RandomMscPclGenerator: glMsId=$glMsId; num=$num"; #cDEBUG
+		for { set i 0 } { $i <= 17 } { incr i } {
+			set first_odd_nibble [string index $num $i]
+			log "RandomMscPclGenerator: i=$i; first_odd_nibble=$first_odd_nibble"; #cDEBUG
+			append mscPcl $first_odd_nibble
+			if { $first_odd_nibble == "0" } {
+				log "RandomMscPclGenerator: case of first_odd_nibble equal to 0 ... skip this codec"; #cDEBUG
+				incr i
+				set second_odd_nibble [string index $num $i]
+				append mscPcl $second_odd_nibble
+			} elseif { $first_odd_nibble == "8" } {
+				incr i
+				set second_odd_nibble [string index $num $i]
+				log "RandomMscPclGenerator: i=$i; second_odd_nibble=$second_odd_nibble"; #cDEBUG
+				if { $second_odd_nibble >= 0 && $second_odd_nibble <= 3 } {
+	  				incr second_odd_nibble
+					log "RandomMscPclGenerator: second_odd_nibble_incremented=$second_odd_nibble"
+				} elseif { $second_odd_nibble == 4 } {
+	  				set second_odd_nibble 9
+					log "RandomMscPclGenerator: second_odd_nibble_incremented=$second_odd_nibble"
+				} elseif { $second_odd_nibble == 9 } {
+	  				set second_odd_nibble 0
+					log "RandomMscPclGenerator: second_odd_nibble_incremented=$second_odd_nibble"
+				} else {
+					log "RandomMscPclGenerator: WARNING: codec not used or not supported"
+				}		
+				append mscPcl $second_odd_nibble
+			} else {
+				log "RandomMscPclGenerator: WARNING: the first nibble of this codec isn't equal to 0 nor to 8"
+				# Carlo: TODO generalization
+				continue
+			}
+		}
+		DbSet $glBssapDb $glMsId AoipMscPcl $mscPcl
+	}
+	log "RandomMscPclGenerator: mscPcl=$mscPcl"
+
+	return $mscPcl
+}
+
+proc ActiveRandomMscPcl { } {
+
+	global __Ip_DinamicMscPcl 
+
+	if { [info exists __Ip_DinamicMscPcl] && $__Ip_DinamicMscPcl } {
+		return 1
+	} else {
+		return 0
+	}
+}
+
+proc CodecSelectionByBsc { } {
+
+	if { [info exists ::__BscChooseCodec] && $::__BscChooseCodec } {
+		return 1
+	} else {
+		return 0
+	}
+}
+
+proc ReleaseIP { res_list } {
+	
+	global glMsId glBssapDb
+
+	set msList ""
+	foreach res $res_list {
+		if { [DbKeyExists $glBssapDb CallId $res] } {
+			set idx [DbGetIdx $glBssapDb CallId $res]
+			lappend msList $idx
+		} else {
+			log "ReleaseIP: Cannot find resource: $res"
+		}
+	}
+	log "ReleaseIP: msList = $msList"
+
+	foreach ms $msList {
+		GetInstance $ms $glBssapDb glMsId
+		log "ReleaseIP: state = [DbGet $glBssapDb $ms State]"
+		if { [DbGet $glBssapDb $ms State] == "BssapConnectActive" } {
+			set cause 60; # protocol error
+			RcvClrReqServing $cause
+		}
+	}
+}
+
+######################################################
+# Common utilities for A-Multiprocessor
+######################################################
+
+proc SLAVE_RcvCommonIpTdmResourcesAsgRes_AsgReq { } {
+
+	global _sig glBssapDb glBscDb protName glMsId glAoip
+	
+	LogInputSig
+
+	set name		"SLAVE_RcvCommonIpTdmResourcesAsgRes_AsgReq"
+	set fail		[rd _sig Fail]
+	set msid		[rd _sig MsId]
+	set ppuId		[rd _sig PpuId]
+	
+	set buffer 		[DbGet $glBssapDb $msid AsgReqBuffer]
+	set ch_type		[lindex $buffer 0]
+	set perm_speech [lindex $buffer 1]
+	set spi 		[lindex $buffer 2]
+	set ch_rate 	[lindex $buffer 3]
+	set grCallRef 	[lindex $buffer 4]
+	set priority 	[lindex $buffer 5]
+	set bscid 		[lindex $buffer 6]
+	set datarate 	[lindex $buffer 7]
+
+	if { $glAoip } {
+		set upType [DbGet $glBssapDb $glMsId UpType]
+	}
+
+	if { $fail } {
+		if { !$glAoip || $upType == 0 } {
+			logscr "SLAVE_RcvCommonIpTdmResourcesAsgRes_AsgReq: WARNING: Resource Assignment procedure failed \
+				([BssapGetProtocolCause $protName $fail])"
+			# BSSAP_AP_SYNC_CNF (cause: -1 = Resource Assignment Failed)
+			SendApSyncCnf "-1" e1af
+			return
+		} elseif { $upType == 1 } {
+		# TMA-441
+			# AUoIP supporting UP MIXED IP/TDM
+			log "===================="
+			logscr "SLAVE_RcvCommonIpTdmResourcesAsgRes_AsgReq: no TDM resources availables --> MSC continues searching IP resource"
+			log "===================="
+			set circ_idty_code "?"
+		} else {
+			log "SLAVE_RcvCommonIpTdmResourcesAsgRes_AsgReq: userplane IP (upType=$upType)"
+		}
+	}
+
+	DbSet $glBssapDb $msid BscId $bscid
+	
+	# TMA-447 Carlo workaround 06/02/2012 --
+	set sendResetIpForCallId	[DbGet $glBssapDb $msid SendResetIpForCallId]
+	if { $sendResetIpForCallId } {
+		logv4 "SLAVE_RcvCommonIpTdmResourcesAsgRes_AsgReq: --> ERROR: sendResetIpForCallId=$sendResetIpForCallId"
+		DbSet $glBssapDb $msid SendResetIpForCallId 0 ; # Carlo temporary workaround
+	}
+	# --
+
+	logv4 "$name: msid=$msid; bscid=$bscid; fail=$fail; buffer=$buffer; ch_type=$ch_type; perm_speech=$perm_speech; \									spi=$spi; ch_rate=$ch_rate; grCallRef=$grCallRef; priority=$priority; datarate=$datarate; \													SendResetIpForCallId=$sendResetIpForCallId"
+	
+	# DTX Flag
+	set dtx_flag [DbGet $glBscDb $bscid DTXflag]
+	if { [string match {[01]} $dtx_flag] } {
+		set dtxFlag [uctoh $dtx_flag]
+	} else {
+		set dtxFlag "?"
+	}
+
+	# Classmark Information
+	set clsmark2 [DbGet $glBssapDb $msid ClassMark2]
+
+	if { $upType == 1 } {
+	# MIXED or case of codec selected by BSC
+		if { ![string compare [lindex $_sig 0] "BSSAP_CIC_ASG_RES"] } {
+			set tlaCicAsgRes [DbGet $glBssapDb $msid TlaCicAsgRes]
+			incr tlaCicAsgRes
+			DbSet $glBssapDb $msid TlaCicAsgRes $tlaCicAsgRes
+
+			if { $fail } {
+			# case of TDM resources unavailable
+				if { $upType == 1 } {
+				# MIXED IP/TDM (in this case the MSC searchs to use only IP resources)
+					# extension to the case of multiprocess version of the TMA-441
+					set circ_idty_code "?"
+					set permSpeechIndex "?"
+				} elseif { $upType == 0 } {
+				# UP only TDM
+					set circ_idty_code "?"
+					logscr "SLAVE_RcvCommonIpTdmResourcesAsgRes_AsgReq: WARNING: on UP based TDM there aren't resources available"
+					exit
+				} else {
+				# UP only IP
+					set circ_idty_code "?"
+					set permSpeechIndex "?"
+				}
+			} else {
+			# TDM resources are available
+				set permSpeechIndex	[rd _sig PermSpeechIndex]
+				DbSet $glBssapDb $msid PermSpeechIndex $permSpeechIndex
+
+				set cic         [rd _sig Cic]
+				set cic_ext     [GetExtCic $bscid $cic]
+				log "SLAVE_RcvCommonIpTdmResourcesAsgRes_AsgReq: bscid=$bscid cic=$cic --> cic_ext=$cic_ext"
+			
+				DbSet $glBssapDb $msid Cic $cic
+				DbSet $glBssapDb $msid CicExt $cic_ext
+				set circ_idty_code [ustoh $cic B]
+			}
+
+			if { [DbGet $glBssapDb $msid TlaCicAsgRes] == 2 } {
+				# both the 'BSSAP_TLA_ASG_RES' and the 'BSSAP_CIC_ASG_RES' have been received
+				SendAsgReq $msid $perm_speech $permSpeechIndex $spi $ch_rate $datarate \
+							$priority $dtxFlag $clsmark2 $grCallRef $bscid $circ_idty_code $name
+		
+				nextstate WaitForAssignRes
+			} else {
+				log "SLAVE_RcvCommonIpTdmResourcesAsgRes_AsgReq: (TlaCicAsgRes=[DbGet $glBssapDb $msid TlaCicAsgRes]) --> only the 'BSSAP_CIC_ASG_RES' has been received; wait to receive also the 'BSSAP_TLA_ASG_RES'"
+			}
+		}
+
+		log "SLAVE_RcvCommonIpTdmResourcesAsgRes_AsgReq: PpuId=$ppuId"
+
+		if { ![string compare [lindex $_sig 0] "BSSAP_TLA_ASG_RES"] } {
+			set tlaCicAsgRes [DbGet $glBssapDb $msid TlaCicAsgRes]
+			incr tlaCicAsgRes
+			DbSet $glBssapDb $msid TlaCicAsgRes $tlaCicAsgRes
+
+			# TMA-447 (06/02/2012)
+			if { !$fail } {
+				# case of success in the resource assignment procedure
+				set tla_container	[rd _sig Aoip_Tla]
+				set callid			[rd _sig CallId]
+				set ip 				[GetIpAddressFromContainer $tla_container]
+				set port 			[GetUdpPortFromContainer   $tla_container]
+				
+				log "SLAVE_RcvCommonIpTdmResourcesAsgRes_AsgReq: MIXED case:\
+					 aoip_tla=$tla_container --> ip=$ip; port=$port; callid=$callid"
+
+				DbSet $glBssapDb $msid PpuId $ppuId
+				DbSet $glBssapDb $msid LocalIp $ip
+				DbSet $glBssapDb $msid LocalPort $port
+				DbSet $glBssapDb $msid CallId $callid
+			}; #end if for TMA-447
+
+			DbSet $glBssapDb $msid BscId $bscid
+	
+			if { [DbGet $glBssapDb $msid TlaCicAsgRes] == 2 } {
+				# both the 'BSSAP_TLA_ASG_RES' and the 'BSSAP_CIC_ASG_RES' have been received
+				if { $fail } {
+				# case of TDM resources unavailable
+					if { $upType == 1 } {
+					# MIXED IP/TDM (in this case the MSC searchs to use only IP resources)
+						# extension to the case of multiprocess version of the TMA-441
+						set circ_idty_code "?"
+						set permSpeechIndex "?"
+					} elseif { $upType == 0 } {
+					# UP only TDM
+						set circ_idty_code "?"
+						logscr "SLAVE_RcvCommonIpTdmResourcesAsgRes_AsgReq: WARNING: on UP based TDM there aren't resources available"
+						exit
+					} else {
+					# UP only IP
+						set circ_idty_code "?"
+						set permSpeechIndex "?"
+					}
+				} else {
+				# TDM resources are available
+					set permSpeechIndex [DbGet $glBssapDb $msid PermSpeechIndex]
+					set circ_idty_code [ustoh [DbGet $glBssapDb $msid Cic] B]
+				}
+
+				SendAsgReq $msid $perm_speech $permSpeechIndex $spi $ch_rate $datarate \
+							$priority $dtxFlag $clsmark2 $grCallRef $bscid $circ_idty_code $name
+				nextstate WaitForAssignRes
+			} else {
+				log "SLAVE_RcvCommonIpTdmResourcesAsgRes_AsgReq: (TlaCicAsgRes=[DbGet $glBssapDb $msid TlaCicAsgRes]) --> only the 'BSSAP_TLA_ASG_RES' has been received; wait to receive also the 'BSSAP_CIC_ASG_RES'"
+			}
+		}
+
+		set loc_needed [DbGet $::glMsDb $msid LocationNeeded]
+		if { $loc_needed == 1 } {
+			# Trigger Location Acquisition
+			SendPerfLocReq
+		} elseif { $loc_needed == 3 } {
+			SendPerfLocReq_LORE1301
+		}
+
+	} elseif { !$::glAoip || $upType == 0 } {
+	# TDM
+		set permSpeechIndex	[rd _sig PermSpeechIndex]
+		set cic         	[rd _sig Cic]
+		set cic_ext     [GetExtCic $bscid $cic]
+		log "SLAVE_RcvCommonIpTdmResourcesAsgRes_AsgReq: --> bscid=$bscid Cic=$cic --> cic_ext=$cic_ext; cic=$cic"
+		DbSet $glBssapDb $msid CicExt $cic_ext
+		DbSet $glBssapDb $msid Cic $cic
+		set circ_idty_code [ustoh $cic B]
+
+		SendAsgReq $msid $perm_speech $permSpeechIndex $spi $ch_rate $datarate $priority $dtxFlag $clsmark2 $grCallRef $bscid $circ_idty_code $name
+
+		set loc_needed [DbGet $::glMsDb $msid LocationNeeded]
+		if { $loc_needed == 1 } {
+			# Trigger Location Acquisition
+			SendPerfLocReq
+		} elseif { $loc_needed == 3 } {
+			SendPerfLocReq_LORE1301
+		}
+		nextstate WaitForAssignRes
+
+	} elseif { $upType == 2 } {
+	# IP
+		if { !$fail } {
+			set tla_container	[rd _sig Aoip_Tla]
+			set callid			[rd _sig CallId]
+			set ip 				[GetIpAddressFromContainer $tla_container]
+			set port 			[GetUdpPortFromContainer   $tla_container]
+			
+			DbSet $glBssapDb $msid PpuId $ppuId
+			DbSet $glBssapDb $msid LocalIp $ip
+			DbSet $glBssapDb $msid LocalPort $port
+
+			# TMA-484
+			if { ![DbKeyExists $glBssapDb IpAddPort $ip-$port] } {
+				DbSet $glBssapDb $msid IpAddPort $ip-$port
+			} else {
+				logv1 "SLAVE_RcvCommonIpTdmResourcesAsgRes_AsgReq: ERROR: IpAddPort=$ip-$port already exists in BssapDb for msid:$msid"
+			}
+			#
+
+			DbSet $glBssapDb $msid CallId $callid
+			DbSet $glBssapDb $msid BscId $bscid
+
+			log "SLAVE_RcvCommonIpTdmResourcesAsgRes_AsgReq: PpuId=$ppuId; aoip_tla=$tla_container --> ip=$ip; port=$port; callid=$callid"
+
+			SendAsgReq $msid $perm_speech ? $spi $ch_rate $datarate $priority $dtxFlag $clsmark2 $grCallRef $bscid ? $name
+			nextstate WaitForAssignRes
+		} else {
+			# case of insuccess (TMA-447 06/02/2012)
+			logv4 "SLAVE_RcvCommonIpTdmResourcesAsgRes_AsgReq: WARNING: PpuId=$ppuId; msid=$msid: INSUCCESSO nell'assegnamento risorse ip"
+		}
+	} else {
+		log "SLAVE_RcvCommonIpTdmResourcesAsgRes_AsgReq: ERROR"
+	}
+}
+
+proc SendCommonAsgReq { ch_type perm_speech spi ch_rate grCallRef priority bscid datarate callingProc { hov_req ? } } {
+
+	global glBssapDb glMsId glAoip
+
+	# Store some parameters to be used when the BSSAP_CIC_ASG_RES or the BSSAP_TLA_ASG_RES will arrive
+	set buffer $ch_type
+	lappend buffer $perm_speech
+	lappend buffer $spi
+	lappend buffer $ch_rate
+	if { $callingProc == "SendAssignmentReq" } {
+		lappend buffer $grCallRef
+		lappend buffer $priority
+		lappend buffer $bscid
+		set bsc_ID $bscid
+	} elseif { $callingProc == "SendHovRequest" } {
+		# Cell Identifier Target
+		set lac_tgt 		[DbGet $glBssapDb $glMsId LACTarget]
+		set ci_tgt  		[DbGet $glBssapDb $glMsId CellIdTarget]
+		set cell_idfr_tgt 	[GetCellIdentifier $lac_tgt $ci_tgt]
+		
+		set bsc_tgt 		[GetBscIdByCellIdfr $lac_tgt $ci_tgt ::glBtsDb]
+		lappend buffer $bsc_tgt
+		set bsc_ID $bsc_tgt
+	}
+	lappend buffer $datarate
+
+	# Encryption Information
+	set encr_info [DbGet $glBssapDb $glMsId Encryption]
+	if { [IsVoid $encr_info] } {
+		set encr_info 01
+	}
+	# ClassMark2
+	set clmark2 [DbGet $glBssapDb $glMsId ClassMark2]
+	# Cell Identifier Serving
+	set lac [DbGet $glBssapDb $glMsId LAC]
+	set ci [DbGet $glBssapDb $glMsId CellId]
+	set cell_idfr_srvng [GetCellIdentifier $lac $ci]
+
+	if { $callingProc == "SendHovRequest" } {
+		lappend buffer [rd hov_req cause]
+		lappend buffer [rd hov_req curr_ch_type_1]
+		lappend buffer [rd hov_req spch_ver]
+		lappend buffer $encr_info
+		lappend buffer $clmark2
+		lappend buffer $cell_idfr_srvng
+		lappend buffer $cell_idfr_tgt
+	}
+
+	log "SendCommonAsgReq: buffer=$buffer"
+
+	DbSet $glBssapDb $glMsId AsgReqBuffer $buffer
+
+	if { $glAoip } {
+		set upType [DbGet $glBssapDb $glMsId UpType]
+	}
+
+	if { !$glAoip || !$upType } {
+		SendCicAsgReq $spi $ch_rate $bsc_ID $datarate
+	} elseif { $upType == 1 } {
+		log "invio richiesta assegnamento risorsa ip"
+		SendTlaAsgReq $bsc_ID
+		log "invio richiesta assegnamento risorsa tdm"
+		SendCicAsgReq $spi $ch_rate $bsc_ID $datarate
+		DbSet $glBssapDb $glMsId TlaCicAsgRes 0
+	} elseif { $upType == 2 } {
+		SendTlaAsgReq $bsc_ID
+	} else {
+		log "SendCommonAsgReq: ERROR ! (glAoip=$glAoip; upType=$upType)"
+	}
+}
+
+proc ReleaseTla { } {
+
+	if { ![isSplitted] } {
+		if { [info exists ::__aoip_ppu_list] } {
+			log "ReleaseTla: AoIP: Release active resource in case of single-processor"
+			MultiPpuRelease
+		} else {
+			log "ReleaseTla: variable __aoip_ppu_list doesn't exist --> Multi Ppu management not done"
+		}
+	} else {
+		# Multiprocessor version
+		log "ReleaseTla: AoIP: Release active resource in case of multi-processor"
+		SendTlaRelReq
+	}
+}
+
+
+#################################################################################
+# Common utilities for the signalling over TDM in case of Multiprocessor version
+#################################################################################
+
+proc SendCicAsgReq { spi ch_rate bscid datarate } {
+
+	global glMsId glBssapDb
+
+	new BSSAP_CIC_ASG_REQ c
+        wr c    MsId                    $glMsId
+        wr c    BscId                   $bscid
+        wr c    ResetQueueIndex         1
+        wr c    PermSpeech              [DbGet $glBssapDb $glMsId PermSpeech]
+        wr c    Spi                     $spi
+        wr c    DataRate                $datarate
+        wr c    ChRate                  $ch_rate
+
+        send c
+}
+
+proc MASTER_RcvCicAsgReq { } {
+
+	global _sig glBssapDb
+	
+	LogInputSig
+	
+	set vl 4; #//verbosity level
+	set logvb "logv"
+	append logvb $vl
+
+	set bscid 		[rd _sig BscId]
+	set msId		[rd _sig MsId]
+	set resQueIdx	[rd _sig ResetQueueIndex]
+	set permSpeech	[rd _sig PermSpeech]
+	set spi			[rd _sig Spi]
+	set datarate	[rd _sig DataRate]
+	set chrate		[rd _sig ChRate]
+
+	DbSet $glBssapDb $msId PermSpeech $permSpeech
+	DbSet $glBssapDb $msId Spi $spi
+	DbSet $glBssapDb $msId DataRate $datarate
+	DbSet $glBssapDb $msId ChannelRate $chrate
+
+	#log "MASTER_RcvCicAsgReq: resQueIdx=$resQueIdx"
+
+	GetTrfCic $bscid cic fail cicExt $resQueIdx permSpeechIndex
+
+	#---------
+	#TMA-467
+	if { [info exists fail] && $fail == "0x22" || [info exists fail] && $fail == "cicNextError" } {
+		set fail 1
+	} else {
+		if { ![DbKeyExists $glBssapDb Cic $cic] } {
+			# store in the BssapDb for the Master
+			DbSet $glBssapDb $msId Cic $cic
+		} else {
+			$logvb "MASTER_RcvCicAsgReq: ERROR: Cic=$cic already exists in $glBssapDb"
+			set fail 1
+		}
+
+		if { ![DbKeyExists $glBssapDb CicExt $cicExt] } {
+			# store in the BssapDb for the Master
+			DbSet $glBssapDb $msId CicExt $cicExt
+		} else {
+			$logvb "MASTER_RcvCicAsgReq: ERROR: CicExt=$cicExt already exists in $glBssapDb"
+			set fail 1
+		}
+	}
+	# --------
+
+	new BSSAP_CIC_ASG_RES s
+	wr s 	MsId	$msId
+
+	if { [info exist fail] && $fail == 1 } {
+		log "MASTER_RcvCicAsgReq: failure=$fail"
+		$logvb "WARNING: the cic assignment has been UNSUCCESSFULLY completed!"
+		wr s	Fail	$fail
+	} else {
+		wr s   	PpuId	[DbGet $glBssapDb $msId PpuId]
+		wr s	Cic 	$cic
+		wr s	CicExt	$cicExt
+		
+		wr s	PermSpeechIndex	$permSpeechIndex
+		wr s	Fail	0
+	}
+	send s
+
+	#LogOutputMsg $s
+	LogOutputMsgv0 $s
+}
+
+proc MASTER_RcvCicRelReq { } {
+
+	global _sig glBssapDb
+
+	LogInputSigv0
+
+	set msId [rd _sig MsId]
+	set bscId [rd _sig BscId]
+	set cic [rd _sig Cic]
+
+	cicRelease $bscId $cic
+
+	DbSet $glBssapDb $msId Cic "?"
+	DbSet $glBssapDb $msId CicExt "?"
+	
+	logv4 "MASTER_RcvCicRelReq: releasing cic=$cic bscId=$bscId (msId=$msId)"
+}
+
+proc SendCicReleaseToMaster { bscId msId cic } {
+	
+	new BSSAP_CIC_REL_REQ 	s
+	wr  s	MsId		$msId
+	wr  s	BscId		$bscId
+	wr  s	Cic			$cic
+	send s
+
+	LogOutputMsgv0 $s
+}
+
+################################################################################
+# Common utilities for the signalling over IP in case of Multiprocessor version
+################################################################################
+
+proc SendUniqueppedCircuit_To_Slave { } {
+
+	global _sig glBssapDb
+
+	set circ_idty_code_list		[rd _sig circ_idty_code_list]
+	set circ_idty_code			[rd _sig circ_idty_code]
+
+	set cic [htous $circ_idty_code B]
+	log "SendUniqueppedCircuit_To_Slave: circ_idty_code_list=$circ_idty_code_list; circ_idty_code=$circ_idty_code --> cic=$cic"
+
+	set msid 		[DbGetIdx $glBssapDb Cic $cic]
+	log "SendUniqueppedCircuit_To_Slave: msid=$msid"	
+
+	if { [IsVoid $msid] || [IsEmpty $msid] } {
+		log "SendUniqueppedCircuit_To_Slave: ATTENTION: msid is void or empty"
+	} else {
+
+		set bscid 		[DbGet $glBssapDb $msid BscId]
+		log "SendUniqueppedCircuit_To_Slave: msid=$msid; bscid=$bscid"
+
+		new BSSAP_UQPPD_CIRC_IND s
+		wr	s MsId	$msid
+		wr	s BscId	$bscid
+		wr	s Cic_NotReleasable	$cic
+
+		LogOutputMsg $s
+		send s
+	}
+}
+
+proc TriggerResetTdmCircuits { bscId cicList } {
+
+	log "TriggerResetTdmCircuits: BscId=$bscId, CicList=$cicList"
+
+	if { ![IsEmpty $cicList] && ![IsVoid $cicList] } {
+		set callMsList [GetMsIdSeparatedList $cicList Cic]
+	
+		if { ![IsVoid $callMsList] } {
+			new BSSAP_RESET_TDMCIRCUIT_REQ	s
+			wr  s BscId		$bscId
+			wr  s MsIdList	$callMsList
+			wr  s CicList	$cicList
+
+			LogOutputMsg $s
+			send s
+		} else {
+			logv4 "TriggerResetTdmCircuits: 'BSSAP_RESET_TDMCIRCUIT_REQ' isn't sent"
+		}
+	} else {
+		logv4 "TriggerResetTdmCircuits: WARNING: cicList is empty or void --> the signal BSSAP_RESET_TDMCIRCUIT_REQ isn't sent"
+	}
+}
+
+proc SendBssapResetTdmCircuitRes { msRel } {
+
+	set cicRel	[rd ::_sig circ_idty_code]
+	log "SendBssapResetTdmCircuitRes: for the ms_released=$msRel --> cic_released=$cicRel"
+
+	set bscId 	[DbGet $::glBssapDb $msRel BscId]
+	log "SendBssapResetTdmCircuitRes: bscId=$bscId"
+
+	new BSSAP_RESET_TDMCIRCUIT_RES s
+	wr	s MsId			$msRel
+	wr 	s BscId			$bscId
+	wr  s CicReleased	$cicRel
+	
+	LogOutputMsg $s
+	send s
+}
+
+proc TriggerResetResource { bscId callIdList cause } {
+
+	set callMsList [GetMsIdSeparatedList $callIdList CallId]
+
+	new BSSAP_RESET_RESOURCE_REQ	s
+	wr  s BscId		$bscId
+	wr  s MsIdList	$callMsList
+	wr  s CallId	$callIdList
+	wr 	s Cause 	$cause
+
+	LogOutputMsg $s
+	send s 0 1; #verbosita 1
+}
+
+proc SendBssapResetResourceRes { msList } {
+
+	set msid [lindex $msList 0]
+	logv4 "SendBssapResetResourceRes: MsId=$msid; MsIdList=$msList"
+
+	if { ![IsVoid $msid] && ![IsEmpty $msid] } {
+		new BSSAP_RESET_RESOURCE_RES	s
+		wr	s MsId		$msid
+		wr  s MsIdList	$msList
+
+		LogOutputMsg $s
+		send s 0 1; # Carlo: grado di verbosita 1 (in qs modo ho qs send tracciata nel log con tm lanciato con -v 1)
+	} else {
+		logv4 "msid is void or empty .. maybe these resources have been released previously -> skip sending of 'BSSAP_RESET_RESOURCE_RES'"
+		return
+	}
+}
+
+proc SendTlaAsgReq { bscid } {
+
+	new BSSAP_TLA_ASG_REQ	s
+	wr  s MsId		$::glMsId
+	wr  s BscId		$bscid
+
+	send s 0 1; # con verbosità 1
+}
+
+proc MASTER_RcvTlaAsgReq { } {
+
+	global _sig glBssapDb
+
+	LogInputSig
+
+	set bscid 	[rd _sig BscId]
+	set msid	[rd _sig MsId]
+
+	set ppuid	[DbGet $glBssapDb $msid PpuId]
+	log "MASTER_RcvTlaAsgReq: ---- ppuid=$ppuid ----"
+
+	set vl 4; #//verbosity level
+	set logvb "logv"
+	append logvb $vl
+
+	set sndResetIpForCallId [DbGet $glBssapDb $msid SendResetIpForCallId]
+
+	if { $sndResetIpForCallId == 0 } {
+		GetTranspLayerAddr $msid $bscid transpLayerAddr callid fail
+
+		#TMA-484 01/07/2012 start 
+		set Ip [GetIpAddressFromContainer $transpLayerAddr]
+		set Port [GetUdpPortFromContainer $transpLayerAddr]
+		while { [DbKeyExists $glBssapDb IpAddPort $Ip-$Port] } {
+			logv1 "MASTER_RcvTlaAsgReq: IpAddPort=$Ip-$Port already exists in BssapDb for MsId:[DbGetIdx $glBssapDb IpAddPort $Ip-$Port]"
+			logv1 ".... it repeats procedure to get transport layer address (Ip address and udp Port)"
+			GetTranspLayerAddr $msid $bscid transpLayerAddr callid fail
+		}
+		# memorizzo nel BssapDb del master
+		DbSet $glBssapDb $msid IpAddPort $Ip-$Port
+		#TMA-484 end
+
+		# store in the BssapDb for the Master
+		DbSet $glBssapDb $msid CallId $callid
+		DbSet $glBssapDb $msid BscId $bscid
+	} else {
+		# per qs msid ho tx la RESET_RESOURCE_REQ ma non ho rx la relativa ACK -> quindi non si può associare una nuova CallId per qs msid
+		$logvb "WARNING: RESET_RESOURCE_ACK not still received for msid=$msid -> for this mobile it isn't possible to assign ip resource"
+		set fail 1
+	}
+	
+	
+	if { [IsVoid $ppuid] } {
+		set ppuid [DbGet $glBssapDb $msid PpuId]
+	}
+	if { [IsVoid $ppuid] } { log "MASTER_RcvTlaAsgReq: ERROR: ppuid=$ppuid" }
+
+	new BSSAP_TLA_ASG_RES	s
+	wr  s MsId		$msid
+
+	if { [info exists fail] } {
+		$logvb "MASTER_RcvTlaAsgReq: WARNING: the tla assignment has been UNSUCCESSFULLY completed!"
+		wr  s   PpuId		$ppuid
+		wr  s	Fail		1
+	} else {
+		$logvb "msid=$msid -> callid=$callid; bscid=$bscid; transpLayerAddr=$transpLayerAddr; ppuid=$ppuid;\																	sndResetIpForCallId=$sndResetIpForCallId"
+
+		wr  s   PpuId		$ppuid
+		wr  s	Aoip_Tla 	$transpLayerAddr
+		wr  s   CallId		$callid
+		wr  s	Fail		0
+	}
+	send s 0 1; # trasmetto con verbosità 1
+
+	LogOutputMsg $s
+}
+
+# It provides a ip traffic resource (tla: transport layer address = IP_address + UDP_port)
+# used only for Multiprocessor version
+proc GetTranspLayerAddr { msId bscId tla callId fail } {
+
+	set name "GetTranspLayerAddr"
+
+	upvar 1 $tla aoip_TransportLayerAddress
+	upvar 1 $callId callid
+	upvar 1 $fail failure
+
+	if { 1 } {
+		set ppuId [DbGet $::glBssapDb $msId PpuId]
+		Trace "log" $::__trace_AUoIP $name "msId=$msId; bscId=$bscId; ppuId=$ppuId"
+
+		if { [IsVoid $ppuId] } {
+		#TMA-475
+			log "GetTranspLayerAddr: case of PpuId stored in glBssapDb is void --> it recomputes the PpuId"
+			if { [info exists ::__aoip_ppu_list] } {
+				# Multi Ppu handling #
+				MultiPpuAssign
+			} else {
+				log "GetTranspLayerAddr: WARNING: the variable __aoip_ppu_list doesn't exist --> Multi Ppu management isn't done"
+			}
+		}
+
+		set ::glIpAddIndex 		[DbGet $::glBssapDb $msId PpuId]
+		log "GetTranspLayerAddr: glIpAddIndex=$::glIpAddIndex"
+
+		# gestore risorse ip implementato a Tcl
+		UPoIPcnSet aoipMgwAddr port callid $::glIpAddIndex
+
+		#set aoipMgwAddr		[lindex $::__aoip_address $::glIpAddIndex]
+		#set port 			[GetAUPoIPPort]
+		
+		set aoip_TransportLayerAddress	[GetAUPoIPContainer $aoipMgwAddr $port]
+	
+		#TMA-429 	workaround
+		#DbSet $::glBssapDb $msId IpAddPort $aoip_TransportLayerAddress
+		# --- #
+
+	} elseif { 0 } {
+		# Carlo TODO gestore risorse ip implementato a C
+	}
+
+	if { $aoip_TransportLayerAddress <= 0 } {
+		# Carlo TODO settare meglio la condizione per cui si verifica l'eventuale assenza di risorse
+		log "GetTranspLayerAddr: WARNING: aoip_TransportLayerAddress=$aoip_TransportLayerAddress"
+		set failure 0x22; # "Requested terrestrial resource unavailable"
+	}
+	Trace "log" $::__trace_AUoIP $name "aoipMgwAddr=$aoipMgwAddr; port=$port; aoip_TransportLayerAddress=$aoip_TransportLayerAddress"
+}
+
+proc SendTlaRelReq { } {
+
+	global glMsId glBssapDb
+
+	set bscId	[DbGet $glBssapDb $glMsId BscId]
+	set callId	[DbGet $glBssapDb $glMsId CallId]
+	
+	Trace "log" $::__trace_AUoIP "SendTlaRelReq" "glMsId=$glMsId; BscId=$bscId; CallId=$callId"
+
+	new 	BSSAP_TLA_REL_REQ	s
+
+	wr   	s MsId		$glMsId
+	wr   	s BscId		$bscId
+	wr		s CallId	$callId
+
+	send 	s
+}
+
+proc MASTER_RcvTlaRelReq { } {
+
+	global _sig glBssapDb
+
+	set name "MASTER_RcvTlaRelReq"
+
+	LogInputSig
+	
+	set bscid 		[rd _sig BscId]
+	set msid		[rd _sig MsId]
+	
+	set ppuId 		[DbGet $glBssapDb $msid PpuId]
+	set ip_port 	[DbGet $glBssapDb $msid IpAddPort]
+
+	Trace "log" $::__trace_AUoIP $name "MsId=$msid; BscId=$bscid; PpuId=$ppuId; ip_port=$ip_port"
+
+	if { [info exists ::__aoip_ppu_list] } {
+		log "MASTER_RcvTlaRelReq: Multi Ppu handling in case of A_Tm Multiprocessor"
+		# Multi Ppu handling #
+		MultiPpuRelease $msid
+		if {![IsVoid $ppuId]} {
+			Trace "log" $::__trace_AUoIP $name "glPpuIdNumb($ppuId) = $::glPpuIdNumb($ppuId)"
+		}
+	} else {
+		log "MASTER_RcvTlaRelReq: variable __aoip_ppu_list doesn't exist --> Multi Ppu management not done"
+	}
+
+	# TMA-447 --- #
+	DbSet $glBssapDb $msid CallId "?"
+
+	# ----------- #
+
+# 	set transpLayerAddr  TODO
+
+#	new 	BSSAP_TLA_REL_RES	s
+#	
+#	wr  	s MsId			$msid
+#	wr  	s PpuId			$ppuId
+#	wr  	s Aoip_Tla 		$transpLayerAddr
+#	wr  	s CallId		$callid
+#	send 	s
+#
+#	LogOutputMsg $s
+}
+
+#proc SLAVE_RecvTlaAsgRes { } {
+
+
+
+#}
+
+proc MASTER_RcvResetTdmCircuitReq { } {
+
+	global _sig glMsDb glBssapDb
+
+	LogInputSig
+
+	# list of the releasable cics
+	set rel_cic_list ""
+
+	set bscid 	[rd _sig BscId]
+
+	log "MASTER_RcvResetTdmCircuitReq: list of mobiles which it sends the RESET CIRCUIT is here built"
+	set ciclist [GetActiveCicsList]
+	if { ![IsEmpty $ciclist] && ![IsVoid $ciclist] } {
+		set mslist  [GetMsIdSeparatedList $ciclist Cic]
+	} else {
+		log "MASTER_RcvResetTdmCircuitReq: ERROR: ciclist is void"
+		set mslist ?
+	}
+
+	log "MASTER_RcvResetTdmCircuitReq: bscid=$bscid; mslist=$mslist; cic_list=$ciclist"
+
+	if { [IsVoid $mslist] } {
+		log "MASTER_RcvResetTdmCircuitReq: ERROR: mslist is void"
+	}
+
+	set len [llength [split $mslist ","]]
+	log "MASTER_RcvResetTdmCircuitReq: mslist_length=$len"
+
+	# Store in BssapDb the 'Cic' and 'BscId'
+	for {set j 0} {$j < $len} {incr j} {
+		set msid [lindex [split $mslist ","] $j]
+		set cicid [lindex [split $ciclist ","] $j]
+		log "MASTER_RcvResetTdmCircuitReq: msid=$msid <--> cicid=$cicid"
+
+		if { [DbKeyExists $glBssapDb Idx $msid] } {
+			if { ![DbGet $glBssapDb $msid SendResetCircuit] } {
+				DbSet $glBssapDb $msid SendResetCircuit 1
+				DbSet $glBssapDb $msid Cic $cicid
+				DbSet $glBssapDb $msid BscId $bscid
+				log "MASTER_RcvResetTdmCircuitReq: ms=$msid; Cic_Db=[DbGet $glBssapDb $msid Cic]; BscId_Db=[DbGet $glBssapDb $msid BscId]"
+
+				if { $rel_cic_list != "" } {
+					append rel_cic_list ","
+				}
+				append rel_cic_list $cicid
+			} else {
+				if { ![IsVoid [DbGet $glBssapDb $msid Cic]] || ![IsVoid [DbGet $glBssapDb $msid CicExt]] } {
+					log "MASTER_RcvResetTdmCircuitReq: ATTENTION .. 'SendResetCircuit' = 1 and Cic and CicExt into BssapDb aren't void\						   could be signal 'UQPPD_CIRC' has been received before or we're waiting to receive 'RST_CIRC_ACK' for this msid=$msid"
+				}
+				log "MASTER_RcvResetTdmCircuitReq: already sent 'RST_CIRC' signal for this ms=$msid; waiting to receive the ACK skip msg"
+				continue
+			}
+		} else {
+			log "MASTER_RcvResetTdmCircuitReq: entry $msid doesn't exist in BssapDb"
+		}
+	}
+
+	foreach cic [split $rel_cic_list ","] {
+		log "MASTER_RcvResetTdmCircuitReq: --> send reset tdm circuit only to the releasable resources"
+		incr ::glnumTimeSlot
+		SendResetTdmCircuit $cic
+	}
+}
+
+proc SLAVE_RcvResetTdmCircuitRes { } {
+
+	global _sig glBssapDb glnumTimeSlot glMsId
+
+	LogInputSig
+
+	set msId		[rd _sig MsId]
+	set cic_hex		[rd _sig CicReleased]
+	set bscId		[rd _sig BscId]
+
+	set cic			[htous $cic_hex B]
+	
+	log "SLAVE_RcvResetTdmCircuitRes: delete from the BssapDb the cic=$cic already released on the bscId=$bscId"
+	
+	set cicExt [GetExtCic $bscId $cic]
+
+	set idx [IsCicUsed $cicExt CicExt]
+
+	if { $idx != -1 } {
+		
+		if { $idx != $msId } {
+			log "SLAVE_RcvResetTdmCircuitRes: ERROR !!! (MsId_Rx=$msId; idx=$idx)"
+		}
+
+		log "SLAVE_RcvResetTdmCircuitRes: found idx=$idx --> put to void both 'Cic' and 'CicExt' the Bssap field."
+		DbSet $glBssapDb $idx Cic ?
+		DbSet $glBssapDb $idx CicExt ?
+
+		# Carlo: nel caso multiprocess suppongo di gestire max 1 BSC --> prendo idx di uno dei cic che tanto stanno tutti sullo stesso bsc
+		# (il caso con + bsc verra' gestito dal ramo di codice relativo al singleprocess)
+
+		set bscid [DbGet $glBssapDb $idx BscId]
+		log "SLAVE_RcvResetTdmCircuitRes: cic_released=$cic on bscid=$bscid"
+
+		if { $glnumTimeSlot == 1 } {
+			# Carlo 07/10/2011: there is one time slot busy (among those releasable)
+			set glnumTimeSlot [expr {$glnumTimeSlot - 1}]
+			# now all timeslots 'releasable'(to see field in MsDb 'RsNotRel') were released
+			set tid [DbGet $::glBscDb $bscid T_RESET_TDMCIRCUITid]
+			if { ![IsVoid $tid] && [tmrrunning $tid] } {
+				tmrstop $tid
+				
+				tmrstart $tid ; #Carlo workaround TMA-467 09/03/2012
+
+				# Release of the signalling
+				GetInstance $idx $glBssapDb glMsId
+				log "SLAVE_RcvResetTdmCircuitRes: idx=$idx -> glMsId=$glMsId; state = [DbGet $glBssapDb $idx State]"
+				if { [DbGet $glBssapDb $idx State] == "BssapConnectActive" } {
+					ReleaseFromResetCircuitAck $idx $cic
+				} else {
+					log "SLAVE_RcvResetTdmCircuitRes: for mobile idx=$idx the state is != 'BssapConnectActive' --> no action done"
+				}
+			} else {
+				log "SLAVE_RcvResetTdmCircuitRes: tid=$tid -> NO Periodic 'T_RESET_TDMCIRCUIT' actives towards bscid=$bscid so no action done"
+			}
+		} elseif { $glnumTimeSlot > 1 } {
+			set glnumTimeSlot [expr {$glnumTimeSlot - 1}]
+		} else {
+			logscr "SLAVE_RcvResetTdmCircuitRes: ERROR .. non devo entrare qui mai"
+		}
+	} else {
+		log "SLAVE_RcvResetTdmCircuitRes: ERROR .. Cic=$cic isn't included in the $glBssapDb"
+	}
+}
+
+proc MASTER_RcvResetResourceReq  { } {
+
+	global _sig glBssapDb
+
+	LogInputSigv0
+
+	set vl  4; #//verbosity level
+    set logvb "logv"
+    append logvb $vl
+
+	set bscid [rd _sig BscId] 
+	set ms_list [rd _sig MsIdList] 
+	set callId_slaveList [rd _sig CallId] 
+	set cause [rd _sig Cause] 
+
+	$logvb "MASTER_RcvResetResourceReq: bscid=$bscid; ms_list=$ms_list; callId_SlaveList=$callId_slaveList; cause=$cause"
+
+	if { [IsVoid $ms_list] } {
+		$logvb "MASTER_RcvResetResourceReq: ERROR: ms_list is void"
+	}
+
+	set len [llength [split $ms_list ","]]
+	$logvb "MASTER_RcvResetResourceReq: ms_list_length=$len"
+
+	set msid [lindex [split $ms_list ","] 0]
+	set callid_dbMaster [DbGet $glBssapDb $msid CallId]
+	$logvb "MASTER_RcvResetResourceReq: msid=$msid; BscId_Db=[DbGet $glBssapDb $msid BscId] <--> callid_Db_MasterList=$callid_dbMaster"
+
+	set leng [llength $callId_slaveList]
+	$logvb "MASTER_RcvResetResourceReq: callId_slaveList=$callId_slaveList"
+	$logvb "MASTER_RcvResetResourceReq: length of the callId_slaveList received --> $leng"
+
+	set found 0
+
+	####### Carlo 29/12/2011 TMA-447 ######
+
+	if { $leng <= 61 } {
+		set callidListLength 1
+		$logvb "leng=$leng; callidListLength=$callidListLength"	
+		set new 2
+		while { $new } {
+			foreach ms [DbGetIndexList $glBssapDb] {
+				set new 1
+				set callId [DbGet $glBssapDb $ms CallId]
+				set sndResetIpForCallId	[DbGet $glBssapDb $ms SendResetIpForCallId]
+			
+				if { ![IsVoid $callId] } {
+					$logvb " -- callId=$callId -- ms=$ms -- SendResetIpForCallId=[DbGet $glBssapDb $ms SendResetIpForCallId]"
+				}
+
+				if { $callidListLength <= 61 } {
+					set new 0
+					if { ![IsVoid $callId] } {
+						if { !$sndResetIpForCallId } {
+							DbSet $glBssapDb $ms SendResetIpForCallId 1
+							incr callidListLength
+							append callIdList $callId
+							set found 1
+							continue
+						} else {
+							# callId already resetted
+							$logvb "ms=$ms <--> callId=$callId; it doesn't send the RESET message because already done before \														(SendResetIpForCallId=$sndResetIpForCallId)"
+						}
+					}
+				} else {
+					$logvb "new=$new ==> the callIdList is length 61 --> Send 'Reset_Resource' message with this callIdList=$callIdList"
+					SendResetIpResource $callIdList $cause
+
+					$logvb "MASTER_RcvResetResourceReq: built now a new callIdList"
+					unset callIdList
+					set callidListLength 1
+					set new 0
+					set found 0
+					$logvb "debug Carlo: WARNING: found=$found"
+					if { ![IsVoid $callId] } {
+						if { !$sndResetIpForCallId } {
+							$logvb " -- first callId of the new callIdList: callId=$callId <--> for the ms=$ms"
+							DbSet $glBssapDb $ms SendResetIpForCallId 1
+							incr callidListLength
+							append callIdList $callId
+							set found 1
+						} else {
+							$logvb "ms=$ms <--> callId=$callId; no sending of the RESET message because already done before \														(SendResetIpForCallId=$sndResetIpForCallId)"
+						}
+					}
+				}
+			}
+		}
+	} else {
+		$logvb "MASTER_RcvResetResourceReq: ERROR: the list of the CallId received from the slave is long more than 61"
+	}
+
+	if { $found != 0 } {
+		$logvb "MASTER_RcvResetResourceReq: callIdList=$callIdList"
+		SendResetIpResource $callIdList $cause
+	} else {
+		$logvb "MASTER_RcvResetResourceReq: WARNING: no action done: RESET IP RESOURCES already sent for these callId (found=$found)"
+		#creo lista dei mobili con spazi separatori invece delle virgole
+		for {set l 0} {$l < $leng} {incr l} {
+			set mS [lindex [split $ms_list ","] $l ]
+			#log "mS=$mS"; #cDEBUG
+        	if { $mS != "," } {
+				append mslist $mS
+                append mslist " "
+      		}
+      		incr l
+  		}
+		#log "mslist=$mslist"
+		# reply to slave to stop timer triggering the sending of the BSSAP_RESET_RESOURCE_REQ
+		SendBssapResetResourceRes $mslist ; # in realtà non so se è OK qs TODO verificare
+	}
+}
+
+proc SLAVE_RcvResetResourceRes { } {
+
+	global _sig glBssapDb glMsId
+
+	LogInputSig
+
+	set vl  4; #//verbosity level
+    set logvb "logv"
+    append logvb $vl
+
+	set reset_res 0
+	set slave_ms_list ""
+
+	set msIdList [rd _sig MsIdList]
+	$logvb "SLAVE_RcvResetResourceRes: msIdList=$msIdList"
+
+	foreach msid $msIdList {
+		$logvb "SLAVE_RcvResetResourceRes: msid=$msid"
+		set callId [DbGet $glBssapDb $msid CallId]
+		if { ![IsVoid $callId] } {
+			set reset_res 1
+			append slave_ms_list $msid
+			append slave_ms_list ,
+			set bscId  [DbGet $glBssapDb $msid BscId]
+			$logvb "SLAVE_RcvResetResourceRes: msid=$msid <--> callId_Released=$callId on bscId=$bscId"
+
+			# it deletes for e.g. the CallId parameter
+			ResetIpKeyParameters $msid
+			$logvb "SLAVE_RcvResetResourceRes: releases IP parameters (including the CallId) for the mobile $msid"
+
+			GetInstance $msid $glBssapDb glMsId
+			$logvb "SLAVE_RcvResetResourceRes: state = [DbGet $glBssapDb $msid State]"
+			if { [DbGet $glBssapDb $msid State] == "BssapConnectActive" } {
+				set cause 60; # protocol error
+				RcvClrReqServing $cause
+			} else {
+				$logvb "SLAVE_RcvResetResourceRes: for msid=$msid the State is != 'BssapConnectActive' --> nothing action done"
+			}
+		}
+	}
+	$logvb "SLAVE_RcvResetResourceRes: reset_res=$reset_res; slave_ms_list=$slave_ms_list"
+	if { $reset_res } {
+		set msId [lindex [split $slave_ms_list ,] 0]
+		$logvb "SLAVE_RcvResetResourceRes: msId=$msId -- at the least a mobile is handled from this slave"
+		# Carlo 19/10/2011: attenzione : caso con un unico BSC connesso; TODO extension
+		set bscid  [DbGet $glBssapDb $msId BscId]
+		# Stop Timer
+		StartStopTimerRstResource 0 $bscid
+	} else {
+		$logvb "SLAVE_RcvResetResourceRes: no mobiles in this slave"
+	}
+}
+
+proc SLAVE_RcvUnequippedCircuitInd { } {
+
+	global _sig glBssapDb glBscDb
+
+	LogInputSig
+
+	set msId 				[rd _sig MsId]
+	set bscid				[rd _sig BscId]
+	set cic_notReleasable 	[rd _sig Cic_NotReleasable]
+	log "SLAVE_RcvUnequippedCircuitInd: msId=$msId; bscid=$bscid --> cic_NotReleasable=$cic_notReleasable"
+
+	set opc 				[DbGet $glBssapDb $msId Spc]
+	set dpc 				[DbGet $glBscDb $bscid Dpc]
+	log "SLAVE_RcvUnequippedCircuitInd: opc=$opc; dpc=$dpc"
+
+	# ------ #
+	#set cicExt_notRel 		[GetExtCic $bscid $cic_notReleasable]
+	#set id_bssapDb 			[IsCicUsed $cicExt_notRel CicExt]
+	# ------ #
+
+	if { ![IsVoid $cic_notReleasable] } {
+		set idx [DbGetIdx $glBscDb Dpc $dpc]
+		log "SLAVE_RcvUnequippedCircuitInd: dpc=$dpc --> idx=$idx"
+		if { [DbGet $glBscDb $idx Opc] == $opc } {
+			set tid [DbGet $glBscDb $idx T_RESET_TDMCIRCUITid]
+			if { ![IsVoid $tid] && [tmrrunning $tid] } {
+				log "SLAVE_RcvUnequippedCircuitInd: >>>> timer T_RESET_TDMCIRCUIT stopped"
+				tmrstop $tid
+			} else {
+				log "SLAVE_RcvUnequippedCircuitInd: tid=$tid --> no Periodic Reset T_RESET_TDMCIRCUIT triggered"
+			}
+		} else {
+			log "SLAVE_RcvUnequippedCircuitInd: opc isn't equal between BssapDb and BscDb"
+		}
+	} else {
+		log "SLAVE_RcvUnequippedCircuitInd: 'Cic_NotReleasable' is void"
+	}
+}
+
+##############################################################
+# proc called by remote cmd in cc_cn.tsm
+proc SetPeerMsId { msId peerMsId } {
+
+	global glBssapDb
+	DbSet $glBssapDb $msId PeerMsId $peerMsId
+	DbSet $glBssapDb $peerMsId PeerMsId $msId
+	log "SetPeerMsId: set PeerMsId=$peerMsId for the mobile msId=$msId and PeerMsId=$msId for the mobile MsId=$peerMsId"
+}
+
+proc ReleaseFromResetCircuitAck { idx cic_released } {
+
+	global glBssapDb glMsId
+
+	set cause 60; # protocol error
+
+	set spcstkidcid [DbGet $glBssapDb $idx Spc]
+	append spcstkidcid -
+	append spcstkidcid [DbGet $glBssapDb $idx StkId]
+	append spcstkidcid -
+	append spcstkidcid $cic_released
+	log "ReleaseFromResetCircuitAck: spcstkidcid=$spcstkidcid"
+	RcvClrReqServing $cause $spcstkidcid
+
+	# Send Clr_Cmd also towards the Cid of the PeerMsId
+	set cicConnection [DbGet $glBssapDb $idx CicConnection]
+	log "ReleaseFromResetCircuitAck: idx=$idx --> CicConnection to be released: $cicConnection"
+	if { ![IsVoid $cicConnection] } {
+		if { [lindex $cicConnection 2] == $cic_released } {
+			set peerCic [lindex $cicConnection 6]
+		} elseif { [lindex $cicConnection 6] == $cic_released } {
+			set peerCic [lindex $cicConnection 2]
+		}
+		set peerIdx [DbGetIdx $glBssapDb Cic $peerCic]
+		log "ReleaseFromResetCircuitAck: cics to be released: Cic(ms=$idx)=$cic_released <-> PeerCic(peer_ms=$peerIdx)=$peerCic"
+		log "ReleaseFromResetCircuitAck: state = [DbGet $glBssapDb $peerIdx State]"
+		if { [DbGet $glBssapDb $peerIdx State] == "BssapConnectActive" } {
+			set spcstkidcid [DbGet $glBssapDb $peerIdx Spc]
+			append spcstkidcid -
+			append spcstkidcid [DbGet $glBssapDb $peerIdx StkId]
+			append spcstkidcid -
+			append spcstkidcid $peerCic
+			log "ReleaseFromResetCircuitAck: spcstkidcid=$spcstkidcid"
+			RcvClrReqServing $cause $spcstkidcid
+		} else {
+			log "ReleaseFromResetCircuitAck: for mobile peerIdx=$peerIdx the State is != 'BssapConnectActive' --> no action done"
+		}
+	}
+}
+
+proc ForceReset { cause { uptype ? } } {
+	
+	global glAoip glBssapDb glMsDb glMsId
+	
+	if { $glAoip } {
+		set upType [DbGet $glBssapDb $glMsId UpType]
+	}
+
+	if { !$glAoip || ![IsVoid $uptype] && $uptype == 0 || $upType == 0 } {
+		return 0
+	}
+
+	if { [DbEntryExists $glMsDb $glMsId] } {
+		switch -exact -- $cause {
+			"after_assignment_command" {
+				set flag [DbGet $glMsDb $glMsId ResetAfterAssignmentCommand]
+			}
+			"after_assignment_complete" {
+				set flag [DbGet $glMsDb $glMsId ResetAfterAssignmentComplete]
+			}
+			"after_clear_request" {
+				set flag [DbGet $glMsDb $glMsId ResetAfterClearRequest]
+			}
+			"after_internal_ho_req" {
+				set flag [DbGet $glMsDb $glMsId ResetAfterInternalHoReq]
+			}
+			"after_internal_ho_command" {
+				set flag [DbGet $glMsDb $glMsId ResetAfterInternalHoCmd]
+			}
+			default {
+				logscr "ForceReset: unknown cause $cause"
+			}
+		}
+	} else {
+		log "ForceReset: entry glMsId=$glMsId doesn't exist in $glMsDb --> case of REAL MOBILE"
+		if { [IsEmpty [DbGet $glBssapDb $glMsId CallId]] || [IsVoid [DbGet $glBssapDb $glMsId CallId]] } {
+			return 0
+		}
+	}	
+
+	if { !$flag } {
+		return 0
+	}
+
+	set cause 10
+	set callId_list [DbGet $glBssapDb $glMsId CallId]
+	log "ForceReset: callId_list=$callId_list"
+	SendResetIpResource $callId_list $cause
+	return 1		
+}
+
+proc ForceNoAnswer { } {
+
+	global glAoip glMsDb glBssapDb glMsId
+	
+	if { $glAoip } {
+		set upType [DbGet $glBssapDb $glMsId UpType]
+	}
+
+	if { !$glAoip || $upType == 0 } {
+		return 0
+	}
+
+	if { $glMsId != 0 } {
+		set flag [DbGet $glMsDb $glMsId NoAnswerToClearRequest]
+	} else {
+		set flag ?
+	}	
+
+	if { [IsVoid $flag] || $flag == 0 } {
+		return 0
+	}
+
+	return 1
+}
+
+proc GetAllAvailableCics { } {
+
+	set result ""
+
+	# Global Variables
+	global __net_side __ss7_stk_db __bsc_db glTrfDb glImplicitBscId
+
+	# Init Cic Resource Management
+	set first_ts 1
+	set last_ts 32
+    # we have ts=1 to ts=32; ts=0 is reserved -- ts 32 ??
+	set maxtimeslot [expr {$last_ts - $first_ts}]; 
+	set ncics 0
+	set nbsc 0
+	set nqueues 1000
+
+	# Cic Init
+	foreach bscid [array names glTrfDb] {
+		incr nbsc
+		log "GetAllAvailableCics bscid=$bscid"
+		foreach trlinkid [DbGetIndexList $glTrfDb($bscid)] {
+			log "GetAllAvailableCics trlinkid=$trlinkid"
+			set blk_ts [llength [GetBlkTs [DbGet $glTrfDb($bscid) $trlinkid BlkTs]]]
+			set n_ts [expr {$maxtimeslot - $blk_ts}]
+			incr ncics $n_ts
+			# Save the unique bscid
+			if { ![string compare $__net_side "bss"] } {
+				set glImplicitBscId $bscid
+			}
+		}
+	}
+
+	incr nbsc
+
+	log "ncics=$ncics"
+	log "nbsc=$nbsc"
+	# Save the number of cics to let it available to CC layer for special Alcatel feature
+	global gTotalCics
+	set gTotalCics $ncics
+
+
+	#cicInit $nbsc $nqueues $ncics
+
+	# Cic Create
+	foreach bscid [array names glTrfDb] {
+		foreach trlinkid [DbGetIndexList $glTrfDb($bscid)] {
+			set pcm_val [DbGet $glTrfDb($bscid) $trlinkid Pcm]
+			set pool_type [DbGet $glTrfDb($bscid) $trlinkid PoolType]
+
+			# setting cic values
+			for { set ts $first_ts } { $ts <= $last_ts} { incr ts } {
+				# building cic(ts) with pcm_val and ts
+				set cic($ts) [expr {$pcm_val * 32}]
+				set cic($ts) [expr {$cic($ts) + $ts}]
+			}
+
+			# unset cics listed in "TsBlocked"
+			foreach k [GetBlkTs [DbGet $glTrfDb($bscid) $trlinkid BlkTs]] {
+				unset cic($k)
+			}
+
+			# cic schema
+			# 32 --------- 24 ---------- 16 --------- 8 --------- 0
+			#  |<- bsc id ->|             |                       |
+			#  |            |<- pool id ->|                       |
+			#  |            |             |<---    queue id   --->|
+			#
+			set queue_id [DbGet $glTrfDb($bscid) $trlinkid QueueId]
+			# Was: $queue_id < 100
+			if { 1 } {
+				#log "GetAllAvailableCics: queue_id=$queue_id pool_type=$pool_type"
+				#log "GetAllAvailableCics: bscid=$bscid"
+				set cickey $queue_id
+				#set cickey [expr {[expr {$pool_type << 16}] + $cickey}]
+				set cickey [expr $cickey + ($pool_type << 16)]
+				#set cickey [expr {[expr {$bscid << 24}] + $cickey}]
+				set cickey [expr $cickey + ($bscid << 24)]
+				for { set ts 1 } { $ts < $last_ts } { incr ts } {
+					if { [info exists cic($ts)]} {
+						#log "GetAllAvailableCics: cickey=$cickey $cic($ts)"
+						if { ![string compare $__net_side "cn"] } {
+							# CICEXT
+							#set cicExt [expr $cic($ts) + ($bscid << 16)]
+							set cicExt $cic($ts)
+							#log "GetAllAvailableCics: cickey=$cickey $cic($ts) $cicExt"
+						} else {
+							set cicExt $cic($ts)
+							
+							# Save the BscId for the BSC side
+							#log "GetAllAvailableCics: BSC side: saving the BscId=$bscid"
+							global gBscId
+							set gBscId $bscid
+						}
+						#cicCreate $cickey $cic($ts)
+						#cicCreate $cickey $cicExt
+						# NEW ALEX VERSION
+						#cicCreate $bscid $cickey $cic($ts)
+
+						set elem ""
+						append elem  $bscid
+						append elem "-"
+						append elem $cickey
+						append elem "-"
+						append elem $cic($ts)
+						
+						lappend result $elem
+
+						#log "GetAllAvailableCics: cickey=$cickey cic(ts) $cic($ts) ts=$ts"
+					}
+				}
+			}
+		}
+	}
+
+	return $result
+
+}
+
+# proc used only on CN side
+proc UnblockAllBscCics {} {
+	global glBssapDb glInstNull glBscDb
+
+	set currSpc		[DbGet $glBssapDb $glInstNull Spc]
+	set currStkId	[DbGet $glBssapDb $glInstNull StkId]
+	log "UnblockAllBscCics: currSpc=$currSpc, currStkId=$currStkId"
+
+	set cics [GetAllAvailableCics]
+
+	foreach elem $cics {
+		log "UnblockAllBscCics: elem=$elem"
+
+		set data [split $elem "-"]
+		set bscid [lindex $data 0]
+
+		set bscSpc		[DbGet $glBscDb $bscid Dpc]
+		set bscStkId	[DbGet $glBscDb $bscid StkId]
+		log "UnblockAllBscCics: bscSpc=$bscSpc, bscStkId=$bscStkId"
+
+		if {($bscSpc != $currSpc) || ($bscStkId != $currStkId)} {
+			# CIC of a different BSC. Skip it.
+			continue
+		}
+
+		set cic [lindex $data 2]
+
+		set res [cicUnblock $bscid $cic]
+		if {$res != 0} {
+			logscr "UnblockAllBscCics: cicUnblock res=$res"
+		}
+	}
+
+}
+
+#####################################################
+proc GetPcmbyLsuPcm { lsuPcm bscId trfDb } {
+
+	global glTrfDb 
+
+	log "GetPcmbyLsuPcm: bscId=$bscId; trfDb=$trfDb; lsuPcm=$lsuPcm"; #cDEBUG
+
+	set listPcm { }
+	set listId { }
+	set listLsuPcm { }
+	set listPcmType { }
+
+	foreach idx [DbGetIndexList $glTrfDb($bscId)] {
+		lappend listPcm 	[DbGet $glTrfDb($bscId) $idx Pcm]
+		lappend listId 		[DbGet $glTrfDb($bscId) $idx TrfLinkId]
+		lappend listLsuPcm 	[DbGet $glTrfDb($bscId) $idx LsuPcm]
+		if { [DbFieldExists $glTrfDb($bscId) PcmType] } {
+			lappend listPcmType [DbGet $glTrfDb($bscId) $idx PcmType]
+		}
+	}
+	log "GetPcmbyLsuPcm: listPcm=$listPcm; listId=$listId; listLsuPcm=$listLsuPcm; listPcmType=$listPcmType"; #cDEBUG
+
+	if { [llength $listPcm] != [llength $listId] || [llength $listLsuPcm] != [llength $listId] || [llength $listPcm] != [llength $listLsuPcm] } {
+		log "GetPcmbyLsuPcm: ERROR"
+		return -1
+	}
+
+	for {set x 0} {$x <= [expr {[llength $listPcm] - 1}]} {incr x} {
+		log "GetPcmbyLsuPcm: x=$x; Pcm($x)=[lindex $listPcm $x]; lsuPcm_0=[lindex [split $lsuPcm -] 0]; lsuPcm_1=[lindex [split $lsuPcm -] 1]; pcmType($x)=[lindex $listPcmType $x]"; #cDEBUG
+		if { [lindex $listLsuPcm $x] == [lindex [split $lsuPcm -] 0] } {
+			set pcmIdx [lindex $listId $x]
+			log "GetPcmbyLsuPcm: pcmIdx=$pcmIdx"; #cDEBUG
+
+			if { [DbFieldExists $trfDb PcmType] } {
+				log "GetPcmbyLsuPcm: PcmType=[DbGet $glTrfDb($bscId) $pcmIdx PcmType]"; #cDEBUG
+			} else {
+				log "GetPcmbyLsuPcm: PcmType field doesn't exist in the $trfDb"; #cDEBUG
+			}
+
+			if { ![DbFieldExists $trfDb PcmType] } {
+				if { [IsEmpty [lindex [split $lsuPcm -] 1]] || [IsVoid [lindex [split $lsuPcm -] 1]] } {
+					# Electrical PCM case
+					set pcm [DbGet $glTrfDb($bscId) $pcmIdx Pcm]
+					return $pcm
+				} else {
+					log "GetPcmbyLsuPcm: ERROR: inconsistency between lsuPcm_1=[lindex [split $lsuPcm -] 1] and the PcmType field of the $trfDb"; #cDEBUG
+				}
+			} else {
+				if { [IsEmpty [DbGet $glTrfDb($bscId) $pcmIdx PcmType]] || [IsVoid [DbGet $glTrfDb($bscId) $pcmIdx PcmType]] || ![DbGet $glTrfDb($bscId) $pcmIdx PcmType] } {
+					if { [IsEmpty [lindex [split $lsuPcm -] 1]] || [IsVoid [lindex [split $lsuPcm -] 1]] } {
+						# Electrical PCM case
+						set pcm [DbGet $glTrfDb($bscId) $pcmIdx Pcm]
+						return $pcm
+					} else {
+						log "GetPcmbyLsuPcm: ERROR: inconsistency lsuPcm_1=[lindex [split $lsuPcm -] 1] and the PcmType field of the $trfDb"; #cDEBUG
+					}
+				} else {
+					if { [DbGet $glTrfDb($bscId) $pcmIdx Stm1Line] == [lindex [split $lsuPcm -] 1] } {
+						# STM-1 mapped PCM case
+						set pcm [DbGet $glTrfDb($bscId) $pcmIdx Pcm]
+						return $pcm
+					} else {
+						log "GetPcmbyLsuPcm: INCONSISTENCY ERROR: lsuPcm_1=[lindex [split $lsuPcm -] 1] and the PcmType field of the $trfDb"; #cDEBUG
+					}
+				}
+			}
+		}
+	}
+	return -1
+}
+
+# to allow to obtain the pid of the CC layer
+proc SetCcPid { } {
+    LogInputMsg $::_sig
+	set ::glCcPid $::_src
+}
+
+# see Ss7SaalCreateLsetId
+proc GetApId { lsetId } {
+
+	return [lindex [split $lsetId "-"] 0]
+}
+
+# see Ss7SaalCreateLsetId
+proc GetContextId { lsetId } {
+
+	return [lindex [split $lsetId "-"] 1]
+}
+
+#EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE#

@@ -1,0 +1,894 @@
+
+       ___
+     /_\_/_\    PRISMA Engineering S.r.l.
+    |\ /_\ /|   Telecom testing solutions
+    | |   | |   Via Petrocchi, 4 - 20127 Milano (Italy)
+    |/|___|\|   Tel. +39 02 26113507 - Fax +39 02 26113597
+     \|/_\|/    info@prisma-eng.com - http://www.prisma-eng.com
+
+
+
+/*+----------------+*/
+/*+ RR PRIMITIVEs  +*/
+/*+----------------+*/
+/*+ OM +*/
+typedef VOID RR_CONFIG;
+
+typedef VOID RR_CONFIG_ACK;
+
+typedef {
+UINT UserPid
+LIST_OF UINT ListMs 
+} RR_SET_USER_PID;
+
+/*+ RR +*/
+typedef {
+UINT IntegrityAlgorithm
+HEXSTR IntegrityKey
+UINT CipheringAlgorithm
+HEXSTR CipheringKey
+UINT KeyStatus
+} RR_SYNC_SECURITY;
+
+typedef {
+HEXSTR PermAlg
+HEXSTR Key
+UCHAR CiphrRespMode 
+} RR_SYNC_CPHR;
+
+typedef {
+STRING CallType
+HEXSTR ChRate
+HEXSTR PermSpeech
+HEXSTR DataRate 
+} RR_SYNC_RES_ASS;
+
+typedef {
+UINT MsId
+HEXSTR MsIdentity
+STRING EstCause
+HEXSTR LAI
+HEXSTR TMSI
+BINSTR  Pdu 
+} RR_EST_REQ;
+
+typedef {
+UINT MsId
+HEXSTR LAI
+HEXSTR CellId
+HEXSTR Classmark2
+BINSTR  Pdu 
+} RR_EST_IND;
+
+typedef {
+UINT MsId
+UINT MsIdDst
+HEXSTR LAI
+HEXSTR CellId
+HEXSTR Classmark2
+BINSTR  Pdu 
+} RR_EST_CNF;
+
+typedef {
+UINT MsId
+HEXSTR Cause
+HEXSTR gprs_resmpt
+} RR_REL_IND;
+
+typedef {
+UINT MsId
+UCHAR Sapi
+BINSTR Pdu 
+} RR_DATA_REQ;
+
+typedef {
+UINT MsId
+UCHAR Sapi
+BINSTR Pdu 
+} RR_DATA_REQ_LOOP_MODE;
+
+typedef {
+UINT MsId
+UCHAR Sapi
+BINSTR Pdu 
+} RR_DATA_IND;
+
+typedef {
+UINT MsId
+UINT Res
+HEXSTR Cause
+STRUCTURE CauseVal
+} RR_SYNC_IND;
+
+typedef {
+UINT MsId
+UINT Res 
+} RR_SYNC_ACK;
+
+typedef {
+UINT MsId
+UINT Res
+HEXSTR Cause 
+} RR_SYNC_CNF;
+
+typedef {
+UINT MsId
+HEXSTR Cause 
+} RR_ABORT_REQ;
+
+typedef {
+UINT MsId
+HEXSTR Cause
+HEXSTR gprs_resmpt
+} RR_ABORT_IND;
+
+typedef {
+UINT MsId
+STRING MobIdType
+HEXSTR MobId
+HEXSTR PagingCause 
+} RR_PAGE_IND;
+
+typedef {
+UINT MsId
+UCHAR Ts
+UCHAR SubTs
+STRING ChType
+USHORT Arfcn
+UCHAR Tsc
+STRING ChMode
+STRING MRCodec
+STRING Maio
+STRING Hsn
+UINT PcchEmb
+} RR_LOW_OPEN_CH;
+
+typedef {
+UINT MsId
+} RR_LOW_CLOSE_CH;
+
+typedef {
+UINT MsId
+UINT TaAb
+UINT TaNb
+UINT Power
+UINT BbAtt
+UINT VamosLvl
+UINT TestFlags
+UCHAR TrxMirr
+} RR_LOW_MS_SET_ATTR;
+
+typedef {
+UINT MsId
+STRING TrafficMode
+STRING ChMode
+STRING ReportFile
+STRING TxMode
+STRING RxMode
+} RR_LOW_START_TRF;
+
+typedef {
+UINT MsId
+} RR_LOW_STOP_TRF;
+
+typedef {
+UINT MsId
+STRING ChType
+STRING BurstType
+STRING Data
+STRING AbTs
+STRING ChMode
+STRING Sub 
+} RR_LOW_SEND_DATA;
+
+typedef {
+UINT MsId
+} RR_LOW_EST_LINK;
+
+typedef {
+UINT MsId
+INT FnOfs 
+} RR_LOW_PN_TX_OFS;
+
+typedef {
+UINT MsId
+} RR_LOW_ACK;
+
+typedef {
+UINT MsId
+STRING Err
+} RR_LOW_NAK;
+
+typedef {
+UINT CellId
+UCHAR Load
+UCHAR BurstTypeRatio
+HEXSTR Data8
+HEXSTR Data11
+UINT Pwr
+UINT Ta
+UCHAR Tsc
+UCHAR Type
+} RR_CELL_RACH_LOAD_ACT;
+
+typedef {
+UINT CellId
+} RR_CELL_RACH_LOAD_DEACT;
+
+typedef {
+UINT CellId
+} RR_CELL_ACK;
+
+typedef {
+UINT CellId
+STRING Err
+} RR_CELL_NAK;
+
+typedef {
+UINT MsId
+HEXSTR GroupCallRef 
+} RR_JOIN_GC_REQ;
+
+typedef {
+UINT MsId
+HEXSTR GroupCallRef
+STRING Mode 
+} RR_JOIN_GC_CNF;
+
+typedef {
+UINT MsId
+HEXSTR GroupCallRef
+STRING Mode 
+} RR_JOIN_GC_IND;
+
+typedef {
+UINT MsId
+HEXSTR GroupCallRef
+UCHAR Priority
+STRING Info 
+} RR_NOTIFICATION_IND;
+
+typedef {
+UINT MsId
+HEXSTR LAI
+HEXSTR NMO
+STRING GprsIndicator
+LIST_OF HEXSTR GroupCallRefList
+UINT T3212
+UCHAR CellBarred 
+} RR_SYSINFO_IND;
+
+typedef {
+UINT MsId
+HEXSTR TMSI 
+} RR_NEWTMSI_REQ;
+
+typedef {
+UINT MsId
+HEXSTR PTMSI 
+} RR_NEWPTMSI_REQ;
+
+typedef {
+UINT MsId
+HEXSTR TLLI
+HEXSTR RAI
+HEXSTR PTMSI 
+} RR_ENABLE_GPRS_SUSPEND_REQ;
+
+typedef {
+UINT MsId 
+} RR_DISABLE_GPRS_SUSPEND_REQ;
+
+typedef {
+UINT MsId
+HEXSTR MsIdentity 
+} RR_PAGE_RSP_REQ;
+
+typedef {
+UINT MsId
+UINT MsIdDst
+HEXSTR LAI
+HEXSTR CellId
+BINSTR  Pdu 
+} RR_EST_ACK;
+
+typedef {
+UINT MsId
+HEXSTR ClassMark1 
+} RR_CLSMK1_UPDATE;
+
+typedef {
+UINT MsId
+HEXSTR ClassMark2 
+} RR_CLSMK2_UPDATE;
+
+typedef {
+UINT MsId
+HEXSTR ClassMark3 
+} RR_CLSMK3_UPDATE;
+
+typedef {
+UINT MsId
+STRUCTURE CauseVal 
+} RR_SYNC_REQ;
+
+typedef {
+UINT MsId
+HEXSTR Cause 
+} RR_REL_REQ;
+
+typedef {
+UINT MsId
+BINSTR Kc
+BINSTR Ki
+} RR_NEW_KC_KI;
+
+typedef {
+UINT MsId 
+} RR_SUSPEND_PS_REQ;
+
+typedef {
+UINT MsId 
+} RR_SUSPEND_PS_RES;
+
+/*+ RR_GMM +*/
+typedef {
+UINT MsId
+HEXSTR TLLI
+HEXSTR ChDesc 
+} RR_GMM_DTM_REQ;
+
+typedef {
+UINT MsId 
+} RR_GMM_PAGING_PS_IND;
+
+/*+ MOB +*/
+typedef {
+UINT MsId
+HEXSTR MeasRes 
+} RR_MOB_REQ;
+
+typedef {
+BINSTR Pdu
+} RR_MM_PROT;
+
+typedef {
+BINSTR Pdu	
+} RR_CC_PROT;
+
+typedef {
+BINSTR Pdu
+} RR_SMS_PROT;
+
+typedef {
+BINSTR Pdu
+} RR_SS_PROT;
+
+typedef {
+BINSTR Pdu
+} RR_GCC_PROT;
+
+/*+---------+*/
+/*+ RR PDUs +*/
+/*+---------+*/
+typedef {
+HEXSTR si_13_rest_octs 
+} RR_SYS_INFO_TYPE_13;
+
+typedef {
+UCHAR ext_ind
+UCHAR ba_ind
+HEXSTR ext_bcch_freq_list
+HEXSTR rach_ctrl_para
+HEXSTR si_2bis_rest_octs 
+} RR_SYS_INFO_TYPE_2BIS;
+
+typedef {
+HEXSTR ext_bcch_freq_list
+HEXSTR si_2ter_rest_octs 
+} RR_SYS_INFO_TYPE_2TER;
+
+typedef {
+HEXSTR rach_ctrl_para
+HEXSTR si_9_rest_octs 
+} RR_SYS_INFO_TYPE_9;
+
+typedef {
+UCHAR ext_ind
+UCHAR ba_ind
+HEXSTR ext_bcch_freq_list 
+} RR_SYS_INFO_TYPE_5BIS;
+
+typedef {
+UCHAR multi_band
+UCHAR ba_ind
+HEXSTR ext_bcch_freq_list 
+} RR_SYS_INFO_TYPE_5TER;
+
+typedef {
+HEXSTR si_2quater_rest_octs 
+} RR_SYS_INFO_TYPE_2QUATER;
+
+typedef {
+HEXSTR cell_desc
+HEXSTR nc_mode
+HEXSTR 3g_tgt_cell 
+} RR_CELL_CHG_ORDER;
+
+typedef {
+HEXSTR req_ref
+HEXSTR time_adv 
+} RR_VGCS_UPL_GRANT;
+
+typedef {
+HEXSTR ch_desc 
+} RR_PRTL_REL;
+
+typedef {
+HEXSTR rr_cause
+HEXSTR ba_range
+HEXSTR group_ch_desc
+HEXSTR group_cphr_key_num
+HEXSTR gprs_resmpt
+HEXSTR ba_list_pref
+HEXSTR utran_freq_list 
+} RR_CH_REL;
+
+typedef {
+HEXSTR rr_cause 
+} RR_UPL_REL;
+
+typedef VOID RR_PRTL_REL_CMPL;
+
+typedef {
+HEXSTR ch_desc2
+HEXSTR ch_mode
+HEXSTR vgcs_tgt_mode_ind
+HEXSTR mlrate_conf 
+} RR_CH_MODE_MOD;
+
+typedef {
+HEXSTR mobile_station_clsmrk
+HEXSTR mobile_id 
+} RR_TALK_IND;
+
+typedef {
+HEXSTR rr_cause 
+} RR_STATUS;
+
+typedef {
+HEXSTR clsmrk_enquiry_mask 
+} RR_CLSMRK_ENQUIRY;
+
+typedef {
+HEXSTR ch_desc
+HEXSTR mobile_all
+HEXSTR start_time
+HEXSTR cell_ch_desc 
+} RR_FREQ_REDEF;
+
+typedef {
+HEXSTR meas_res 
+} RR_MEAS_REP;
+
+typedef {
+HEXSTR mobile_station_clsmrk
+HEXSTR adtnl_mobile_station_clsmrk 
+} RR_CLSMRK_CHG;
+
+typedef {
+HEXSTR ch_desc2
+HEXSTR ch_mode 
+} RR_CH_MODE_MOD_ACK;
+
+typedef {
+HEXSTR si_8_rest_octs 
+} RR_SYS_INFO_TYPE_8;
+
+typedef {
+LIST_OF UINT freq_list
+HEXSTR rach_ctrl_para
+HEXSTR si_1_rest_octs 
+} RR_SYS_INFO_TYPE_1;
+
+typedef {
+UCHAR ext_ind
+UCHAR ba_ind
+LIST_OF UINT freq_list
+HEXSTR ncc_perm
+HEXSTR rach_ctrl_para 
+} RR_SYS_INFO_TYPE_2;
+
+typedef {
+HEXSTR cell_id
+HEXSTR loc_area_id
+HEXSTR ctrl_ch_desc
+HEXSTR cell_opts
+HEXSTR cell_sel_paras
+HEXSTR rach_ctrl_para
+HEXSTR si_3_rest_octs 
+} RR_SYS_INFO_TYPE_3;
+
+typedef {
+HEXSTR loc_area_id
+HEXSTR cell_sel_paras
+HEXSTR rach_ctrl_paras
+HEXSTR cbch_ch_desc
+HEXSTR cbch_mobile_all
+HEXSTR si_4_rest_octs 
+} RR_SYS_INFO_TYPE_4;
+
+typedef {
+UCHAR ext_ind
+UCHAR ba_ind
+LIST_OF UINT freq_list 
+} RR_SYS_INFO_TYPE_5;
+
+typedef {
+HEXSTR cell_id
+HEXSTR loc_area_id
+HEXSTR cell_opts
+HEXSTR ncc_perm
+HEXSTR si_6_rest_octs 
+} RR_SYS_INFO_TYPE_6;
+
+typedef {
+HEXSTR si_7_rest_octs 
+} RR_SYS_INFO_TYPE_7;
+
+typedef {
+HEXSTR nt_n_rest_octs 
+} RR_NOT_NCH;
+
+typedef {
+UCHAR page_mode
+UCHAR chs_needed_for_mobiles_1_2
+LIST_OF HEXSTR mobile_id_list
+HEXSTR p1_rest_oct 
+} RR_PGING_REQ_TYPE_1;
+
+typedef {
+HEXSTR page_mode
+HEXSTR chs_needed_for_mobiles_1_2
+LIST_OF HEXSTR mobile_id_list
+HEXSTR p2_rest_oct 
+} RR_PGING_REQ_TYPE_2;
+
+typedef {
+HEXSTR desc_ch_aft_time
+HEXSTR cell_ch_desc
+HEXSTR freq_list_aft_time
+HEXSTR mobile_all
+HEXSTR start_time
+HEXSTR freq_list_before_time
+HEXSTR ch_desc_before_time
+HEXSTR freq_ch_seq
+HEXSTR mobile_all_before_time
+HEXSTR rr_pkt_upl_ass
+HEXSTR rr_pkt_dwl_ass 
+} RR_PDCH_ASS_CMD;
+
+typedef {
+HEXSTR page_mode
+HEXSTR chs_needed_for_mobiles_1_2
+LIST_OF HEXSTR mobile_id_list
+HEXSTR p3_rest_oct 
+} RR_PGING_REQ_TYPE_3;
+
+typedef {
+HEXSTR mobile_station_clsmrk
+HEXSTR mobile_id
+HEXSTR group_call_ref 
+} RR_NOT_RSP;
+
+typedef {
+HEXSTR cphr_key_seq_num
+HEXSTR spare_octet
+HEXSTR mobile_station_clsmrk
+HEXSTR mobile_id 
+} RR_PGING_RSP;
+
+typedef {
+HEXSTR rr_cause 
+} RR_HO_FAIL;
+
+typedef {
+HEXSTR rr_cause 
+} RR_ASS_CMPL;
+
+typedef VOID RR_UPL_BUSY;
+
+typedef {
+HEXSTR cell_desc
+HEXSTR desc_frst_ch_aft_time
+HEXSTR ho_ref
+HEXSTR pwr_cmd_and_acc_type
+HEXSTR syncro_ind
+LIST_OF UINT freq_shrt_list_aft_time
+LIST_OF UINT freq_list_aft_time
+LIST_OF UINT cell_ch_desc
+HEXSTR mlslot_conf
+HEXSTR ch_set_1
+HEXSTR ch_set_2
+HEXSTR ch_set_3
+HEXSTR ch_set_4
+HEXSTR ch_set_5
+HEXSTR ch_set_6
+HEXSTR ch_set_7
+HEXSTR ch_set_8
+HEXSTR scnd_ch_desc_aft_time
+HEXSTR mode_scnd_ch
+HEXSTR freq_ch_seq_aft_time
+HEXSTR mobile_all_aft_time
+HEXSTR start_time
+HEXSTR real_time_diff
+HEXSTR time_adv
+HEXSTR freq_shrt_list_before_time
+HEXSTR freq_list_before_time
+HEXSTR desc_frst_ch_before_time
+HEXSTR desc_scnd_ch_before_time
+HEXSTR freq_ch_seq_before_time
+HEXSTR mobile_all_before_time
+HEXSTR cphr_mode_set
+HEXSTR vgcs_tgt_mode_ind
+HEXSTR mlrate_conf 
+} RR_HO_CMD;
+
+typedef {
+HEXSTR rr_cause
+HEXSTR mobile_obsrv_time_diff
+HEXSTR mobile_obsrv_time_diff_hl 
+} RR_HO_CMPL;
+
+typedef {
+HEXSTR time_adv 
+} RR_PHYS_INFO;
+
+typedef {
+HEXSTR desc_frst_ch_aft_time
+HEXSTR pwr_cmd
+LIST_OF UINT freq_list_aft_time
+LIST_OF UINT cell_ch_desc
+HEXSTR mlslot_conf
+HEXSTR mode_ch_set_1
+HEXSTR mode_ch_set_2
+HEXSTR mode_ch_set_3
+HEXSTR mode_ch_set_4
+HEXSTR mode_ch_set_5
+HEXSTR mode_ch_set_6
+HEXSTR mode_ch_set_7
+HEXSTR mode_ch_set_8
+HEXSTR desc_scnd_ch_aft_time
+HEXSTR mode_scnd_ch
+HEXSTR mobile_all_aft_time
+HEXSTR start_time
+HEXSTR freq_list_before_time
+HEXSTR desc_frst_ch_before_time
+HEXSTR desc_scnd_ch_before_time
+HEXSTR freq_ch_seq
+HEXSTR mobile_all_before_time
+HEXSTR cphr_mode_set
+HEXSTR vgcs_tgt_mode_ind
+HEXSTR mlrate_conf 
+} RR_ASS_CMD;
+
+typedef {
+HEXSTR rr_cause 
+} RR_ASS_FAIL;
+
+typedef {
+HEXSTR mlslot_conf
+HEXSTR mode_ch_set_1
+HEXSTR mode_ch_set_2
+HEXSTR mode_ch_set_3
+HEXSTR mode_ch_set_4
+HEXSTR mode_ch_set_5
+HEXSTR mode_ch_set_6
+HEXSTR mode_ch_set_7
+HEXSTR mode_ch_set_8 
+} RR_CONF_CHG_CMD;
+
+typedef VOID RR_CONF_CHG_ACK;
+
+typedef {
+HEXSTR mobile_id 
+} RR_CPHR_MODE_CMPL;
+
+typedef {
+HEXSTR rr_cause 
+} RR_CONF_CHG_REJ;
+
+typedef {
+HEXSTR tlli
+HEXSTR rout_area_id
+HEXSTR susp_cause 
+} RR_GPRS_SUSP_REQ;
+
+typedef {
+HEXSTR encr_info
+} RR_CPHR_MODE_CMD;
+
+typedef {
+HEXSTR ext_meas_res 
+} RR_EXT_MEAS_REP;
+
+typedef {
+HEXSTR ext_meas_freq_list 
+} RR_EXT_MEAS_ORDER;
+
+typedef {
+HEXSTR apdu_id
+HEXSTR apdu_flags
+HEXSTR apdu_data 
+} RR_APP_INFO;
+
+typedef {
+HEXSTR page_mode
+HEXSTR ch_desc_1
+HEXSTR req_ref_1
+HEXSTR time_adv_1
+HEXSTR ch_desc_2
+HEXSTR req_ref_2
+HEXSTR time_adv_2
+HEXSTR mobile_all
+HEXSTR start_time
+HEXSTR iax_rest_octs 
+} RR_IMM_ASS_EXT;
+
+typedef {
+HEXSTR page_mode
+HEXSTR req_ref_1
+HEXSTR wait_ind_1
+HEXSTR req_ref_2
+HEXSTR wait_ind_2
+HEXSTR req_ref_3
+HEXSTR wait_ind_3
+HEXSTR req_ref_4
+HEXSTR wait_ind_4
+HEXSTR iar_rest_octs 
+} RR_IMM_ASS_REJ;
+
+typedef {
+HEXSTR ch_desc
+HEXSTR mobile_all
+HEXSTR start_time 
+} RR_ADTNL_ASS;
+
+typedef {
+HEXSTR cphr_key_seq_num
+HEXSTR ch_coding_reqd
+HEXSTR mobile_station_clsmrk
+HEXSTR tlli
+HEXSTR ch_req_desc
+HEXSTR gprs_meas_res 
+} RR_INIT_REQ;
+
+typedef {
+HEXSTR si_16_rest_octs 
+} RR_SYS_INFO_TYPE_16;
+
+typedef {
+HEXSTR si_17_rest_octs 
+} RR_SYS_INFO_TYPE_17;
+
+typedef {
+HEXSTR page_mode
+HEXSTR dedicat_mode_or_tbf
+HEXSTR pkt_ch_desc
+HEXSTR req_ref
+HEXSTR time_adv
+HEXSTR mobile_all
+HEXSTR start_time
+HEXSTR ia_rest_octs 
+} RR_IMM_ASS;
+
+typedef {
+HEXSTR si_18_rest_octs 
+} RR_SYS_INFO_TYPE_18;
+
+typedef {
+HEXSTR si_19_rest_octs 
+} RR_SYS_INFO_TYPE_19;
+
+typedef {
+HEXSTR si_20_rest_octs 
+} RR_SYS_INFO_TYPE_20;
+
+typedef {
+HEXSTR rr_cause 
+} RR_DTM_ASS_FAIL;
+
+typedef {
+HEXSTR dtm_wait_ind 
+} RR_DTM_REJ;
+
+typedef {
+HEXSTR tlli
+HEXSTR ch_req_desc_2 
+} RR_DTM_REQ;
+
+typedef {
+HEXSTR gprs_brdcst_info
+HEXSTR rr_pkt_upl_ass
+HEXSTR rr_pkt_dwl_ass 
+} RR_PKT_ASS;
+
+typedef {
+HEXSTR cs_pwr_cmd
+HEXSTR cs_ch_desc
+HEXSTR gprs_brdcst_info
+HEXSTR cell_ch_desc
+HEXSTR ch_mode
+HEXSTR freq_list
+HEXSTR mobile_all
+HEXSTR tbf_start_time
+HEXSTR rr_pkt_upl_ass
+HEXSTR rr_pkt_dwl_ass 
+} RR_DTM_ASS_CMD;
+
+typedef {
+HEXSTR routeing_area_id
+HEXSTR dtm_info_details 
+} RR_DTM_INFORMATION;
+
+typedef {
+HEXSTR p_tmsi
+HEXSTR mobile_id 
+} RR_PKT_NOT;
+
+typedef {
+HEXSTR utran_clsmrk_part 
+} RR_UTRAN_CLSMRK_CHG;
+
+typedef {
+HEXSTR ter_info
+HEXSTR sec_status
+HEXSTR band_class_info
+HEXSTR pwr_class_info
+HEXSTR oper_mode_info
+HEXSTR ser_opt_info
+HEXSTR mltplx_opt_info
+HEXSTR pwr_ctrl_info
+HEXSTR capab_info
+HEXSTR ch_conf_cap_info
+HEXSTR ext_mltplx_opt_info
+HEXSTR band_subcls_info
+HEXSTR encry_capab 
+} RR_CDMA2000_CLSMRK_CHG;
+
+typedef {
+HEXSTR ho_to_utran_cmd 
+} RR_INTER_SYS_TO_UTRAN_HO_CMD;
+
+typedef {
+HEXSTR ho_to_cdma2000_cmd 
+} RR_INTER_SYS_TO_CDMA2000_HO_CMD;
+
+typedef {
+STRING cell_id
+INT rach_tei
+HEXSTR EstCause_RndRef
+HEXSTR msid
+} RR_CHANNEL_REQ;
+
+typedef {
+HEXSTR si_10_rest_octs 
+} RR_SYS_INFO_TYPE_10;
+
+typedef {
+HEXSTR contents 
+} RR_NOT_FACCH;
+
+typedef {
+BIT uplink_access_req
+UCHAR uplink_id_code 
+} RR_UPL_FREE;
+
+typedef {
+HEXSTR enhanced_meas_res 
+} RR_ENHANCED_MEAS_REP;
+
+typedef {
+HEXSTR meas_info 
+} RR_MEAS_INFO;
+

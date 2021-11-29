@@ -1,0 +1,942 @@
+
+       ___
+     /_\_/_\    PRISMA Engineering S.r.l.
+    |\ /_\ /|   Telecom testing solutions
+    | |   | |   Via Petrocchi, 4 - 20127 Milano (Italy)
+    |/|___|\|   Tel. +39 02 26113507 - Fax +39 02 26113597
+     \|/_\|/    info@prisma-eng.com - http://www.prisma-eng.com
+
+
+
+/*+------------------+*/
+/*+ BSSAP PRIMITIVEs +*/
+/*+------------------+*/
+/*+ OM +*/
+typedef VOID BSSAP_OM_CFG;
+
+typedef VOID BSSAP_OM_CFG_ACK;
+
+typedef VOID BSSAP_SET_CC_PID;
+
+/*+ CTL +*/
+typedef {
+UINT BscId 
+} BSSAP_CTL_RESET;
+
+typedef {
+UINT BscId 
+} BSSAP_CTL_RESET_ACK;
+
+typedef {
+UINT MsId
+HEXSTR Cause
+HEXSTR LAC
+HEXSTR CellId 
+} BSSAP_HOV_REQUIRED;
+
+typedef {
+UINT MsId 
+} BSSAP_HOV_DETECT;
+
+typedef {
+UINT Spc
+UINT StkId
+UINT Dpc
+UCHAR RstTimer
+} BSSAP_OM_PCSTATE_IND;
+
+typedef {
+HEXSTR GroupId
+HEXSTR GroupCallAreaId
+HEXSTR eMLPPriority
+HEXSTR Priority
+HEXSTR AssignmentRequirement
+LIST_OF UINT QueueIdList
+UINT BssapAsgReqWaitTime
+UINT DispatcherCall
+STRING TalkerLACCellId
+STRING TalkerAsgReqPriority 
+} BSSAP_CTL_VGCS_SETUP_REQ;
+
+typedef {
+HEXSTR GroupId
+HEXSTR GroupCallAreaId
+} BSSAP_CTL_VGCS_SETUP_CNF;
+
+typedef VOID BSSAP_CTL_VGCS_CMPLTE_IND;
+
+typedef {
+HEXSTR GroupId
+HEXSTR GroupCallAreaId
+} BSSAP_CTL_VGCS_RELEASE_REQ;
+
+typedef {
+HEXSTR BscId
+HEXSTR GroupId
+HEXSTR GroupCallAreaId
+HEXSTR GroupCallReference
+HEXSTR Cause
+} BSSAP_CTL_VGCS_FAIL_IND;
+
+typedef {
+} BSSAP_CTL_VGCS_RELEASE_CNF;
+
+typedef {
+} BSSAP_CTL_VGCS_BSC_CLR_CMPLTE;
+
+typedef {
+UINT MsId
+HEXSTR Cause 
+} BSSAP_CTL_VGCS_DEDI_REL_REQ;
+
+typedef {
+HEXSTR GroupId
+HEXSTR GroupCallReference
+HEXSTR Cid
+HEXSTR Cause 
+} BSSAP_CTL_VGCS_SEND_UPL_REL;
+
+typedef {
+HEXSTR MsId
+HEXSTR Lac
+HEXSTR CellId
+HEXSTR GrCallRefIdList
+HEXSTR GrCallRef 
+} BSSAP_CTL_VGCS_HOV_PERFD_IND;
+
+typedef {
+UINT MsId 
+} BSSAP_CTL_INT_HOV_ENQUIRY;
+
+typedef VOID BSSAP_CTL_RESET_RESOURCES;
+
+typedef {
+HEXSTR TrcType
+HEXSTR TriggerId
+HEXSTR TraceReference
+HEXSTR TransactionId
+HEXSTR MobileIdentity
+HEXSTR OMCId 
+} BSSAP_CTL_MSC_TRACE_INVOKE;
+
+typedef {
+HEXSTR Cause 
+} BSSAP_CTL_SEND_OVERLOAD;
+
+typedef VOID BSSAP_CTL_RESET_CIRC;
+
+/*+ AP +*/
+typedef {
+UINT MsId
+HEXSTR TMSI
+BINSTR  Pdu 
+} BSSAP_AP_EST_REQ;
+
+typedef {
+UINT MsId
+STRING SpcStkIdCid
+HEXSTR LAI
+HEXSTR CellId
+UINT SlaveId 
+} BSSAP_AP_EST_ACK;
+
+typedef {
+STRING SpcStkIdCid
+HEXSTR LAI
+HEXSTR CellId
+BINSTR  Pdu 
+} BSSAP_AP_EST_IND;
+
+typedef {
+STRING SpcStkIdCid
+HEXSTR LAI
+HEXSTR CellId
+BINSTR  Pdu 
+} BSSAP_AP_EST_CNF;
+
+typedef {
+UCHAR ProtDisc
+UCHAR TransId
+UCHAR Cause 
+} REL_CAUSE;
+
+typedef {
+UINT MsId
+STRUCTURE REL_CAUSE RelCause 
+} BSSAP_AP_REL_REQ;
+
+typedef {
+UINT MsId
+STRUCTURE REL_CAUSE RelCause 
+} BSSAP_AP_REL_IND;
+
+typedef {
+UINT MsId
+UINT Sapi
+BINSTR  Pdu 
+} BSSAP_AP_DATA_REQ;
+
+typedef {
+UINT MsId
+BINSTR  Pdu 
+} BSSAP_AP_DATA_IND;
+
+typedef {
+HEXSTR PermAlg
+HEXSTR Key
+UCHAR CiphrRespMode 
+} SYNC_CPHR;
+
+typedef {
+STRING CallType
+UCHAR ChRate
+HEXSTR PermSpeech
+UCHAR DataRate
+HEXSTR Priority 
+} SYNC_RES_ASS;
+
+typedef {
+HEXSTR MsIdDst
+UINT DPhone 
+} SYNC_CONNECT;
+
+typedef {
+UINT MsId
+STRUCTURE CauseVal
+HEXSTR GroupCallReference 
+} BSSAP_AP_SYNC_REQ;
+
+typedef {
+UINT MsId
+UINT Res
+HEXSTR Cause 
+} BSSAP_AP_SYNC_CNF;
+
+typedef {
+UINT MsId
+UINT MsIdDst 
+} BSSAP_AP_SET_INST;
+
+typedef {
+UINT MsId
+HEXSTR Cause 
+} BSSAP_AP_ABORT_REQ;
+
+typedef {
+UINT MsId
+HEXSTR Cause 
+} BSSAP_AP_ABORT_IND;
+
+typedef {
+UINT MsId
+HEXSTR ClassMark1 
+} BSSAP_AP_CLSMK1_UPDATE;
+
+typedef {
+UINT MsId
+HEXSTR ClassMark2 
+} BSSAP_AP_CLSMK2_UPDATE;
+
+typedef {
+UINT MsId
+HEXSTR ClassMark3 
+} BSSAP_AP_CLSMK3_UPDATE;
+
+typedef {
+STRING SpcStkIdCid
+HEXSTR LAI
+HEXSTR CellId
+HEXSTR GroupCallRef
+BINSTR Pdu 
+} BSSAP_AP_TALKER_IND;
+
+typedef {
+UINT MsId
+STRUCTURE REL_CAUSE RelCause
+STRING SpcStkIdCid 
+} BSSAP_AP_REL_REQ_LINK;
+
+typedef {
+UINT MsId
+UINT TMSI 
+} BSSAP_AP_NEW_TMSI_ALLOC;
+
+typedef {
+UINT MsId
+UINT LsuPcm
+UINT Ts
+UINT PcmType
+UINT Stm1Line
+UINT BscId
+UINT TstmIndex
+UINT DestMsId
+} BSSAP_TRAFFIC_DATA_IND;
+
+typedef {
+UINT MsId
+STRING ConnectString
+UINT TstmIndex
+UINT DestMsId
+} BSSAP_HOV_DATA_IND;
+
+typedef {
+UINT MsId
+UINT BscId
+UINT ResetQueueIndex
+STRING PermSpeech
+UINT Spi
+STRING DataRate
+STRING ChRate  
+} BSSAP_CIC_ASG_REQ;
+
+typedef {
+UINT MsId
+UINT PpuId
+UINT Cic
+UINT CicExt
+UINT PermSpeechIndex
+UINT Fail 
+} BSSAP_CIC_ASG_RES;
+
+typedef {
+UINT MsId
+UINT BscId
+UINT Cic 
+} BSSAP_CIC_REL_REQ;
+
+typedef {
+UINT MsId
+STRING TMSI 
+} BSSAP_NEW_TMSI_ALLOC;
+
+typedef {
+UINT ReqRef
+UINT MsId 
+} BSSAP_SET_SCCP_REQ_REF;
+
+typedef {
+UINT MsId
+UINT BscId 
+} BSSAP_TLA_ASG_REQ;
+
+typedef {
+UINT MsId
+UINT PpuId
+HEXSTR Aoip_Tla
+UINT CallId
+UINT Fail 
+} BSSAP_TLA_ASG_RES;
+
+typedef {
+UINT MsId
+UINT BscId
+UINT CallId 
+} BSSAP_TLA_REL_REQ;
+
+typedef {
+UINT BscId
+UINT MsIdList
+UINT CallId
+HEXSTR Cause 
+} BSSAP_RESET_RESOURCE_REQ;
+
+typedef {
+UINT MsId
+UINT MsIdList 
+} BSSAP_RESET_RESOURCE_RES;
+
+typedef {
+UINT BscId
+UINT MsIdList
+UINT CicList 
+} BSSAP_RESET_TDMCIRCUIT_REQ;
+
+typedef {
+UINT MsId
+UINT BscId
+UINT CicReleased 
+} BSSAP_RESET_TDMCIRCUIT_RES;
+
+typedef {
+UINT MsId
+UINT BscId
+UINT Cic_NotReleasable
+} BSSAP_UQPPD_CIRC_IND;
+
+/*+------------+*/
+/*+ BSSAP PDUs +*/
+/*+------------+*/
+typedef {
+HEXSTR ch_type
+HEXSTR l3_hdr_info
+HEXSTR prio
+HEXSTR ip_port
+HEXSTR dwl_dtx_flag
+HEXSTR inter_band_to_be_usd
+HEXSTR clsmk_info_2
+HEXSTR group_call_ref
+HEXSTR tlkr_flag
+HEXSTR conf_evolu_ind
+HEXSTR lsa_acss_ctrl_supprn
+HEXSTR serv_hov
+HEXSTR encr_info
+HEXSTR tlkr_prio
+HEXSTR aoip_tla
+HEXSTR codec_list
+HEXSTR call_id 
+} ASG_REQ;
+
+typedef {
+HEXSTR rr_cause
+HEXSTR ip_port
+HEXSTR cell_idfr
+HEXSTR chsn_ch
+HEXSTR chsn_encr_algo
+HEXSTR circ_pool
+HEXSTR spch_ver
+HEXSTR lsa_idfr
+HEXSTR tlkr_prio
+HEXSTR aoip_tla
+HEXSTR speech_codec
+HEXSTR codec_list 
+} ASG_CMPLT;
+
+typedef {
+HEXSTR cause
+HEXSTR rr_cause
+HEXSTR circ_pool
+HEXSTR circ_pool_list
+HEXSTR tlkr_prio
+HEXSTR codec_list 
+} ASG_FAIL;
+
+typedef {
+UINT group_call_ref
+BIT acknowledge_flag
+UCHAR emlpp_priority
+UCHAR cyph_info
+HEXSTR prio 
+} VGCS_VBS_SETUP;
+
+typedef VOID VGCS_VBS_SETUP_ACK;
+
+typedef {
+HEXSTR cause 
+} VGCS_VBS_SETUP_REFUSE;
+
+typedef {
+HEXSTR ch_type
+HEXSTR asg_rqmnt
+HEXSTR cell_idfr
+HEXSTR group_call_ref
+HEXSTR prio
+HEXSTR circ_idty_code
+HEXSTR dwl_dtx_flag
+HEXSTR encr_info
+BIT acknowledge_flag
+UCHAR emlpp_priority
+UCHAR cyph_info 
+} VGCS_VBS_ASG_REQ;
+
+typedef {
+HEXSTR ch_type
+HEXSTR encr_info
+HEXSTR clsmk_info_1
+HEXSTR clsmk_info_2
+HEXSTR cell_idfr_srvng
+HEXSTR prio
+HEXSTR ip_port
+HEXSTR dwl_dtx_flag
+HEXSTR cell_idfr_tgt
+HEXSTR inter_band_to_be_usd
+HEXSTR cause
+HEXSTR clsmk_info_3
+HEXSTR curr_ch_type_1
+HEXSTR spch_ver
+HEXSTR group_call_ref
+HEXSTR tlkr_flag
+HEXSTR conf_evolu_ind
+HEXSTR chsn_encr_algo
+HEXSTR old_bss_to_new_bss_info
+HEXSTR lsa_info
+HEXSTR lsa_acss_ctrl_supprn
+HEXSTR serv_hov
+HEXSTR imsi
+HEXSTR src_rnc_to_tgt_rnc_umts
+HEXSTR src_rnc_to_tgt_rnc_cdma
+HEXSTR sna_access_info
+HEXSTR tlkr_prio
+HEXSTR aoip_tla
+HEXSTR codec_list
+HEXSTR call_id 
+} HOV_REQ;
+
+typedef {
+HEXSTR cause
+HEXSTR rsp_req
+HEXSTR cell_idfr_list
+HEXSTR circ_pool_list
+HEXSTR curr_ch_type_1
+HEXSTR spch_ver
+HEXSTR queng_indtr
+HEXSTR old_bss_to_new_bss_info
+HEXSTR src_rnc_to_tgt_rnc_umts
+HEXSTR src_rnc_to_tgt_rnc_cdma
+HEXSTR geran_clsmk
+HEXSTR talker_prio
+HEXSTR speech_codec 
+} HOV_RQRD;
+
+typedef {
+BINSTR l3_info
+HEXSTR chsn_ch
+HEXSTR chsn_encr_algo
+HEXSTR circ_pool
+HEXSTR spch_ver
+HEXSTR ip_port
+HEXSTR lsa_idfr
+HEXSTR new_bss_old_bss_info
+HEXSTR inter_system_info
+HEXSTR tlkr_prio
+HEXSTR aoip_tla
+HEXSTR codec_list
+HEXSTR speech_codec 
+} HOV_REQ_ACK;
+
+typedef {
+BINSTR l3_info
+HEXSTR cell_idfr 
+} HOV_CMD;
+
+typedef {
+HEXSTR rr_cause
+HEXSTR tlkr_prio
+HEXSTR speech_codec
+HEXSTR codec_list
+HEXSTR chsn_encr_algo
+HEXSTR chsn_ch 
+} HOV_CMPLT;
+
+typedef VOID HOV_SUCCD;
+
+typedef {
+HEXSTR cause
+HEXSTR rr_cause
+HEXSTR circ_pool
+HEXSTR circ_pool_list
+HEXSTR geran_clsmk
+HEXSTR new_bss_old_bss_info
+HEXSTR inter_system_info
+HEXSTR codec_list 
+} HOV_FAIL;
+
+typedef {
+HEXSTR cause
+HEXSTR cell_idfr
+HEXSTR chsn_ch
+HEXSTR chsn_encr_algo
+HEXSTR spch_ver
+HEXSTR lsa_idfr
+HEXSTR tlkr_prio
+HEXSTR codec_list
+HEXSTR speech_codec 
+} HOV_PERFD;
+
+typedef {
+HEXSTR num_of_mss
+HEXSTR cell_idfr_list
+HEXSTR cell_idfr 
+} HOV_CAND_ENQ;
+
+typedef {
+HEXSTR num_of_mss
+HEXSTR cell_idfr 
+} HOV_CAND_RSP;
+
+typedef {
+HEXSTR cause 
+} HOV_RQRD_REJ;
+
+typedef VOID HOV_DET;
+
+typedef {
+HEXSTR ch_type
+HEXSTR cell_idfr
+HEXSTR chsn_ch
+HEXSTR circ_idty_code
+HEXSTR circ_pool 
+} VGCS_VBS_ASG_RES;
+
+typedef {
+HEXSTR cause
+HEXSTR circ_pool
+HEXSTR circ_pool_list 
+} VGCS_VBS_ASG_FAIL;
+
+typedef VOID VGCS_VBS_QUENG_IND;
+
+typedef VOID UL_REQ;
+
+typedef {
+HEXSTR l3_hdr_info
+HEXSTR cause 
+} CLR_CMD;
+
+typedef VOID CLR_CMPLT;
+
+typedef {
+HEXSTR cause 
+} CLR_REQ;
+
+typedef {
+HEXSTR dlci
+HEXSTR cause 
+} SAPI_N_REJ;
+
+typedef {
+HEXSTR cause
+HEXSTR diagn 
+} CONFS;
+
+typedef VOID UL_REQ_ACK;
+
+typedef {
+HEXSTR dlci 
+} SUSP;
+
+typedef {
+HEXSTR dlci 
+} RSME;
+
+typedef {
+HEXSTR apdu
+HEXSTR seg 
+} CONN_ORNTD_INFO;
+
+typedef {
+HEXSTR loc_type
+HEXSTR cell_idfr
+HEXSTR clsmk_info_3
+HEXSTR lcs_cli_type
+HEXSTR chsn_ch
+HEXSTR lcs_prio
+HEXSTR lcs_qos
+HEXSTR gps_assist_data
+HEXSTR apdu
+HEXSTR imsi
+HEXSTR ganss_loctype
+HEXSTR ganss_assdata 
+} PERF_LOC_REQ;
+
+typedef {
+HEXSTR lsa_info 
+} LSA_INFO;
+
+typedef {
+HEXSTR loc_estm
+HEXSTR posng_data
+HEXSTR decphr_keys
+HEXSTR lcs_cause 
+} PERF_LOC_RSP;
+
+typedef {
+HEXSTR lcs_cause 
+} PERF_LOC_ABRT;
+
+typedef {
+HEXSTR imsi 
+} COMMON_ID;
+
+typedef {
+HEXSTR cause
+HEXSTR a_intf_slctr_for_rst 
+} RST;
+
+typedef {
+HEXSTR a_intf_slctr_for_rst 
+} RST_ACK;
+
+typedef {
+HEXSTR cause
+HEXSTR cell_idfr 
+} OVERLD;
+
+typedef {
+HEXSTR circ_idty_code
+HEXSTR cause 
+} RST_CIRC;
+
+typedef {
+HEXSTR circ_idty_code 
+} RST_CIRC_ACK;
+
+typedef {
+HEXSTR trc_type
+HEXSTR trig_id
+HEXSTR trc_ref
+HEXSTR trnctn_id
+HEXSTR mbl_idty
+HEXSTR omc_id 
+} MSC_INVOKE_TRC;
+
+typedef {
+HEXSTR trc_type
+HEXSTR fwd_indtr
+HEXSTR trig_id
+HEXSTR trc_ref
+HEXSTR trnctn_id
+HEXSTR omc_id 
+} BSS_INVOKE_TRC;
+
+typedef {
+HEXSTR net_el_idty_src
+HEXSTR net_el_idty_tgt
+HEXSTR apdu
+HEXSTR seg
+HEXSTR rtrn_err_req
+HEXSTR rtrn_err_cause 
+} CONNLSS_INFO;
+
+typedef {
+HEXSTR circ_idty_code
+HEXSTR cause
+HEXSTR conn_relse_rqstd 
+} BLK;
+
+typedef {
+HEXSTR circ_idty_code 
+} BLKG_ACK;
+
+typedef {
+HEXSTR circ_idty_code 
+} UBLK;
+
+typedef {
+HEXSTR circ_idty_code 
+} UBLKGN_ACK;
+
+typedef {
+HEXSTR cause
+HEXSTR circ_idty_code
+HEXSTR circ_idty_code_list 
+} CIRC_GROUP_BLK;
+
+typedef {
+HEXSTR circ_idty_code
+HEXSTR circ_idty_code_list 
+} CIRC_GROUP_BLKG_ACK;
+
+typedef {
+HEXSTR circ_idty_code
+HEXSTR circ_idty_code_list 
+} CIRC_GROUP_UBLK;
+
+typedef {
+HEXSTR circ_idty_code
+HEXSTR circ_idty_code_list 
+} CIRC_GROUP_UBLKGN_ACK;
+
+typedef {
+HEXSTR circ_idty_code
+HEXSTR circ_idty_code_list 
+} UQPPD_CIRC;
+
+typedef {
+HEXSTR cell_idfr
+BINSTR l3_info 
+} UL_REQ_CNF;
+
+typedef {
+HEXSTR cause 
+} UL_RELSE_IND;
+
+typedef {
+HEXSTR cause 
+} UL_REJ_CMD;
+
+typedef {
+HEXSTR cause 
+} UL_RELSE_CMD;
+
+typedef {
+HEXSTR cause 
+} UL_SZD_CMD;
+
+typedef {
+HEXSTR cause 
+} CHG_CIRC;
+
+typedef {
+HEXSTR circ_idty_code 
+} CHG_CIRC_ACK;
+
+typedef {
+HEXSTR periody
+HEXSTR rsrc_ind_meth
+HEXSTR cell_idfr
+HEXSTR extd_rsrc_indtr 
+} RSRC_REQ;
+
+typedef {
+HEXSTR rsrc_ind_meth
+HEXSTR rsrc_avlbl
+HEXSTR cell_idfr
+HEXSTR total_rsrc_acsb 
+} RSRC_IND;
+
+typedef {
+HEXSTR imsi
+HEXSTR tmsi
+HEXSTR cell_idfr_list
+HEXSTR ch_needed
+HEXSTR emlpp_prio 
+} PAG;
+
+typedef {
+HEXSTR l3_hdr_info
+HEXSTR encr_info
+HEXSTR cphr_rsp_mode 
+} CPHR_MODE_CMD;
+
+typedef {
+HEXSTR clsmk_info_2
+HEXSTR clsmk_info_3 
+} CLSMK_UPD;
+
+typedef {
+HEXSTR l3_mess_cont
+HEXSTR chsn_encr_algo 
+} CPHR_MODE_CMPLT;
+
+typedef VOID QUENG_IND;
+
+typedef {
+HEXSTR cell_idfr
+BINSTR l3_info
+HEXSTR chsn_ch
+HEXSTR lsa_idfr_list
+HEXSTR apdu
+HEXSTR codec_list 
+} CMPLT_L3_INFO;
+
+typedef VOID CLSMK_REQ;
+
+typedef {
+HEXSTR cause 
+} CPHR_MODE_REJ;
+
+typedef {
+HEXSTR time_ind
+HEXSTR cell_idfr
+HEXSTR cell_idfr_list
+HEXSTR rsrc_sitn
+HEXSTR cause 
+} LOAD_IND;
+
+typedef {
+HEXSTR cause
+HEXSTR res_list 
+} RESET_RESOURCE;
+
+typedef {
+HEXSTR res_list 
+} RESET_RESOURCE_ACK;
+
+typedef {
+HEXSTR cause
+HEXSTR cell_idfr
+HEXSTR aoip_tla
+HEXSTR codec_list 
+} INTERNAL_HO_RQD;
+
+typedef {
+HEXSTR cause
+HEXSTR codec_list 
+} INTERNAL_HO_RQD_REJ;
+
+typedef {
+HEXSTR speech_codec
+HEXSTR cic
+HEXSTR aoip_tla
+HEXSTR dl_dtx_flag
+HEXSTR call_id 
+} INTERNAL_HO_CMD;
+
+typedef {
+HEXSTR speech_codec 
+} INTERNAL_HO_ENQ;
+
+typedef {
+UCHAR  Dlci
+BINSTR Data 
+} DTAP_DATA;
+
+typedef {
+HEXSTR loc_type
+HEXSTR cell_idfr
+HEXSTR clsmk_info_3
+HEXSTR lcs_cli_type
+HEXSTR chsn_ch
+HEXSTR lcs_prio
+HEXSTR lcs_qos
+HEXSTR gps_assist_data
+HEXSTR apdu
+HEXSTR lcs_cap
+HEXSTR pkt_meas_rep
+HEXSTR meas_cellid_list
+HEXSTR imsi
+HEXSTR imei
+HEXSTR ganss_locty
+HEXSTR req_ganss_data 
+} LE_PERF_LOC_REQ;
+
+typedef {
+HEXSTR loc_estm
+HEXSTR posng_data
+HEXSTR decphr_keys
+HEXSTR lcs_cause
+HEXSTR velocity_data
+HEXSTR ganss_pos 
+} LE_PERF_LOC_RSP;
+
+typedef {
+HEXSTR lcs_cause 
+} LE_PERF_LOC_ABRT;
+
+typedef {
+HEXSTR cause 
+} LE_RST;
+
+typedef {
+} LE_RST_ACK;
+
+typedef {
+UINT UserPid
+LIST_OF UINT ListMs
+UINT FirstMS
+UINT NumMS
+STRING ProfileName
+UINT TestType
+UINT rstdelay
+} BSSAP_LE_SET_USERPID;
+
+typedef {
+UINT MsId
+UINT type
+} BSSAP_AP_PERF_LOC_CMD;
+
+typedef {
+UINT MsId
+UINT type
+} BSSAP_AP_PERF_LOC_IND;
+
+typedef {
+UINT MsId
+UINT type
+} BSSAP_AP_LE_PERF_LOC_CMD;
+
+typedef {
+UINT MsId
+UINT type
+} BSSAP_AP_LE_PERF_LOC_IND;
+

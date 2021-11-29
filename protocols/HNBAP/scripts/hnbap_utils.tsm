@@ -1,0 +1,171 @@
+#############################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/HNBAP/tags/HNBAP-1.3.0/scripts/hnbap_utils.tsm $
+#
+# $Author: roger $
+#
+# Description: HNBAP utilities procedures
+#
+# $Rev: 53423 $
+#
+# $Date: 2012-07-24 15:28:56 +0200 (Tue, 24 Jul 2012) $
+##############################################################
+proc CheckSignal { } {
+
+	# Global variables
+	global _sig
+
+	if { [info exists ::__hnbap_check_signal] && $::__hnbap_check_signal } {
+		set sigName [lindex $_sig 0]
+		set sigLen [llength $_sig]
+		append refSigLenName "::" "glL_" $sigName
+		if { [set $refSigLenName] != $sigLen } {
+			logscr "HNBAP - WARNING - Discarding $sigName (Length mismatch: $sigLen-[set $refSigLenName])"
+			return 0
+		}
+	}
+
+	return 1
+}
+
+##############################################################
+# This procedure returns OpcDpc field given Opc and Dpc
+proc GetOpcDpc { opc dpc } {
+
+	append retVal $opc "-" $dpc
+
+	return $retVal
+}
+#######################################################################
+# These procedures return Opc and Dpc given field OpcDpc
+proc GetOpcFromOpcDpc { opcdpc } {
+
+	return [lindex [split $opcdpc "-"] 0]
+}
+proc GetDpcFromOpcDpc { opcdpc } {
+
+	return [lindex [split $opcdpc "-"] 1]
+}
+#######################################################################
+# This procedure returns SS7Db Index given OPC and DPC
+proc GetSS7DbIdxFromOpcDpc { opc dpc } {
+
+	# Global variables
+	global glSS7Db
+
+	set key [GetOpcDpc $opc $dpc]
+	
+	if { [DbKeyExists $glSS7Db OpcDpc $key] } {
+		return [DbGetIdx $glSS7Db OpcDpc $key]
+	} else {
+		return -1
+	}
+}
+########## Misc ##############
+######################################################################
+### CauseType:                   CauseValue  ##################
+#   1 radioNetwork               HNBAP_overload = 0,
+#                                HNBAP_unauthorised_Location = 1,
+#                                HNBAP_unauthorised_HNB = 2,
+#                                HNBAP_hNB_parameter_mismatch = 3,
+#                                HNBAP_invalid_UE_identity = 4,
+#                                HNBAP_uE_not_allowed_on_this_HNB = 5,
+#                                HNBAP_uE_unauthorised = 6,
+#                                HNBAP_connection_with_UE_lost = 7,
+#                                HNBAP_ue_RRC_telease = 8,
+#                                HNBAP_hNB_not_registered = 9,
+#                                HNBAP_unspecified = 10,
+#                                HNBAP_normal = 11,
+#                                HNBAP_uE_relocated = 12,
+#                                HNBAP_ue_registered_in_another_HNB = 13  
+#----------------------------------------
+#   2 transport                  HNBAP_transport_resource_unavailable = 0, 
+#                                HNBAP_unspecified_1 = 1                   
+#------------------------------------------                           
+#   3 protocol                   HNBAP_transfer_syntax_error = 0,                          
+#                                HNBAP_abstract_syntax_error_reject = 1,              
+#                                HNBAP_abstract_syntax_error_ignore_and_notify = 2,   
+#                                HNBAP_message_not_compatible_with_receiver_state = 3,
+#                                HNBAP_semantic_error = 4,                            
+#                                HNBAP_unspecified_2 = 5,                             
+#                                HNBAP_abstract_syntax_error_falsely_constructed_message = 6
+#----------------------------------------------                         
+#  4 Misc                        HNBAP_processing_overload = 0,    
+#                                HNBAP_hardware_failure = 1,    
+#                                HNBAP_o_and_m_intervention = 2,
+#                                HNBAP_unspecified_3 = 3       
+proc ParseHnbapCause { cause } {
+	set radioCauseList "overload unauthorised_Location unauthorised_HNB hNB_parameter_mismatch invalid_UE_identity \
+	                    uE_not_allowed_on_this_HNB uE_unauthorised connection_with_UE_lost ue_RRC_release \
+					    hNB_not_registered unspecified normal uE_relocated ue_registered_in_another_HNB"
+	set transportCauseList "transport_resource_unavailable unspecified_1"
+	set protocolCauseList "transfer_syntax_error abstract_syntax_error_reject abstract_syntax_error_ignore_and_notify \
+	                       message_not_compatible_with_receiver_state semantic_error unspecified_2 abstract_syntax_error_falsely_constructed_message"
+	set miscCauseList  "processing_overload hardware_failure o_and_m_intervention unspecified_3"
+	set typeValueList "null radioNetwork transport protocol Misc"
+	set typeList "null radioCauseList transportCauseList protocolCauseList miscCauseList"
+	set tag [rd cause Tag]
+	set value [rd cause Value]
+	set causeValue [eval lindex $[lindex $typeList $tag] $value]
+	set typeValue [lindex $typeValueList $tag]
+	return "${typeValue}($causeValue)"
+} 
+
+######################
+# 1: IMSI 2: TMSILAI 3: PTMSIRAI 4: IMEI 5: ESN 6:IMSIDS41 7:IMSIESN 8:TMSIDS41
+proc GetUeIdentityType { ueIdTag } {
+     set ueIDTypeList "NULL IMSI TMSILAI PTMSIRAI IMEI ESN IMSIDS41 IMSIESN TMSIDS41"
+	 return [lindex $ueIDTypeList $ueIdTag]
+}
+
+## to get sctp db idx from hnbap ue index
+proc GetSctpDbIdxFromHnbapUeIdx { ueIdx } {
+	global glHnbapDb glHnbapUeDb
+	set rnc_id [DbGet $glHnbapUeDb $ueIdx RNC_ID]
+	if { [DbKeyExists $glHnbapDb RNC_ID $rnc_id] } {
+		set hnbapIdx [DbGetIdx $glHnbapDb RNC_ID $rnc_id]
+		return [DbGet $glHnbapDb $hnbapIdx SctpDbIdx]		
+	} else {
+		return -1
+	}
+}
+
+## to get field value in hnbap db by hnbap ue idx
+proc GetHnbapDbFieldValuebyUeIdx { ueIdx fieldName } {
+	global glHnbapDb glHnbapUeDb
+	set rnc_id [DbGet $glHnbapUeDb $ueIdx RNC_ID]
+	if { [DbKeyExists $glHnbapDb RNC_ID $rnc_id] } {
+		set hnbapIdx [DbGetIdx $glHnbapDb RNC_ID $rnc_id]
+		return [DbGet $glHnbapDb $hnbapIdx $fieldName]		
+	} else {
+		return -1
+	}
+
+}
+## get assocIdx to send SCTP data
+proc GetAssocIdxFromMsId { ueIdx } {
+
+	set apid [dbHnbapEnbUeGet $ueIdx ApId]
+	if { [DbEntryExists $::gldb_HnbapEnb $apid] } {
+		# for one AP,only one assocation exist,so we can get assocation
+		set ne [lindex [dbEnbGet $apid CtlPeerNetElemList] 0]
+		lassign {neIdx neIpPort} $ne
+        	dbHnbapAssocGetInst "${apid}-${neIdx}"		
+	} else {
+		logscr "crit error: Can not find assocation ID by Ms Id!"
+		exit
+	}
+}
+
+proc GetAssocIdxFromApId { apid } {
+	
+	if { [DbEntryExists $::gldb_HnbapEnb $apid] } {
+		# for one AP,only one assocation exist,so we can get assocation
+		set ne [lindex [dbEnbGet $apid CtlPeerNetElemList] 0]
+		lassign {neIdx neIpPort} $ne
+        	dbHnbapAssocGetInst "${apid}-${neIdx}"		
+	} else {
+		logscr "crit error: Can not find assocation ID by AP Id!"
+		exit
+	}
+}
+

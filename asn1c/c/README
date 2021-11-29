@@ -1,0 +1,22 @@
+This subdirectory contains run-time libraries built with the following 
+compilers:
+
+Compiler                        platform.mk     lib subdir
+------------------------------  --------------  ---------------------
+GNU gcc 3.3.1 (default)         platform.gcc3   libgcc3 / lib_optgcc3
+GNU gcc 2.95.3                  platform.gcc2   libgcc2 / lib_optgcc2
+
+Optimized libraries are located in lib_optXXXX directories (not available in
+evaluation and SDK kits).
+
+To change the run-time library configuration, do the following: 
+
+1. Change the 'lib' symbolic link to point at the lib subdir. 
+2. Change the 'platform.mk' link to point at the platform.mk file.
+
+For example, to change to 32-bit libs built with the gcc 2.95.3 compiler:
+
+rm lib platform.mk
+ln -s libgcc2 lib
+ln -s platform.gcc2 platform.mk
+

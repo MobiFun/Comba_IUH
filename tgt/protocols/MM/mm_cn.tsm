@@ -1,0 +1,4991 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/MM/tags/MM-2.37.13/scripts/mm_cn.tsm $
+#
+# $Author: carlom $
+#
+# Description: MM procedures network side 3GPP TS 24.008 V3.8.0 (2001-06)
+#
+#
+# $Rev: 57277 $
+#
+# $Date: 2012-12-12 17:33:49 +0100 (Wed, 12 Dec 2012) $
+##############################################################
+
+##############################################################
+#
+# Init Procedure
+#
+##############################################################
+
+proc Init { args } {
+	
+	# Declare and Initialize Global Variables
+	global _HandleRxSignalProc glCommonDb glTempIdRef glDbOffset
+	global __imei_db glImeiDb gNumMs gGsActive
+
+    # Includes
+	include "common/utils/generalUtils.tsm"
+	include "common/utils/L3Utils.tsm"
+	
+	# Uplevel Configuration File
+	set cfgfile [lindex $args 0]
+	uplevel #0 include $cfgfile
+
+	# Check Dependencies for Utilities Libraries
+	set scriptUtilsNeeded "scriptUtils-2.11.0"
+	if { [CheckCompatibility $scriptUtilsNeeded] == 0 } {
+		logscr "Update of scriptUtils library ($scriptUtilsNeeded) is needed by current MM library"
+		exit
+	}
+
+	# Create Common Db
+	set glCommonDb [lindex $args 1]
+	set sortedDbList [lsort -integer -decreasing [DbGetIndexList $glCommonDb]]
+	set glDbOffset [expr {[lindex $sortedDbList 0] + 1}]
+	log "Init: glDbOffset=$glDbOffset"
+		
+	#variable used by mm_rr_multi_inst.tsm
+	global glMmSide
+	set glMmSide CN
+
+	# Mm Adapation Layer
+	set al [lindex $args 2]
+	include "$al"
+
+	# Set NetSide
+	SetNetside
+
+	# Register Sapi
+	global glMmCcSapPid
+	set glMmCcSapPid 0
+
+#######
+	# args 6 used to know if it's Iu Interface (if = 1)
+	# if (args 6)=1 --> args 5 is RANAP_AP_SAP pid
+
+	if { ([llength $args] == 6) && (![IsVoid [lindex $args 6]]) } {
+
+		global glRanapApMmSapPid
+		set glRanapApMmSapPid [lindex $args 4]
+		#log "Init of mm_cn.tsm: RanapApMmSapPid=$glRanapApMmSapPid"; #DEBUG Carlo
+		set s RANAP_AP_MM_SAP
+		send s $glRanapApMmSapPid
+    }
+
+########
+
+	# args 3 is used only to know how to register
+	# args 4 is RR_RR_SAP pid
+	global glRrRrSapPid
+	if {[llength $args] == 5} {
+
+		set glRrRrSapPid [lindex $args 4]
+		
+		set s RR_RR_SAP_REG
+		send s $glRrRrSapPid
+		
+		register MM CN
+	} else {
+		set glRrRrSapPid 0; #use signal routing based on sap registration
+		register MM
+	}
+
+	# Authentication management
+	# AuthProcEnabled is a local variable used to check that
+	# no more than one authentication procedure is enabled.
+
+	# Includes for authentication procedure
+	global __alcatel_dummy_auth __iub_siemens_auth __iu_auth
+	if { [info exists __alcatel_dummy_auth] && $__alcatel_dummy_auth } {
+		set AuthProcEnabled "Alcatel Dummy (__alcatel_dummy_auth)"
+
+		include "abis_alcatel_auth.tsm"
+
+	} elseif { [info exists __iub_siemens_auth] && $__iub_siemens_auth } {
+		set authAlgName "Iub Siemens"
+
+		if {[info exists AuthProcEnabled]} {
+			logscr "mm_cn.tsm: ERROR. Trying to enable $authAlgName authentication but $AuthProcEnabled authentication algorithm is already enabled"
+
+			exit
+		}
+
+		set AuthProcEnabled "$authAlgName (__iub_siemens_auth)"
+		#the directory where is this file is set in the ctl script
+		include "umts_auth.tsm"
+
+	} elseif { [info exists __iu_auth] &&  $__iu_auth } {
+		set authAlgName "Iu Siemens"
+
+		if {[info exists AuthProcEnabled]} {
+			logscr "mm_cn.tsm: ERROR. Trying to enable $authAlgName authentication but $AuthProcEnabled authentication algorithm is already enabled"
+
+			exit
+		}
+
+		set AuthProcEnabled "$authAlgName (__iu_auth)"
+		#the directory where is this file is set in the ctl script
+		#check that the configure file has created the SIM link in tgt/protocols
+		include "umts_auth.tsm"
+		
+		# Authentication Center DataBase to manage the authentication parameters obtained by MAP
+		include "mapAuC.tsm"
+		global glAuCdb
+		set glAuCdb AuCdb
+		if { ![DbExists $glAuCdb] } {
+			log "Init in mm_cn.tsm: AuCdb doesn't exist .... $glAuCdb creation"; #cDEBUG
+			CreateMapDb $glAuCdb "CS"
+			
+			foreach index [DbGetIndexList $glCommonDb] {
+				if {[info exists ::__UMTS_AUTHENTICATION]} {
+					if {[info exists ::__OP_C]} {
+						unset ::__OP_C
+					}
+					if {[info exists ::__OP]} {
+						unset ::__OP
+					}
+
+					set AuthAlg [DbGet $glCommonDb $index AuthAlg]
+					if {![string compare $AuthAlg "milenage_opc"]} {
+						set ::__OP_C [DbGet $glCommonDb $index AuthOPC]
+						set ::__iu_auth_type 0; # milenage
+					}
+					if {![string compare $AuthAlg "milenage_op"]} {
+						set ::__OP [DbGet $glCommonDb $index AuthOP]
+						set op [binary format H* $::__OP]
+						sim_extSetOp $op
+						set ::__iu_auth_type 0; # milenage
+					}
+					if {![string compare $AuthAlg "dummy_xor"]} {
+						set ::__iu_auth_type 1; 
+					}
+					if {![string compare $AuthAlg "dummy_a3a8"]} {
+						set ::__iu_auth_type 2; 
+					}
+					log "Init: AuthAlg = $AuthAlg"
+				}
+				if {[info exists ::__iu_auth_type]} {
+					log "Init: index = $index, ::__iu_auth_type = $::__iu_auth_type"
+				} else {
+					log "Init: index = $index"
+				}
+				if {[info exists ::__OP_C]} {
+					log "AddAuCdbEntity: index = $index, OP_C = $::__OP_C"
+				}
+				if {[info exists op]} {
+					log "AddAuCdbEntity: index = $index, op = $op"
+				}
+
+
+
+				AddAuCdbEntity $index
+			}
+		} else {
+			log "Init in mm_cn.tsm: AuCdb already exists"; #cDEBUG
+			set glAuCdb AuCdb 
+		}
+		
+		LogDb $glAuCdb ; #cDEBUG
+		
+	}
+	
+	##############################################################################
+	#global variable used to know if MSC is making A-flex feature of
+	#load re-distribution.
+	global glReDistrActive
+	set glReDistrActive 0
+	
+	# TMSI Reference
+	global glTmsiRef __nri
+	if [info exists __nri] {
+		global __nri_len glMaxNriLen
+		
+		set glMaxNriLen 10
+		
+		if {![info exists __nri_len]} {
+			logscr "mm_cn.tsm Init: if you define cfg variable __nri, you have to define also __nri_len"
+			exit
+		}
+		
+		set nriBitLen [bitLen $__nri]
+		log "mm_cn Init: nriBitLen=$nriBitLen"
+		if {$nriBitLen > $__nri_len} {
+			logscr "mm_cn.tsm Init: the value of __nri needs more bits than __nri_len"
+			logscr "__nri bit len = $nriBitLen, __nri_len = $__nri_len"
+			exit
+		} else {
+			#__nri_len has to be <= 10 (default value)
+			if { $__nri_len > $glMaxNriLen } {
+				logscr "Init: __nri_len=$__nri_len is greater than glMaxNriLen=$glMaxNriLen"; #cDEBUG
+				exit
+			}
+		}
+		log "mm_cn.tsm Init: __nri=$__nri, __nri_len=$__nri_len"
+		
+		global glNriShift
+		set glNriShift [expr {24 - $__nri_len}]
+		log "mm_cn Init: glNriShift=$glNriShift"
+		global glNriShifted
+		set glNriShifted [expr {$__nri << $glNriShift}]
+		log "Init: glNriShifted=$glNriShifted"; #cDEBUG
+		
+		#glTmsiRef is used to set bits 30-26 of TMSI, because
+		#values >= 0x30 are reserved to PS. We let bit 31 to 0 to avoid to use
+		#values >= 0x30 when glTmsiRef is incremented.
+		set glTmsiRef [expr {int(0x1F * rand ())}]
+		log "Init: glTmsiRef=$glTmsiRef"; #cDEBUG
+		
+		#bits 31 = 0, 30-26 = glTmsiRef, bits 25-24 and 13-0 = msId,
+		#bits 23-14 = NRI (aligned to left)
+		
+		#(from the Alcatel Velizy document)
+	 	#The NRI has a configurable length of 0 to 10 bits.
+		#A configurable length of 0 bits indicates that the NRI is not used
+		#and this feature is not applied in the MSC/VLR or SGSN.
+		#The NRI shall be coded in bits 23 to 14. 
+		#An NRI shorter than 10 bits shall be encoded
+		#with the most significant bit of the NRI field in bit 23.
+		
+		# There are 16 bits reserved to MS Id, then MS Id has to be < 65536
+		proc BuildTmsi { msId } {
+			global glTmsiRef glNriShifted
+			
+			log "BuildTmsi: Tmsi before increment: glTmsiRef=$glTmsiRef"; #cDEBUG
+			#Carlo TMA-362 -- #
+			# qnx doesn't manage the long (length words between 32 and 64 bits)
+			set glTmsiRef [expr {($glTmsiRef +1) & 0x1F }]
+			# -- #	
+			
+			#here I should do: glTmsiRef % 0x1F to avoid using PS values.
+			log "BuildTmsi: msId=$msId; glTmsiRef=$glTmsiRef; glNriShifted=$glNriShifted"; #cDEBUG
+			
+			
+			#############################################################################################################################
+			# Tmsi schema																				  							    #
+			# 31 30 ------------ 26 25 ................ 24 23 --- 16 --- 14 13 ................12 ----- 8 7---------------- 0 bit index #
+			# |	  |				  |  |                   |  |			  |  |  				  		| | 		  		| 		    #
+			# |   |<--glTmsiRef-->|  |<--msId & 0xC000-->|  |<----NRI---->|  |<------msId & 0x3F00----->| |			       	| 		    #
+			# 0   |				  |	 |				     |	| glNriShifted|	 |							| |<-msId & 0x00FF->| 		    #
+			#############################################################################################################################
+			
+			#set tMSI_4		[format "%02s" [expr {  ($msId & 0x00FF) }]]
+			# Nota per Carlo: nn si puo usare la format xche sotto QNX qs comando tcl non fz correttamente.
+			
+			return "f4[uitoh [expr { \
+			($glTmsiRef << 26) | \
+			$glNriShifted | \
+			(($msId & 0xC000) << 10) | \
+			($msId & 0x3FFF) } ] \
+			B]"
+			
+		}
+	} else {
+		#glTmsiRef is used to set bits from 23 to 16 of TMSI
+		set glTmsiRef [expr {int(0xFF * rand ())}]
+		
+		#bits 31-24 = 0, bits 23-16 = glTmsiRef, bits 15-0 = msId
+		#I think we could reserve to glTmsiRef also bits 30-24.
+		
+		# There are 16 bits reserved to MS Id, then MS Id has to be < 65536
+		proc BuildTmsi { msId } {
+			global glTmsiRef
+			
+			#incr glTmsiRef
+			log "BuildTmsi: -- Tmsi before increment: glTmsiRef=$glTmsiRef --"; #cDEBUG
+			#Carlo TMA-362 -- #
+			# qnx doesn't manage the long (length words between 32 and 64 bits)
+			set glTmsiRef [expr {($glTmsiRef +1) & 0x1F }]
+			# -- #	
+			
+			set tMSI "f4[uitoh [expr {($glTmsiRef << 16) | $msId}] B]"
+			return $tMSI
+		}
+	}
+	log "TMSI Reference: glTmsiRef in HEXSTR format = [uitoh $glTmsiRef B]"
+	##############################################################################
+	
+	# Temporary Id Reference
+	if { [isSplitted] } {
+		if { [llength [info commands isSplitted]] } {
+			if { ![ismaster] } {
+				set dbSize [DbSize $glCommonDb]
+				set gNumMs $dbSize
+				# On slaves the temporary id uses ranges from DbSize*slaveId
+				set slaveId [expr [getslaveid] + 1]
+				#set slaveId [getslaveid]
+				set glTempIdRef [expr ($dbSize * $slaveId) + 1]
+				log "Init: slaveId = $slaveId glTempIdRef=$glTempIdRef dbSize=$dbSize"
+			} else {
+				logscr "ERROR: The Master Tstm cannot run the MM protocol"
+				exit
+			}
+		}
+	} else {
+		set glTempIdRef [expr {[llength [DbGetIndexList $glCommonDb]] + 1}]
+	}
+	
+	log "glTempIdRef=$glTempIdRef"
+	
+	# Building IMEI db (optional)
+	if { [info exists __imei_db] } {
+		set glImeiDb [DbGetName $__imei_db]
+		spawn "DbCreate.tsm $__imei_db.csv"
+		ConvertIMEIDbToHumanReadable $glImeiDb
+	}
+	
+	# Handle Multi-Instance
+	set _HandleRxSignalProc MmMultiInstanceHdl
+	
+	# Gs interface activation, by default not active
+	set gGsActive 0	
+	
+	# Initialization parameters
+	set ::glListMs ""
+	
+	# Display
+	logscr "MM Core Network Simulation Started"
+	
+	# TODO RESTYLING: SETTARE QUESTA VAR ANCHE QUANDO VIENE
+	# settato il SUPPORT per la prima volta 
+	# se poi viene disabilitato e riabilitato piu volte
+	# la variabile va mantenuta
+	# vedere proc SetGlobalVarHnd
+	global __SupportUnknownMS
+	if { [info exists __SupportUnknownMS] && $__SupportUnknownMS } {	
+		global glRealAndUnknownMsId __FIRST_MS_REAL_AND_UNKNOWN
+		set glRealAndUnknownMsId    $__FIRST_MS_REAL_AND_UNKNOWN
+	}
+	
+	nextstate WaitForConfig
+}
+
+#there is a proc ConvertMSDbFromHumanReadableTo24008 in L3Utils.tsm that could be used instead of this one.
+proc ConvertIMEIDbToHumanReadable { dbName } {
+	set idxList [DbGetIndexList $dbName]
+	foreach msIdx $idxList {
+	    # Check if the IMEI is coded or not
+    	set imei [DbGet $dbName $msIdx IMEI]
+    	if { ![string compare "a" [string range $imei 1 1]] } {
+		} else {
+			set codedImei [Get24008FormatFromImei $imei]
+			DbSet $dbName $msIdx IMEI $codedImei
+		}
+	}
+}
+
+##############################################################
+#
+# Auxiliary Procedures
+#
+##############################################################
+
+# procedure to when the MM_CC_PROT, MM_SMS_PROT and MM_GCC_PROT are received TMA-222
+proc EmptyMMQueue { idx MmReqBuf }  {
+	
+	global glMMdb 
+	
+	if  { [string equal $MmReqBuf  "MM_CC_EST_REQ"] }  {
+		log "EmptyMMQueue : empty MmCcReqBuf = $MmReqBuf"
+		DbSet $glMMdb $idx MmCcReqBuf "?"
+		
+	} elseif { [string equal $MmReqBuf  "MM_SMS_EST_REQ"] }  {
+		log "EmptyMMQueue : empty MmSmsReqBuf=$MmReqBuf"
+		DbSet $glMMdb $idx MmSmsReqBuf "?"
+		
+	} elseif { [string equal $MmReqBuf  "MM_GCC_EST_REQ"] }  {
+		log "EmptyMMQueue : empty MmReqBuf=$MmReqBuf"
+		DbSet $glMMdb $idx MmGccReqBuf "?"
+	} 
+	
+}
+
+
+
+proc DequeueRequests { } {
+	
+	# Only Dequeue one request
+	if { [DequeueReq "MmCcReqBuf"] } {
+		return
+	}	
+	if { [DequeueReq "MmSmsReqBuf"] } {
+		return	
+	}
+	if { [DequeueReq "MmGccReqBuf"] } {
+		return	
+	}
+}	
+
+proc DequeueReq { bufName } {
+	
+	# Global Variables
+	global _sig _state _src glMMdb glMsId
+	
+	# Reschedule
+	set retVal 1
+	set msg [DbGet $glMMdb $glMsId $bufName]
+	if { ![IsVoid $msg] } {
+		set _sig $msg
+		log "$_sig Dequeued"
+		set _src [DbGet $glMMdb $glMsId UserPid]
+		DbSet $glMMdb $glMsId $bufName "?"
+		eval $_state
+	} else {
+		set retVal 0
+	}
+	
+	return $retVal
+}
+
+proc EnqueueMmCcRequest { } {
+	
+	EnqueueReq "MmCcReqBuf"
+}
+
+proc EnqueueMmSmsRequest { } {
+	
+	EnqueueReq "MmSmsReqBuf"
+}
+
+proc EnqueueMmVgcsRequest { } {
+	
+	EnqueueReq "MmGccReqBuf"
+}
+
+proc EnqueueReq { bufName } {
+	
+	# Global Variables
+	global _sig glMMdb glMsId
+	
+	LogInputMsg $_sig
+	log "$_sig Enqueued"
+	
+	# Store EST_REQ in DataBase
+	DbSet $glMMdb $glMsId $bufName $_sig
+}
+
+proc SendMmrErrorInd { cause } {
+	
+	# Global Variables
+	global glMMdb glMsId
+	
+	# Get User Pid
+	set upid [DbGet $glMMdb $glMsId UserPid]
+	if { [IsVoid $upid] } {
+		logscr "WARNING: Ms not registered in MM ($glMsId)"
+		return
+	} else {
+		# Inform User Script
+		new		MMR_ERROR_IND s
+		wr      s MsId $glMsId
+		wr		s Cause $cause
+		send    s $upid
+		LogOutputMsg $s
+	}
+	
+	nextstate MMIdle
+	
+	DequeueRequests
+}
+
+proc GetNextTmsi { msId args } {
+	
+	global glMMdb
+	
+	set tmsi [BuildTmsi $msId]
+	set prevTmsi [DbGet $glMMdb $msId TMSI]
+	
+	# Check if Tmsi is the same 
+	if { [string equal $prevTmsi $tmsi] } {
+		set tmsi [BuildTmsi $msId]
+	}
+	
+	if { [isSplitted] && [llength $args] != 0} {
+		log "GetNextTmsi: comunicating to master the new TMSI msId=$msId tmsi=$tmsi"
+		SendApNewTmsiAlloc $msId $tmsi
+	}
+	
+	log "New reallocated TMSI: $tmsi"
+	return $tmsi
+}
+
+proc GetNextTmsi_ { } {
+	
+	# Global Variables
+	global glTmsiRef
+	
+	append tmsi "f4" [uitoh $glTmsiRef B]
+	
+	incr glTmsiRef
+	
+	if { [ string equal [uitoh $glTmsiRef B] "c0000000"] } {
+		set glTmsiRef 0
+	}
+	
+	return $tmsi
+}
+
+proc GetNextTempId { } {
+	
+	if { [isSplitted] } {
+		if { [llength [info commands isSplitted]] } {
+			if { ![ismaster] } {
+				# Global Variables
+				global glTempIdRef glCommonDb
+				set slaveId [expr [getslaveid] + 1]
+				#set slaveId [getslaveid]
+				set numSlaves [getnumslaves]
+				set dbSize [DbSize $glCommonDb]
+				set id $glTempIdRef
+				
+				incr glTempIdRef
+				
+				log "GetNextTempId New id calculated = $id slaveId = $slaveId numSlaves = $numSlaves"
+				# Check if goes in some other slave range!
+				set msPos [expr $glTempIdRef - $dbSize]
+				set slaveOffset [expr ($slaveId - 1)]
+				set id0 [expr $glTempIdRef - $dbSize]
+				set range [expr $numSlaves * $dbSize]
+				set k [expr $id0 / $range]
+				
+				log "msPos=$msPos slaveOffset=$slaveOffset id0=$id0 k=$k"
+				set lowLimit [expr $dbSize + ($k * $range) + ($slaveOffset * $dbSize)]
+				set highLimit [expr $lowLimit + $dbSize]
+				
+				log "lowLimit=$lowLimit highLimit=$highLimit"
+				if { $glTempIdRef > $highLimit } {
+					# Move ahead by a range
+					set glTempIdRef [expr $lowLimit + $range]
+					log "Increasing by a range: glTempIdRef = $glTempIdRef"
+				}	
+				return $id	
+			} else {
+				logscr "GetNextTempId: ERROR: the MM protocol should not run on Master Tstm"
+				exit
+			}
+		}
+	} else {
+		# Global Variables
+		global glTempIdRef
+		log "GetNextTempId: no slave Db present"
+		
+		set id $glTempIdRef
+		incr glTempIdRef
+		return $id
+	}
+}
+
+proc RetrieveImei { } {
+	
+	SendIdentityRequest 02
+}
+
+proc UnexpectedProcedure { currproc } {
+	
+	logscr "Unexpected Procedure ($currproc)"
+	
+	# Reset MM Instance
+	ResetMmInst
+}
+
+proc ResetMmInst { } {
+	
+	# Declare and Initialize Global Variables
+	global glMsId glMMdb glCommonDb
+	
+	# Release Connection
+	ReleaseApConnection "Protocol_Error_MM"
+	
+	# Reset Parameters
+	if { [DbEntryExists $glCommonDb $glMsId] } {
+		MmParamReset 
+	} else {
+		DbSet $glMMdb $glMsId SendSeqNum 0
+	}
+}
+
+proc ResetMmInst_NoRel { } {
+	
+	# Declare and Initialize Global Variables
+	global glMsId glMMdb glCommonDb
+	
+	# Release Connection
+	#ReleaseApConnection "Protocol_Error_MM"
+	
+	# Reset Parameters
+	if { [DbEntryExists $glCommonDb $glMsId] } {
+		MmParamReset 
+	} else {
+		DbSet $glMMdb $glMsId SendSeqNum 0
+	}
+}
+
+proc UnexpectedApEstInd { } {
+	global glMsId _state _bssappid __slaves_db glMMdb _is_gsm
+	
+	log "UnexpectedApEstInd: msId=$glMsId state=$_state"
+	
+	if { ![info exists __slaves_db] } {
+		if { $_is_gsm } {
+			if { [info exists _bssappid] && $_bssappid != -1 } {
+				# Set a remote variable in BSSAP to have a different behavior
+				remcmd $_bssappid "SetgMMRemote"
+			}
+		}
+        global __gsmr
+        if { [info exists __gsmr] && $__gsmr } {
+            set locState $_state
+        }
+		# Release upper layers
+		if {[string eq [ReleaseMmConnection e19f] "stop"]} {
+			log "UnexpectedApEstInd: stop"
+            if { [info exists __gsmr] && $__gsmr } {
+                if { $locState == "AuthenticationInitiated" } {
+                    log "release channel and MS"    
+					global _sig
+                    set tmpMsId [rd _sig SpcStkIdCid]
+                    set realMsId [rd _sig MsId]
+                    log "tmpMsId = $tmpMsId realMsId = $realMsId"
+                    SendApRelReq $tmpMsId "Service_Abort_MM"
+                }
+            }
+			return
+		}
+		
+		set numConn [DbGet $glMMdb $glMsId NumOfMmConnections]
+		log "UnexpectedApEstInd: numConn = $numConn"
+		if { $numConn != 0 } {
+			incr numConn -1
+			DbSet $glMMdb $glMsId NumOfMmConnections $numConn
+			log "UnexpectedApEstInd: decreasing number of connections numConn = $numConn"
+			set tid [DbGet $glMMdb $glMsId TidBitMap]
+			DbSet $glMMdb $glMsId TidBitMap 0x00
+			log "UnexpectedApEstInd TidBitMap set to 0 was: tid=$tid"
+		}
+	} else {
+		log "UnexpectedApEstInd: ERROR: called in splitted!"
+	}
+	
+	# Reset Old MM Instance, but not send the REL_REQ
+	ResetMmInst_NoRel
+	nextstate MMIdle
+	
+	# Handle new connection 
+	EstablishApConn
+}
+
+##############################################################
+#
+# Connection Procedures
+#
+##############################################################
+
+proc SetMtcPdCall { tid } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMsId glMMdb
+	
+	# During Location Update - Enqueue Message
+	set tTrigAuthid [DbGet $glMMdb $glMsId T_TRIG_AUTHid] 
+	if { [tmrrunning $tTrigAuthid] } {
+		log "$_sig Enqueued in proc SetMtcPdCall"	
+		DbSet $glMMdb $glMsId MmCcReqBuf $_sig
+		return -1	
+	}
+	
+	DbSet $glMMdb $glMsId CurrentMMProc MtcPdCall 
+	log "set $_sig in PendingEstReq in proc SetMtcPdCall"
+	DbSet $glMMdb $glMsId PendingEstReq $_sig
+	
+	set bmap [DbGet $glMMdb $glMsId TidBitMap]
+	set new_bmap [expr {$bmap | [expr {0x01 << $tid}]}]
+	DbSet $glMMdb $glMsId TidBitMap $new_bmap
+	
+	return 0
+}
+
+proc SetMtSms { tid } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMsId glMMdb
+	
+	# During Location Update - Enqueue Message
+	set tTrigAuthid [DbGet $glMMdb $glMsId T_TRIG_AUTHid] 
+	if { [tmrrunning $tTrigAuthid] } {
+		log "$_sig Enqueued in proc SetMtSms"
+		DbSet $glMMdb $glMsId MmSmsReqBuf $_sig
+		return -1	
+	}
+	
+	DbSet $glMMdb $glMsId CurrentMMProc MtSms 
+	log "set $_sig in PendingEstReq in proc SetMtSms"
+	DbSet $glMMdb $glMsId PendingEstReq $_sig
+	
+	set bmap [DbGet $glMMdb $glMsId SmsTidBitMap]
+	set new_bmap [expr {$bmap | [expr {0x01 << $tid}]}]
+	DbSet $glMMdb $glMsId SmsTidBitMap $new_bmap
+	
+	return 0
+}
+
+# USSD
+proc SetMtSs { tid } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMsId glMMdb
+	
+	# During Location Update - Enqueue Message
+	set tTrigAuthid [DbGet $glMMdb $glMsId T_TRIG_AUTHid] 
+	if { [tmrrunning $tTrigAuthid] } {
+		log "$_sig Enqueued in proc SetMtSs"
+		# TODO
+		DbSet $glMMdb $glMsId MmSsReqBuf $_sig
+		return -1	
+	}
+	
+	DbSet $glMMdb $glMsId CurrentMMProc MtSs 
+	log "set $_sig in PendingEstReq in proc SetMtSs"
+	DbSet $glMMdb $glMsId PendingEstReq $_sig
+	
+	set bmap [DbGet $glMMdb $glMsId SsTidBitMap]
+	set new_bmap [expr {$bmap | [expr {0x01 << $tid}]}]
+	DbSet $glMMdb $glMsId SsTidBitMap $new_bmap
+	
+	return 0
+}
+
+
+proc ApConnectionRequestActive { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMsId glMMdb glCommonDb
+	
+	LogInputMsg $_sig
+	# Set Current Procedure and Update Transaction Id BitMap
+	set cmtype [rd _sig CmServType]
+	set tid [rd _sig Tio]
+	switch -exact -- $cmtype {
+		"1"         { if { [SetMtcPdCall $tid] == "-1" } { return } }
+		"4"         { if { [SetMtSms $tid] == "-1" } { return } }
+		default     { logscr "Unexpected Cm Service Type ($cmtype)"
+			ReleaseMmConnection e14f 
+			DbSet $glMMdb $glMsId TidBitMap 0x00	
+			DbSet $glMMdb $glMsId SmsTidBitMap 0x00	
+			return }
+	}
+	log "ApConnectionRequestActive"
+	
+	# One Mm Connection exists 
+	MmEstablishConfirm $cmtype
+}
+
+proc ApConnectionRequest { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMsId glMMdb glCommonDb _is_umts
+	
+	LogInputMsg $_sig
+	
+	# Set Current Procedure and Update Transaction Id BitMap
+	set cmtype [rd _sig CmServType]
+	set tid [rd _sig Tio]
+	switch -exact -- $cmtype {
+		"1"         { if { [SetMtcPdCall $tid] == "-1" } { return } }
+		"4"         { if { [SetMtSms $tid] == "-1" } { return } }
+		"8"         { if { [SetMtSs $tid] == "-1" } { return } }
+		default     { logscr "Unexpected Cm Service Type ($cmtype)"
+			ReleaseMmConnection e14f 
+			DbSet $glMMdb $glMsId TidBitMap 0x00	
+			DbSet $glMMdb $glMsId SmsTidBitMap 0x00	
+			return }
+	}
+	
+	# Get Parameters
+	set conn_num [DbGet $glMMdb $glMsId NumOfMmConnections]
+	log "ApConnectionRequest: conn_num=$conn_num"	
+	
+	if { $conn_num == 0 } {
+		# Send to Lower Layer (to perform paging) 
+		set tmsi [DbGet $glMMdb $glMsId TMSI]
+		if { $_is_umts } {
+			SendApEstReq $glMsId $tmsi $cmtype
+		} else {
+			set msOnGsLink [IsMSOnGsLink $glMsId]
+			log "ApConnectionRequest: msOnGsLink=$msOnGsLink"
+			if { $msOnGsLink } {
+				SendApEstReq $glMsId $tmsi $cmtype 1
+			} else {
+				SendApEstReq $glMsId $tmsi $cmtype
+			}
+		}
+		nextstate WaitForRRConnection
+	} else {
+		# One Mm Connection exists 
+		MmEstablishConfirm $cmtype
+	}
+}
+
+proc EstablishApConn { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig _state glMMdb _is_umts
+	
+	LogInputPrim $_sig
+	
+	# Get MsId
+	set msid [rd _sig MsId]
+	
+	# Timer AUTH Running - Still Processing Previous Request
+	if { [tmrrunning [DbGet $glMMdb $msid T_TRIG_AUTHid]] } {
+		logscr "WARNING: Received Duplicated Request ($msid)"
+        global __MsDetector
+        if { [info exists __MsDetector] && $__MsDetector} {
+			SendApAbortReq $msid "Normal_Event_MM"
+		}
+		return
+	}
+	
+	# Check if Gs and the close the link
+	if { [IsMSOnGsLink $msid] } {
+		log "EstablishApConn: closing connection of MS=$msid on Gs link"
+		DbSet $glMMdb $msid GsLink 0
+		# Remeber the link has been forget for now
+		DbSet $glMMdb $msid GsLinkReleased 1
+		
+		new MMBSSAPPLUS_AP_REL_REQ s
+		wr	s	MsId	$msid
+		
+		# Temporary commented in order to have again the link
+		#send s
+	}
+	
+	# Send MsId(idx) to Lower Layer
+	SendApEstAck $msid [rd _sig SpcStkIdCid]
+	
+	global __MsDetector
+	if { [info exists __MsDetector] && $__MsDetector} {
+        set spcStkIdCid [rd _sig SpcStkIdCid]
+    }
+	
+	# Store Pdu in _sig and Evaluate _state 
+	set _sig [rd _sig Pdu]
+	
+	if { [info exists __MsDetector] && $__MsDetector} {
+        set idtype [GetTypeFromMsIdentity [rd _sig MsIdentity]]
+        log "Check identity type: idtype = $idtype"
+        if {$idtype == "1"} {
+			set imsi [rd _sig MsIdentity]
+			set imsi [GetImsiFrom24008Format $imsi]
+			set nowTxt [exec date "+%c"]
+			set tmpId $spcStkIdCid 
+			#set msg "TIME=${nowTxt} ESTIND TEMPID=$tmpId REALID=$msid IMSI=$imsi"
+			#save_info "/lsu/tstm/TSTM/StartScript/tmp/MsDetector.txt" "${msg}" "append"
+			set s [list MS_DETECTOR_CONN_EST $tmpId $msid $imsi]
+			set userPid [DbGet $glMMdb $msid UserPid]
+			# PATCH ATOM
+			log "userPid = $userPid" 
+			if { [IsVoid $userPid] } {
+				set userPid [DbGet $glMMdb 0 UserPid]
+			}
+			log "userPid = $userPid"
+			if { ![IsVoid $userPid] } {
+				send s $userPid
+			} else {
+				log "msid = $msid UserPid is VOID"
+			}
+			# END
+			#send s $userPid
+		}
+    }
+	
+	eval $_state
+}
+
+proc EstablishApConnInRR { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig _state glMMdb glMsId
+	
+	LogInputPrim $_sig
+	
+	set msid [rd _sig MsId]
+	
+	# PATCH TEST SDR
+	global __CellNet
+	if { [info exists __CellNet] && $__CellNet } {
+		set msg [DbGet $glMMdb $glMsId PendingEstReq]
+		set primName [lindex $msg 0]
+		set sigMM [rd _sig Pdu]
+		set pduName [lindex $sigMM 0]
+		log "EstablishApConnInRR: primName = $primName pduName = $pduName"
+		if { [string equal $primName "MM_SMS_EST_REQ"] && 
+			 [string equal $pduName "MM_CM_SERVICE_REQ"] } {	
+			# the sdcch channel has already been assigned for MOC
+			# and at the same time a paging has been sent for SMS
+			# with no repsonse from simulated MS
+			nextstate MMIdle
+			eval $_state
+			return
+		}
+	} 
+	# END
+	
+	# Send MsId(idx) to Lower Layer
+	SendApEstAck $msid [rd _sig SpcStkIdCid]
+	
+	# Store Pdu in _sig and Evaluate _state 
+	set _sig [rd _sig Pdu]
+	eval $_state
+	
+	# Enqueue a Pending Request if needed
+	set msg [DbGet $glMMdb $glMsId PendingEstReq]
+	set primName [lindex $msg 0]
+	DbSet $glMMdb $glMsId PendingEstReq "?"
+	if { [string equal $primName "MM_CC_EST_REQ"] } {
+		DbSet $glMMdb $glMsId MmCcReqBuf $msg
+	} elseif { [string equal $primName "MM_SMS_EST_REQ"] } {
+		log "$_sig Enqueued in proc EstablishApConnInRR"
+		DbSet $glMMdb $glMsId MmSmsReqBuf $msg
+	} elseif { [string equal $primName "MM_GCC_EST_REQ"] } {
+		log "$_sig Enqueued in proc EstablishApConnInRR"
+		DbSet $glMMdb $glMsId MmGccReqBuf $msg
+	}
+}
+
+proc RejectApConn { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig
+	
+	LogInputPrim $_sig
+	
+	set msid [rd _sig MsId]
+	
+	# Send MsId(idx) to Lower Layer
+	SendApEstNack $msid [rd _sig SpcStkIdCid]
+}
+
+proc ApTalkerInd { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig _state
+	
+	LogInputMsg $_sig
+	
+	new		MM_GCC_TALKER_IND s
+	wr		s MsId [rd _sig MsId]
+	wr		s GroupCallRef [rd _sig GroupCallRef]
+	send    s
+	LogOutputMsg $s
+	
+	nextstate MMConnectionActive_GroupCall
+}
+
+proc ApConnectionReleased { { cause e1af } } {
+	
+	# Declare and Initialize Global Variables
+	global glMMdb glMsId
+	
+	# Stop Timers
+	tmrstop [DbGet $glMMdb $glMsId T_3250id]
+	tmrstop [DbGet $glMMdb $glMsId T_3260id]
+	tmrstop [DbGet $glMMdb $glMsId T_3270id]
+	
+	tmrstop [DbGet $glMMdb $glMsId T_TRIG_AUTHid]
+	
+	# Release MM Connection toward upper layers
+	ReleaseMmConnection $cause
+	
+	# Reset Parameters
+	MmParamReset
+	DbSet $glMMdb $glMsId NumOfMmConnections 0	
+	DbSet $glMMdb $glMsId TidBitMap 0x00	
+	DbSet $glMMdb $glMsId SmsTidBitMap 0x00	
+	DbSet $glMMdb $glMsId VgcsTidBitMap 0x00	
+	DbSet $glMMdb $glMsId SsTidBitMap 0x00	
+	
+	# TMA-222
+	if { $cause == "e192" } {
+		DbSet $glMMdb $glMsId PendingEstReq "?"
+	}
+	# TMA-222
+}
+
+proc ApRelInd { } {
+	
+	global _sig
+	
+	LogInputMsg $_sig
+	
+	
+	# Release Connection
+	switch -exact -- [rd _sig Cause] {
+		"Timer Expired"		{ set cause e192 }
+		"Normal_Event"      { set cause e19f }
+		"CellNet_RrBusy"	{ set cause 9999 }
+		default 			{ set cause e19f }
+	}
+	
+	ApConnectionReleased $cause
+	
+	nextstate MMIdle
+	
+	DequeueRequests
+}
+
+proc GprsApRelInd { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMMdb glMsId
+	
+	LogInputMsg $_sig
+	
+	set isGs [DbGet $glMMdb $glMsId GsLink]
+	if { !$isGs } {
+        logscr "GprsApRelInd: WARNING the MS=$glMsId received a release but wasn't on Gs link"
+        return
+    }
+	
+	log "GprsApRelInd: releasing link on Gs for MS=$glMsId"
+	
+	DbSet $glMMdb $glMsId GsLink 0
+	DbSet $glMMdb $glMsId GsLinkEstablished 0
+	DbSet  $glMMdb $glMsId GsLinkReleased 0
+	
+	# Stop Timers
+	tmrstop [DbGet $glMMdb $glMsId T_3250id]
+	tmrstop [DbGet $glMMdb $glMsId T_3260id]
+	tmrstop [DbGet $glMMdb $glMsId T_3270id]
+	
+	tmrstop [DbGet $glMMdb $glMsId T_TRIG_AUTHid]
+	
+	#`Gs case: release nothing while CC, GCC, SMC
+	# Release MM Connection
+	#ReleaseMmConnection $cause
+	
+	# Reset Parameters
+	MmParamReset
+	DbSet $glMMdb $glMsId NumOfMmConnections 0
+	DbSet $glMMdb $glMsId TidBitMap 0x00
+	DbSet $glMMdb $glMsId SmsTidBitMap 0x00
+	DbSet $glMMdb $glMsId VgcsTidBitMap 0x00
+	DbSet $glMMdb $glMsId SsTidBitMap 0x00
+	
+	nextstate MMIdle
+	
+	DequeueRequests
+}
+
+proc ApAbortInd {} {
+	
+	# Declare and Initialize Global Variables
+	global _sig
+	
+	LogInputMsg $_sig
+	
+	# Release Connection
+	# TODO: chiarire
+    set cause e19f
+
+	ApConnectionReleased $cause
+	
+	nextstate MMIdle
+	
+	DequeueRequests
+}
+
+
+proc ApRelIndInIdle { } {
+	
+	global _sig glMMdb glMsId
+	
+	LogInputMsg $_sig
+	
+	set tTrigAuthid [DbGet $glMMdb $glMsId T_TRIG_AUTHid]
+	if { ![IsVoid $tTrigAuthid] && [tmrrunning $tTrigAuthid] } {
+		log "ApRelIndInIdle: tTrigAuthid=$tTrigAuthid"; #cDEBUG	
+		# Stop Idle Mode Timers
+		tmrstop $tTrigAuthid
+	}
+	
+	# Release MM Connection - Hardcoded Cause
+	set cause e1af
+	ReleaseMmConnection $cause
+	
+	# Reset Parameters
+	MmParamReset
+	DbSet $glMMdb $glMsId NumOfMmConnections 0	
+	DbSet $glMMdb $glMsId TidBitMap 0x00	
+	DbSet $glMMdb $glMsId SmsTidBitMap 0x00	
+	DbSet $glMMdb $glMsId VgcsTidBitMap 0x00	
+	DbSet $glMMdb $glMsId SsTidBitMap 0x00	
+}
+
+proc GprsApRelIndIdle { } {
+	global _sig glMsId glMMdb
+	
+	LogInputMsg $_sig
+	
+	set isGs [DbGet $glMMdb $glMsId GsLink]
+	if { !$isGs } {
+		logscr "WARNING: the MS=$glMsId was not on the Gs Link!"
+		return
+	}
+	log "GprsApRelIndIdle: releasing Gs link for MS=$glMsId"
+	DbSet $glMMdb $glMsId GsLink 0
+	DbSet $glMMdb $glMsId GsLinkEstablished 0
+	DbSet $glMMdb $glMsId GsLinkReleased 0
+	# Stop Idle Mode Timers
+	tmrstop [DbGet $glMMdb $glMsId T_TRIG_AUTHid]
+	
+	# Does not release the connection, because the lost link is on Gs
+	#set cause e1af
+	#ReleaseMmConnection $cause
+	
+	# Reset Parameters
+	MmParamReset
+	DbSet $glMMdb $glMsId NumOfMmConnections 0	
+	DbSet $glMMdb $glMsId TidBitMap 0x00	
+	DbSet $glMMdb $glMsId SmsTidBitMap 0x00	
+	DbSet $glMMdb $glMsId VgcsTidBitMap 0x00	
+	DbSet $glMMdb $glMsId SsTidBitMap 0x00
+	
+}
+
+proc ReleaseApConnection { cause } {
+	
+	# Global Variables
+	global glMsId
+	
+	log "ReleaseApConnection: glMsId=$glMsId (cause=$cause)"
+	
+	# Send to Lower Layer
+	SendApRelReq $glMsId $cause
+}
+
+proc IsMSOnGsLink { idx } {
+	
+	if { ![GsInterfaceActive] } {
+		set fun "proc IsMSOnGsLink { idx } { return 0 }"
+		eval $fun
+		return 0
+	}
+	
+	global glMMdb
+	
+	if [GsInterfaceActive] {
+		set gsLink [DbGet $glMMdb $idx GsLink]
+		log "IsMSOnGsLink: gsLink=$gsLink"
+		if { ![IsVoid $gsLink] } {
+			return $gsLink
+		} else {
+			return 0
+		}
+	} else {
+		return 0
+	}
+}
+
+##############################################################
+#
+# Mm Connection Procedures
+#
+##############################################################
+
+proc ActivateMMConnection { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMMdb glMsId glCommonDb glReDistrActive
+	
+	LogInputPrim $_sig
+	
+	# Check if new Transaction Id
+	set tid [rd _sig Tio]
+	set bmap [DbGet $glMMdb $glMsId TidBitMap]
+	set check [expr {$bmap & [expr {0x01 << $tid}]}]
+	
+	# Check Send Sequence Number
+	set sndseqnum [rd _sig Sn]
+	set revlev [DbGet $glMMdb $glMsId RevLev]
+	if { [CheckSendSeqNum $glMsId $sndseqnum $glMMdb $revlev] != "1" } {
+		logscr "Unexpected Send Sequence Number ($sndseqnum)"
+		#SendMmrErrorInd e1b1
+		return
+	}
+	
+	if { $check == 0 } {
+		# New Connection To Call Control
+		new 	MM_CC_EST_IND s
+		wr		s MsId $glMsId
+		wr		s SeqNum $sndseqnum
+		wr		s RevLev $revlev
+		wr 		s Pdu [rd _sig Pdu]
+		global glMmCcSapPid
+		send  	s $glMmCcSapPid
+		LogOutputPrim $s
+		
+		# Update Number of Mm Connections and Transaction Id BitMap
+		set conn_num [DbGet $glMMdb $glMsId NumOfMmConnections]
+		DbSet $glMMdb $glMsId NumOfMmConnections [expr {$conn_num + 1}]
+		set new_bmap [expr {$bmap | [expr {0x01 << $tid}]}]
+		DbSet $glMMdb $glMsId TidBitMap $new_bmap
+		
+		if { [DbFieldExists $glCommonDb TmsiReallocationDuringService] } {
+			if { [DbGet $glCommonDb $glMsId TmsiReallocationDuringService] } {
+				SendTmsiReallocationCommand
+			}
+		} elseif { $glReDistrActive } {
+			# Intra domain connection of RAN nodes to multiple CN nodes: Load Re-Distribution (Carlo see 3gpp 23.236-7.0.0 p.4.5a)
+			SendTmsiReallocationCommand
+		}
+		
+		# Start TMA-222	
+		# Empty MmCcReqBuf TMA-222	
+		EmptyMMQueue $glMsId "MM_CC_EST_REQ" 
+		# End TMA-222
+		
+		nextstate MMConnectionActive
+	} else {
+		# To Call Control - Message belongs to Activated Mm Connection
+		new 	MM_CC_DATA_IND s
+		wr		s MsId $glMsId
+		wr      s SeqNum $sndseqnum
+		wr 		s Pdu [rd _sig Pdu]
+		global glMmCcSapPid
+		send  	s $glMmCcSapPid
+		LogOutputPrim $s
+	}
+}
+
+proc ActivateMMConnectionSms { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMMdb glMsId glCommonDb glReDistrActive
+	
+	LogInputPrim $_sig
+	
+	# Check if new Transaction Id
+	set tid [rd _sig Tio]
+	set bmap [DbGet $glMMdb $glMsId SmsTidBitMap]
+	set check [expr {$bmap & [expr {0x01 << $tid}]}]
+	
+	#logscr "************* ActivateMMConnectionSms ****************"
+	#logscr "************* tid=$tid  bmap=$bmap   check=$check ****************"
+	
+	if { $check == 0 } {
+		# New Connection To Sms
+		new 	MM_SMS_EST_IND s
+		wr		s MsId $glMsId
+		wr 		s Pdu [rd _sig Pdu]
+		send    s
+		LogOutputPrim $s
+		
+		# Update Number of Mm Connections and Transaction Id BitMap
+		set conn_num [DbGet $glMMdb $glMsId NumOfMmConnections]
+		
+		#logscr "** -cDEBUG- ActivateMMConnectionSms: conn_num_preActivation=$conn_num **"
+		
+		DbSet $glMMdb $glMsId NumOfMmConnections [expr {$conn_num + 1}]
+		
+		#logscr "** -cDEBUG- ActivateMMConnectionSms: conn_num_postActivation=[DbGet $glMMdb $glMsId NumOfMmConnections] **"
+		
+		set new_bmap [expr {$bmap | [expr {0x01 << $tid}]}]
+		
+		#logscr "** -cDEBUG- ActivateMMConnectionSms: new_bmap=$new_bmap **"
+		
+		DbSet $glMMdb $glMsId SmsTidBitMap $new_bmap
+		if { [DbFieldExists $glCommonDb TmsiReallocationDuringService] } {
+			if { [DbGet $glCommonDb $glMsId TmsiReallocationDuringService] } {
+				SendTmsiReallocationCommand
+			}
+		} elseif { $glReDistrActive } {
+			# Intra domain connection of RAN nodes to multiple CN nodes: Load Re-Distribution (Carlo see 3gpp 23.236-7.0.0 p.4.5a)
+			SendTmsiReallocationCommand
+		}
+		
+		# Start TMA-222
+		# Empty MmSmsReqBuf 
+		EmptyMMQueue $glMsId "MM_SMS_EST_REQ"
+		# End TMA-222
+		
+		nextstate MMConnectionActive
+	} else {
+		# Message belongs to Activated Mm Connection
+		RouteToSms
+	}
+}
+
+proc ActivateMMConnectionVgcs { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMMdb glMsId
+	
+	LogInputPrim $_sig
+	
+	# Check if new Transaction Id
+	set tid [rd _sig Tio]
+	set bmap [DbGet $glMMdb $glMsId VgcsTidBitMap]
+	set check [expr {$bmap & [expr {0x01 << $tid}]}]
+	set lac [hocts [DbGet $glMMdb $glMsId LAI] 3 4]
+	
+	# Revision Level
+	set revlev [DbGet $glMMdb $glMsId RevLev]
+	
+	if { $check == 0 } {
+		# New Connection To Group Call Control
+		new 	MM_GCC_EST_IND s
+		wr		s MsId $glMsId
+		wr      s RevLev $revlev
+		wr 		s Pdu [rd _sig Pdu]
+		wr		s CellId [DbGet $glMMdb $glMsId CellId]
+		wr 		s Lac $lac
+		send    s
+		LogOutputPrim $s
+		
+		# Update Number of Mm Connections and Transaction Id BitMap
+		set conn_num [DbGet $glMMdb $glMsId NumOfMmConnections]
+		DbSet $glMMdb $glMsId NumOfMmConnections [expr {$conn_num + 1}]
+		set new_bmap [expr {$bmap | [expr {0x01 << $tid}]}]
+		DbSet $glMMdb $glMsId VgcsTidBitMap $new_bmap
+		
+		# Start TMA-222
+		# Empty the MmGccReqBuf 
+		EmptyMMQueue $glMsId "MM_GCC_EST_REQ"
+		# End TMA-222
+		
+		nextstate MMConnectionActive
+	} else {
+		# Message belongs to Activated Mm Connection
+		RouteToGroupCallControl
+	}
+}
+
+proc ActivateMMConnectionSs { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMMdb glMsId
+	
+	LogInputPrim $_sig
+	
+	# Check if new Transaction Id
+	set tid [rd _sig Tio]
+	set bmap [DbGet $glMMdb $glMsId SsTidBitMap]
+	set check [expr {$bmap & [expr {0x01 << $tid}]}]
+	
+	if { $check == 0 } {
+		# Check Send Sequence Number
+		set sndseqnum [rd _sig Sn]
+		set revlev [DbGet $glMMdb $glMsId RevLev]
+		if { [CheckSendSeqNum $glMsId $sndseqnum $glMMdb $revlev] != "1" } {
+			logscr "Unexpected Send Sequence Number ($sndseqnum)"
+			return
+		}
+		
+		# New Connection To SS
+		new 	MM_SS_EST_IND s
+		wr		s MsId $glMsId
+		wr		s SeqNum $sndseqnum
+		wr      s RevLev $revlev
+		wr 		s Pdu [rd _sig Pdu]
+		send    s
+		LogOutputPrim $s
+		
+		# Update Number of Mm Connections and Transaction Id BitMap
+		set conn_num [DbGet $glMMdb $glMsId NumOfMmConnections]
+		DbSet $glMMdb $glMsId NumOfMmConnections [expr {$conn_num + 1}]
+		set new_bmap [expr {$bmap | [expr {0x01 << $tid}]}]
+		DbSet $glMMdb $glMsId SsTidBitMap $new_bmap
+		
+		nextstate MMConnectionActive
+	} else {
+		# Message belongs to Activated Mm Connection
+		RouteToSs
+	}
+}
+
+proc ActivateMMConnSecMode { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMMdb glMsId
+	
+	LogInputPrim $_sig
+	
+	# Get Parameters
+	set tid [rd _sig Tio]
+	set bmap [DbGet $glMMdb $glMsId TidBitMap]
+	
+	# Check Send Sequence Number
+	set sndseqnum [rd _sig Sn]
+	set revlev [DbGet $glMMdb $glMsId RevLev]
+	if { [CheckSendSeqNum $glMsId $sndseqnum $glMMdb $revlev] != "1" } {
+		logscr "Unexpected Send Sequence Number ($sndseqnum)"
+		#SendMmrErrorInd e1b1
+		return
+	}
+	
+	log "WARNING: Security Mode Implicitly Activated"
+	
+	# To Call Control
+	new 	MM_CC_EST_IND s
+	wr		s MsId $glMsId
+	wr		s SeqNum $sndseqnum
+	wr      s RevLev $revlev
+	wr 		s Pdu [rd _sig Pdu]
+	global glMmCcSapPid
+	send  	s $glMmCcSapPid
+	LogOutputPrim $s
+	
+	# Update Number of Mm Connections and Transaction Id BitMap
+	DbSet $glMMdb $glMsId NumOfMmConnections 1
+	set new_bmap [expr {$bmap | [expr {0x01 << $tid}]}]
+	DbSet $glMMdb $glMsId TidBitMap $new_bmap
+	
+	nextstate MMConnectionActive
+}
+
+proc ActivateMMConnSmsSecMode { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMMdb glMsId
+	
+	LogInputPrim $_sig
+	
+	# Get Parameters
+	set tid [rd _sig Tio]
+	set bmap [DbGet $glMMdb $glMsId SmsTidBitMap]
+	
+	log "WARNING: Security Mode Implicitly Activated"
+	
+	# To Call Control
+	new 	MM_SMS_EST_IND s
+	wr		s MsId $glMsId
+	wr 		s Pdu [rd _sig Pdu]
+	send    s
+	LogOutputPrim $s
+	
+	# Update Number of Mm Connections and Transaction Id BitMap
+	DbSet $glMMdb $glMsId NumOfMmConnections 1
+	set new_bmap [expr {$bmap | [expr {0x01 << $tid}]}]
+	DbSet $glMMdb $glMsId SmsTidBitMap $new_bmap
+	
+	nextstate MMConnectionActive
+}
+
+proc ActivateMMConnVgcsSecMode { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMMdb glMsId
+	
+	LogInputPrim $_sig
+	
+	# Get Parameters
+	set tid [rd _sig Tio]
+	set bmap [DbGet $glMMdb $glMsId VgcsTidBitMap]
+	
+	log "WARNING: Security Mode Implicitly Activated"
+	
+	# To Call Control
+	new 	MM_GCC_EST_IND s
+	wr		s MsId $glMsId
+	wr		s SeqNum $sndseqnum
+	wr      s RevLev $revlev
+	wr      s CellId [DbGet $glMMdb $glMsId CellId]
+	wr 		s Pdu [rd _sig Pdu]
+	send    s
+	LogOutputPrim $s
+	
+	# Update Number of Mm Connections and Transaction Id BitMap
+	DbSet $glMMdb $glMsId NumOfMmConnections 1
+	set new_bmap [expr {$bmap | [expr {0x01 << $tid}]}]
+	DbSet $glMMdb $glMsId VgcsTidBitMap $new_bmap
+	
+	nextstate MMConnectionActive
+}
+
+proc ActivateMMConnSsSecMode { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMMdb glMsId
+	
+	LogInputPrim $_sig
+	
+	# Get Parameters
+	set tid [rd _sig Tio]
+	set bmap [DbGet $glMMdb $glMsId SsTidBitMap]
+	
+	# Check Send Sequence Number
+	set sndseqnum [rd _sig Sn]
+	set revlev [DbGet $glMMdb $glMsId RevLev]
+	if { [CheckSendSeqNum $glMsId $sndseqnum $glMMdb $revlev] != "1" } {
+		logscr "Unexpected Send Sequence Number ($sndseqnum)"
+		#SendMmrErrorInd e1b1
+		return
+	}
+	
+	log "WARNING: Security Mode Implicitly Activated"
+	
+	# To SS module
+	new 	MM_SS_EST_IND s
+	wr		s MsId $glMsId
+	wr		s SeqNum $sndseqnum
+	wr      s RevLev $revlev
+	wr 		s Pdu [rd _sig Pdu]
+	send    s
+	LogOutputPrim $s
+	
+	# Update Number of Mm Connections and Transaction Id BitMap
+	DbSet $glMMdb $glMsId NumOfMmConnections 1
+	set new_bmap [expr {$bmap | [expr {0x01 << $tid}]}]
+	DbSet $glMMdb $glMsId SsTidBitMap $new_bmap
+	
+	nextstate MMConnectionActive
+}
+
+proc MmEstablishConfirm { cmtype } {
+	
+	# Declare and Initialize Global Variables
+	global glMMdb glMsId glCommonDb glReDistrActive
+	
+	if { $cmtype == "1" } {
+		if { [DbFieldExists $glCommonDb TmsiReallocationDuringService] } {
+			if { [DbGet $glCommonDb $glMsId TmsiReallocationDuringService] } {
+				SendTmsiReallocationCommand
+			}
+		} elseif { $glReDistrActive } {
+			# Intra domain connection of RAN nodes to multiple CN nodes: Load Re-Distribution (Carlo see 3gpp 23.236-7.0.0 p.4.5a)
+			SendTmsiReallocationCommand
+		}
+		
+		# MMCC Establish Confirm
+		new		MM_CC_EST_CNF s
+		wr		s MsId $glMsId
+		wr      s SeqNum [DbGet $glMMdb $glMsId SendSeqNum]
+		wr      s RevLev [DbGet $glMMdb $glMsId RevLev]
+		global glMmCcSapPid
+		send  	s $glMmCcSapPid
+		LogOutputMsg $s
+		
+	} elseif { $cmtype == "4" } {
+		if { [DbFieldExists $glCommonDb TmsiReallocationDuringService] } {
+			if { [DbGet $glCommonDb $glMsId TmsiReallocationDuringService] } {
+				SendTmsiReallocationCommand
+			}
+		} elseif { $glReDistrActive } {
+			# Intra domain connection of RAN nodes to multiple CN nodes: Load Re-Distribution (Carlo see 3gpp 23.236-7.0.0 p.4.5a)
+			SendTmsiReallocationCommand
+		}
+		
+		# MMSMS Establish Confirm
+		new		MM_SMS_EST_CNF s
+		wr      s MsId $glMsId
+		send    s
+		LogOutputMsg $s
+	} elseif { $cmtype == "8" } {
+		if { [DbFieldExists $glCommonDb TmsiReallocationDuringService] } {
+			if { [DbGet $glCommonDb $glMsId TmsiReallocationDuringService] } {
+				SendTmsiReallocationCommand
+			}
+		} elseif { $glReDistrActive } {
+			# Intra domain connection of RAN nodes to multiple CN nodes: Load Re-Distribution (Carlo see 3gpp 23.236-7.0.0 p.4.5a)
+			SendTmsiReallocationCommand
+		}
+		
+		# MMSS Establish Confirm
+		new		MM_SS_EST_CNF s
+		wr      s MsId $glMsId
+		wr 		s RevLev [DbGet $glMMdb $glMsId RevLev] 
+		wr      s SeqNum [DbGet $glMMdb $glMsId SendSeqNum]
+		send    s
+		LogOutputMsg $s
+		
+	} else {
+		logscr "Unexpected Connection Type ($cmtype)"
+		return
+	}
+	
+	# Update Number of Mm Connections
+	set conn_num [DbGet $glMMdb $glMsId NumOfMmConnections] 
+	DbSet $glMMdb $glMsId NumOfMmConnections [expr {$conn_num + 1}]
+	
+	# Reset The Pending Request
+	DbSet $glMMdb $glMsId PendingEstReq "?"
+	
+	# AFLEX: Carlo workaround for TMA-404 ---start--- #
+	if { [info exists ::__tstm_db] } {
+		set tstmIndex [gettstmindex]
+		set reg_sig [list MMR_REG_IND $glMsId $tstmIndex]
+		set proName [DbGet $glMMdb $glMsId ProfileName]
+		log "MmEstablishConfirm: informing CORE Tstm about MS registration: ms=$glMsId tstm=$tstmIndex proName=$proName"
+		sendtotstm 0 $proName $reg_sig
+		# Store the MS as belonging to this MSC
+		DbSet $glMMdb $glMsId AFlexOwned 1
+	}
+	# ---end--- #
+	
+	nextstate MMConnectionActive
+}
+
+proc AwaitMmConnection { } {
+	
+	# Global Variables
+	global glMsId glMMdb glCommonDb
+	
+	# Check Number of Mm Connections and Transaction Id BitMap
+	set conn_num [DbGet $glMMdb $glMsId NumOfMmConnections]
+	
+	# Start TMA-213
+	# Check the Follow On Request TMA-213
+	set followonreq [DbGet $glMMdb $glMsId FollowOnReq]
+	
+	
+	if { [DbGet $glCommonDb $glMsId SecurNeeded] == 0 || $conn_num > 0 || $followonreq == 1} {
+		# Send Cm Service Accept
+		new		MM_CM_SERVICE_ACC s
+		wr		s Sn 0
+	   	LogOutputMsg $s
+		SendApDataReq $glMsId 0 [mmSigToPdu s]
+	}
+	
+	#
+	# End TMA-213
+	nextstate WaitForMobOrigMMConnection
+}
+
+proc ReleaseMmConnection { cause } {
+	
+	# Global Variables
+	global glMsId glMMdb
+	
+	# Get Parameters
+	set ccflag [expr {[DbGet $glMMdb $glMsId TidBitMap]}]
+	set smsflag [expr {[DbGet $glMMdb $glMsId SmsTidBitMap]}]
+	set gccflag [expr {[DbGet $glMMdb $glMsId VgcsTidBitMap]}]
+	set ssflag [expr {[DbGet $glMMdb $glMsId SsTidBitMap]}]
+	
+	# Inform Higher Layers
+	if { !$ccflag && !$smsflag && !$gccflag && !$ssflag } { 
+		SendMmrErrorInd $cause
+		return stop
+	} else {
+		if { $ccflag } {
+			# Send to CC
+			new 	MM_CC_REL_IND s
+			wr      s MsId $glMsId
+			wr      s Cause $cause
+			global glMmCcSapPid
+			send  	s $glMmCcSapPid
+			LogOutputMsg $s
+		} 
+		if { $smsflag } {
+			# Send to SMC
+			new 	MM_SMS_REL_IND s
+			wr      s MsId $glMsId
+			wr      s Cause $cause
+			send  	s
+			LogOutputMsg $s
+		}		
+		if { $gccflag } {
+			# Send to GCC
+			new 	MM_GCC_REL_IND s
+			wr      s MsId $glMsId
+			wr      s Cause $cause
+			send  	s
+			LogOutputMsg $s
+		}
+		if { $ssflag } {
+			# Send to SS
+			new 	MM_SS_REL_IND s
+			wr      s MsId $glMsId
+			wr      s Cause $cause
+			send  	s
+			LogOutputMsg $s
+		}
+		
+		return go
+	}
+}
+
+proc MmCcDataReq { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMsId
+	
+	LogInputPrim $_sig
+	
+	if { ![IsVoid [rd _sig SeqNum]] } {
+		# Check Received Sequence Number
+		set rcvseqnum [rd _sig SeqNum]
+		#log "MmCcDataReq: glMsId=$glMsId received_Sn=$rcvseqnum"; #cDEBUG
+	}
+	
+	# Send to Lower Layer on SAPI 0
+	SendApDataReq $glMsId 0 [rd _sig Pdu]
+	
+	#log "MmCcDataReq: glMsId=$glMsId expected_Sn=[DbGet $glMMdb $glMsId SendSeqNum]"; #cDEBUG
+}
+
+proc MmSmsDataReq { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMsId
+	
+	LogInputPrim $_sig
+	
+	# Send to Lower Layer on SAPI 3
+	SendApDataReq $glMsId 3 [rd _sig Pdu]
+}
+
+proc MmGccDataReq { } {
+	
+	MmCcDataReq
+}
+
+proc MmSsDataReq { } {
+	
+	MmCcDataReq
+}
+
+proc MmCcConnectionRelReq { } {
+	
+	# Global Variables
+	global _sig glMMdb glMsId glCommonDb
+	
+	LogInputMsg $_sig
+	
+	# Check TRIG Timers
+	set tTrigAuthid [DbGet $glMMdb $glMsId T_TRIG_AUTHid] 
+	set tTrigSecid [DbGet $glMMdb $glMsId T_TRIG_SECid] 
+	if { [tmrrunning $tTrigAuthid] } { 
+		tmrstop $tTrigAuthid
+		set conn_num 1
+	} elseif { [tmrrunning $tTrigSecid] } {
+		tmrstop $tTrigSecid
+		set conn_num 1
+	} else {
+		set conn_num [DbGet $glMMdb $glMsId NumOfMmConnections]
+	}
+	
+	set tT3260 [DbGet $glMMdb $glMsId T_3260id]
+	if { [tmrrunning $tT3260] } {
+		tmrstop $tT3260
+	}
+	
+	log "MmCcConnectionRelReq: conn_num=$conn_num for glMsId=$glMsId"
+	
+	if { $conn_num == 0 } {
+		# Start TMA-236
+		if { [IsMSOnGsLink $glMsId] } {
+			# Abort Gs Request
+			SendApAbortReqGs $glMsId "Normal_Event_MM"
+		} else {
+			# Abort Request
+			SendApAbortReq $glMsId "Normal_Event_MM"
+		}
+		# End TMA-236
+		# Reset Parameters
+		MmParamReset
+		nextstate MMIdle
+		DequeueRequests
+	} elseif { $conn_num == 1 } {
+		# Set cause for release
+		set cause [rd _sig Cause]
+		
+		# Carlo -SS-
+		if { ![IsVoid $cause] && [expr {[hgetb $cause 0] & 0xF0}] == "0xe0" && [hgetb $cause 1] == "145" && [DbFieldExists $glCommonDb Call_Forwarding] } {
+			log "MmCcConnectionRelReq: Cause='User Busy'"; #cDEBUG
+			ReleaseApConnection "User_Busy_MM"
+		} elseif { ![IsVoid $cause] && [expr {[hgetb $cause 0] & 0xF0}] == "0xe0" && [hgetb $cause 1] == "159" && [DbFieldExists $glCommonDb CallHoldActivation] } {
+			logscr "MmCcConnectionRelReq: cause=$cause --> rilascio in caso di Call Hold"	
+			
+			ReleaseApConnection "Normal_Unspecified"
+			
+			#@Carlo workaround 01/12/2008
+			return
+			
+		} else {
+            ReleaseApConnection "Normal_Event_MM"
+		}
+		#log "MmCcConnectionRelReq: -- BEFORE Reset Parameters -- glMsId=$glMsId expected_Sn=[DbGet $glMMdb $glMsId SendSeqNum]"; #cDEBUG
+		#log "MmCcConnectionRelReq: BEFORE Reset Parameters: MsId=$glMsId; NumOfMmConnections=[DbGet $glMMdb $glMsId NumOfMmConnections]"
+		
+		# Reset Parameters
+		MmParamReset
+		DbSet $glMMdb $glMsId NumOfMmConnections 0
+		DbSet $glMMdb $glMsId TidBitMap 0x00
+		
+		#log "MmCcConnectionRelReq: -- AFTER Reset Parameters -- glMsId=$glMsId expected_Sn=[DbGet $glMMdb $glMsId SendSeqNum]"; #cDEBUG
+		#log "MmCcConnectionRelReq: AFTER Reset Parameters: MsId=$glMsId; NumOfMmConnections=[DbGet $glMMdb $glMsId NumOfMmConnections]"
+		
+		nextstate MMIdle
+		DequeueRequests
+	} elseif { $conn_num > 1 } {
+		set tid [rd _sig Tio]
+		
+		#log "MmCcConnectionRelReq: BEFORE Reset Parameters: MsId=$glMsId; NumOfMmConnections=[DbGet $glMMdb $glMsId NumOfMmConnections]"
+		DbSet $glMMdb $glMsId NumOfMmConnections [expr {$conn_num - 1}]
+		#log "MmCcConnectionRelReq: AFTER Reset Parameters: MsId=$glMsId; NumOfMmConnections=[DbGet $glMMdb $glMsId NumOfMmConnections]"
+		
+		set bmap [DbGet $glMMdb $glMsId TidBitMap]
+		set new_bmap [expr {$bmap & [expr {~ [expr {0x01 << $tid}]}]}]
+		DbSet $glMMdb $glMsId TidBitMap $new_bmap
+	} else {
+		logscr "Unexpected Number of Mm Connections ($conn_num)"
+	}
+}
+
+proc MmSsConnectionRelReq { } {
+	
+	# Global Variables
+	global _sig glMMdb glMsId
+	
+	LogInputMsg $_sig
+	
+	# Check Number of Mm Connections
+	set tid [rd _sig Tio]
+	set conn_num [DbGet $glMMdb $glMsId NumOfMmConnections]
+	
+	if { $conn_num == 0 } {
+        # Reset Parameters
+        MmParamReset
+        nextstate MMIdle
+        DequeueRequests
+    } elseif { $conn_num == 1 } {
+        # Set cause for release (see "ranap.txt")
+        set cause [rd _sig Cause]
+        ReleaseApConnection "Normal_Event_MM"
+        # Reset Parameters
+        MmParamReset
+        DbSet $glMMdb $glMsId NumOfMmConnections 0
+        DbSet $glMMdb $glMsId SsTidBitMap 0x00
+        nextstate MMIdle
+        DequeueRequests	
+	} else {
+		logscr "Unexpected Number of Mm Connections ($conn_num)"
+	}
+}
+
+
+proc MmSmsConnectionRelReq { } {
+	
+	# Global Variables
+	global _sig glMMdb glMsId
+	
+	LogInputMsg $_sig
+	
+	# Check Number of Mm Connections
+	set tid [rd _sig Tio]
+	set conn_num [DbGet $glMMdb $glMsId NumOfMmConnections]
+	
+	if { $conn_num == 0 } {
+		# Reset Parameters
+		MmParamReset
+		nextstate MMIdle
+		DequeueRequests
+	} elseif { $conn_num == 1 } {
+		# Set cause for release (see "ranap.txt")
+		set cause [rd _sig Cause]
+		ReleaseApConnection "Normal_Event_MM"
+		# Reset Parameters
+		MmParamReset
+		DbSet $glMMdb $glMsId NumOfMmConnections 0
+		DbSet $glMMdb $glMsId SmsTidBitMap 0x00
+		nextstate MMIdle
+		DequeueRequests
+	} elseif { $conn_num == 2 } {
+		# CASE FOR SMS WITH ACTIVE CALL
+		#logscr "MmSmsConnectionRelReq: conn_num_PostRelease=[expr {$conn_num -1}]  bmap_PreRelease=[DbGet $glMMdb $glMsId SmsTidBitMap]"; #Carlo DEBUG
+		DbSet $glMMdb $glMsId NumOfMmConnections [expr {$conn_num - 1}]
+		set bmap [DbGet $glMMdb $glMsId SmsTidBitMap]
+		set new_bmap [expr {$bmap & [expr {~ [expr {0x01 << $tid}]}]}]
+		#Carlo: fixed for ripetition of sms
+		#DbSet $glMMdb $glMsId SmsTidBitMap $new_bmap
+		#logscr "MmSmsConnectionRelReq: bmap_calcolata=[expr {$bmap & [expr {~ [expr {0x01 << $tid}]}]}]"; #Carlo DEBUG
+		DbSet $glMMdb $glMsId SmsTidBitMap 0x00
+		#logscr "Carlo DEBUG BitMap_postRelease=[DbGet $glMMdb $glMsId SmsTidBitMap]"
+	} elseif { $conn_num > 2 } {
+		DbSet $glMMdb $glMsId NumOfMmConnections [expr {$conn_num - 1}]
+		set bmap [DbGet $glMMdb $glMsId SmsTidBitMap]
+		set new_bmap [expr {$bmap & [expr {~ [expr {0x01 << $tid}]}]}]
+		DbSet $glMMdb $glMsId SmsTidBitMap $new_bmap
+	} else {
+		logscr "Unexpected Number of Mm Connections ($conn_num)"
+	}
+}
+
+proc MmGccConnectionRelReq { } {
+	# Global Variables
+	global _sig glMMdb glMsId
+	
+	LogInputMsg $_sig
+	
+	# Check Number of Mm Connections
+	set tid [rd _sig Tio]
+	set conn_num [DbGet $glMMdb $glMsId NumOfMmConnections]
+	
+	if { $conn_num == 0 } {
+		# Reset Parameters
+		MmParamReset
+		nextstate MMIdle
+		DequeueRequests
+	} elseif { $conn_num == 1 } {
+		# Set cause for release (see "ranap.txt")
+		set cause [rd _sig Cause]
+		ReleaseApConnection "Normal_Event_MM"
+		# Reset Parameters
+		MmParamReset
+		DbSet $glMMdb $glMsId NumOfMmConnections 0
+		DbSet $glMMdb $glMsId VgcsTidBitMap 0x00
+		nextstate MMIdle
+		DequeueRequests
+	} elseif { $conn_num > 1 } {
+		DbSet $glMMdb $glMsId NumOfMmConnections [expr {$conn_num - 1}]
+		set bmap [DbGet $glMMdb $glMsId VgcsTidBitMap]
+		set new_bmap [expr {$bmap & [expr {~ [expr {0x01 << $tid}]}]}]
+		DbSet $glMMdb $glMsId VgcsTidBitMap $new_bmap
+	} else {
+		logscr "Unexpected Number of Mm Connections ($conn_num)"
+	}
+	
+}
+
+proc RouteToCallControl { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMsId glMMdb
+	
+	# Check Send Sequence Number
+	set sndseqnum [rd _sig Sn]
+	set revlev [DbGet $glMMdb $glMsId RevLev]
+	
+	if { [CheckSendSeqNum $glMsId $sndseqnum $glMMdb $revlev] != "1" } {
+		logscr "Unexpected Send Sequence Number ($sndseqnum)"
+		#SendMmrErrorInd e1b1
+		return
+	}
+	
+	# To Call Control
+	new 	MM_CC_DATA_IND s
+	wr		s MsId $glMsId
+	wr      s SeqNum $sndseqnum
+	wr 		s Pdu [rd _sig Pdu]
+	global glMmCcSapPid
+	send  	s $glMmCcSapPid
+	LogOutputPrim $s
+}
+
+proc RouteToSms { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMsId
+	
+	# To Call Control
+	new 	MM_SMS_DATA_IND s
+	wr		s MsId $glMsId
+	wr 		s Pdu [rd _sig Pdu]
+	send  s
+	LogOutputPrim $s
+}
+
+proc RouteToGroupCallControl { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMsId
+	
+	# To Group Call Control
+	new 	MM_GCC_DATA_IND s
+	wr		s MsId $glMsId
+	wr 		s Pdu [rd _sig Pdu]
+	send  s
+	LogOutputPrim $s
+}
+
+proc RouteToSs { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMsId glMMdb
+	
+	# Check Send Sequence Number
+	set sndseqnum [rd _sig Sn]
+	set revlev [DbGet $glMMdb $glMsId RevLev]
+	if { [CheckSendSeqNum $glMsId $sndseqnum $glMMdb $revlev] != "1" } {
+		logscr "Unexpected Send Sequence Number ($sndseqnum)"
+		return
+	}
+	
+	# To Supplementary Services
+	new 	MM_SS_DATA_IND s
+	wr		s MsId $glMsId
+	wr      s SeqNum $sndseqnum
+	wr 		s Pdu [rd _sig Pdu]
+	send  s
+	LogOutputPrim $s
+}
+
+##############################################################
+#
+# Mm Entity Procedures
+#
+##############################################################
+
+proc FlushBuffers { } {
+	
+	# Global Variables
+	global glMMdb glMsId
+	
+	DbSet $glMMdb $glMsId MmCcReqBuf "?"
+	DbSet $glMMdb $glMsId MmSmsReqBuf "?"
+}
+
+proc MmParamReset { } {
+	
+	# Global Variables
+	global glMMdb glMsId glCommonDb glDbOffset 
+	
+	DbSet $glMMdb $glMsId SendSeqNum 0
+	#DbSet $glMMdb $glMsId MmCcReqBuf "?"
+	#DbSet $glMMdb $glMsId MmSmsReqBuf "?"
+	
+	# CELLNET-251
+	#global __CellNet	
+	#if { [info exists __CellNet] && $__CellNet } {
+	#log "Resetting Imei flag"
+	#DbSet $glMMdb $glMsId ImeiRetrieved 0
+	#}
+	# END
+	
+	global __SupportUnknownMS
+	if { [info exists __SupportUnknownMS] && $__SupportUnknownMS } {
+		if {[IsRealAndUnknownMsId $glMsId]} {
+			DbSet $glMMdb $glMsId AuthNeeded [DbGet $glCommonDb $glMsId AuthNeeded]
+			DbSet $glMMdb $glMsId IdentNeeded [DbGet $glCommonDb $glMsId ImeiNeeded]
+			DbSet $glMMdb $glMsId SecurNeeded [DbGet $glCommonDb $glMsId SecurNeeded]
+			return
+		}
+	} else {
+		# CELLNET RESTYLING: 
+		global __CellNet	
+   		if { [info exists __CellNet] && $__CellNet } {
+			set subId [DbGet $glMMdb $glMsId SubscriptionId]
+			log "MmParamReset: msid = $glMsId subId = $subId"
+			if {![IsVoid $subId]} {
+				log "MmParamReset: msid = $glMsId is a new subscribed MS"
+				if {[IsRealAndUnknownMsId $glMsId]} {
+					DbSet $glMMdb $glMsId AuthNeeded [DbGet $glCommonDb $glMsId AuthNeeded]
+					DbSet $glMMdb $glMsId IdentNeeded [DbGet $glCommonDb $glMsId ImeiNeeded]
+					DbSet $glMMdb $glMsId SecurNeeded [DbGet $glCommonDb $glMsId SecurNeeded]
+					return
+				}
+			}
+		}
+		# END
+	}
+	
+	# Reset Parameters
+	if { $glMsId != "0" && $glMsId < $glDbOffset } {
+		# Reset Common Procedures
+		DbSet $glMMdb $glMsId AuthNeeded [DbGet $glCommonDb $glMsId AuthNeeded]
+		DbSet $glMMdb $glMsId IdentNeeded [DbGet $glCommonDb $glMsId ImeiNeeded]
+		DbSet $glMMdb $glMsId SecurNeeded [DbGet $glCommonDb $glMsId SecurNeeded]
+	} else {
+		# Reset Common Procedures
+		DbSet $glMMdb $glMsId AuthNeeded 0
+		DbSet $glMMdb $glMsId IdentNeeded 0
+		DbSet $glMMdb $glMsId SecurNeeded 0
+	}
+	if [GsInterfaceActive] {
+		set previouslyOnGs [DbGet $glMMdb $glMsId GsLinkReleased]
+		log "MmParamReset MSId = $glMsId previouslyOnGs=$previouslyOnGs"
+		if { ![IsVoid $previouslyOnGs] && $previouslyOnGs } {
+			log "MmParamReset MSId = $glMsId was previously on Gs, back to it"
+			DbSet $glMMdb $glMsId GsLinkReleased 0
+			DbSet $glMMdb $glMsId GsLink 1
+		}
+	}
+
+	global __CellNet	
+   	if { [info exists __CellNet] && $__CellNet } {
+	    tmrstop [DbGet $glMMdb $glMsId T_TRIG_AUTHid]
+        global _is_umts
+		if { $_is_umts } {
+            # BACO MILENAGE
+	        DbSet $glMMdb $glMsId AuthCounter 0
+	        DbSet $glMMdb $glMsId AuthNeeded 1
+            DbSet $glMMdb $glMsId AuthSynchFailCounter 0
+            # END
+        }
+    }
+
+}
+
+proc RemoveMmEntity { idx } {
+	
+	# Global Variables
+	global glMMdb
+	
+	# Free Timers
+	tmrfree [DbGet $glMMdb $idx T_3250id]
+	tmrfree [DbGet $glMMdb $idx T_3255id]
+	tmrfree [DbGet $glMMdb $idx T_3260id]
+	tmrfree [DbGet $glMMdb $idx T_3270id]
+	tmrfree [DbGet $glMMdb $idx T_TRIG_AUTHid]
+	tmrfree [DbGet $glMMdb $idx T_TRIG_SECid]
+	
+	DbRemEntry $glMMdb $idx
+}
+
+proc ReplaceMmEntity { idx {imsi ?} {no_rr_replace ?}} {
+	
+	# Global Variables
+	global glMMdb glMsId _sig
+	
+	# Get Parameters
+	set pendreq [DbGet $glMMdb $idx PendingEstReq]
+	DbSet $glMMdb $idx PendingEstReq "?"
+	
+	# PATCH CELLNET
+	global __INFO_STATUS __gsmr
+	if { [info exists __INFO_STATUS] && $__INFO_STATUS } {
+        set userPid [DbGet $glMMdb $idx UserPid]
+        if { ![info exists __gsmr] || !$__gsmr } {
+		    set subId [DbGet $glMMdb $idx SubscriptionId] 
+		    log "ReplaceMmEntity: userPid = $userPid subId = $subId"
+        }
+    }
+	
+	set proName [DbGet $glMMdb $idx ProfileName]
+	
+	# Replace Db
+	RemoveMmEntity $idx
+	set record [DbGetRecord $glMMdb $glMsId]
+	set record [lreplace $record 0 0 $idx]
+	
+	#set proName [DbGet $glMMdb $glMsId ProfileName]
+	
+	DbRemEntry $glMMdb $glMsId
+	DbCreateEntry $glMMdb $record
+	DbSet $glMMdb $idx ProfileName $proName	
+	
+	# PATCH CELLNET
+    global __gsmr
+	if { [info exists __INFO_STATUS] && $__INFO_STATUS } {
+        DbSet $glMMdb $idx UserPid $userPid
+        if { ![info exists __gsmr] || !$__gsmr } {
+		    DbSet $glMMdb $idx SubscriptionId $subId
+        }
+    }
+	
+	# Enqueue a Pending Request if needed
+	set primName [lindex $pendreq 0]
+	if { [string equal $primName "MM_CC_EST_REQ"] } {
+		log "$_sig Enqueued in proc ReplaceMmEntity"	
+		DbSet $glMMdb $idx MmCcReqBuf $pendreq
+	} elseif { [string equal $primName "MM_SMS_EST_REQ"] } {
+		log "$_sig Enqueued in proc ReplaceMmEntity"
+		DbSet $glMMdb $idx MmSmsReqBuf $pendreq
+	} elseif { [string equal $primName "MM_GCC_EST_REQ"] } {
+		log "$_sig Enqueued in proc ReplaceMmEntity"
+		#DbSet $glMMdb $idx MmSmsReqBuf $pendreq
+		DbSet $glMMdb $idx MmGccReqBuf $pendreq
+	}
+	
+	
+	global __MsDetector
+	if { [info exists __MsDetector] && $__MsDetector} {
+        global glCommonDb glMsId
+        set imsi [DbGet $glCommonDb $idx IMSI]
+        set imsi [GetImsiFrom24008Format $imsi]
+        set nowTxt [exec date "+%c"]
+        #set msg "TIME=${nowTxt} IDRESP TEMPID=$glMsId REALID=$idx IMSI=$imsi"
+        #save_info "/lsu/tstm/TSTM/StartScript/tmp/MsDetector.txt" "${msg}" "append"
+        set s [list MS_DETECTOR_IMSI $glMsId $idx $imsi]
+        set userPid [DbGet $glMMdb $idx UserPid]
+        # PATCH ATOM
+        log "userPid = $userPid"
+        if { [IsVoid $userPid] } {
+			set userPid [DbGet $glMMdb 0 UserPid]
+		}
+        log "userPid = $userPid"
+        if { ![IsVoid $userPid] } {
+			send s $userPid
+		} else {
+			log "msid = $glMsId UserPid is VOID"
+		}
+        # END
+        #send s $userPid
+    }
+	
+	SendApSetInst $idx
+	
+}
+
+proc AddMmEntity { idx type } {
+	
+	# Global Variables
+	global glMMdb glCommonDb __auth_Sqn _is_umts __auth_delay
+	
+	DbCreateDefEntry $glMMdb $idx
+	
+	# Imei Retrieved
+	DbSet $glMMdb $idx ImeiRetrieved 0 
+	
+	# Ciphering Key Seq Num
+	DbSet $glMMdb $idx CipKeySeqNum 01 
+	
+	# Authentication Attemps Counter
+	DbSet $glMMdb $idx AuthCounter 0
+	
+	
+	if { [string equal $type "Regular"] } {
+		
+		# Initial Tmsi
+		DbSet $glMMdb $idx TMSI [DbGet $glCommonDb $idx InitialTMSI]
+		
+		# Authentication Needed
+        DbSet $glMMdb $idx AuthNeeded [DbGet $glCommonDb $idx AuthNeeded] 
+		
+		# Identification Needed
+        DbSet $glMMdb $idx IdentNeeded [DbGet $glCommonDb $idx ImeiNeeded]
+		
+		# Security Needed
+        DbSet $glMMdb $idx SecurNeeded [DbGet $glCommonDb $idx SecurNeeded]
+		
+	} elseif { [string equal $type "Temp"] } {
+		
+		# Authentication Needed
+    	DbSet $glMMdb $idx AuthNeeded 0
+		
+		# Identity Needed
+    	DbSet $glMMdb $idx IdentNeeded 0
+		
+		# Security Needed
+    	DbSet $glMMdb $idx SecurNeeded 0
+		
+	} else {
+		logscr "Unexpected Mm Entity Type ($type)"
+        return
+	}
+	
+	if { $_is_umts } {
+		# SQN for authentication
+		if { ![info exists __auth_Sqn] } {
+			DbSet $glMMdb $idx Sqn 0
+		} else {
+			if { ![string equal $__auth_Sqn "?"] } {
+				set sqn $__auth_Sqn
+				DbSet $glMMdb $idx Sqn $sqn
+			} else {
+				DbSet $glMMdb $idx Sqn "000000000000"
+			}
+			log "AddMmEntity: SQN_cn_cfg=$__auth_Sqn -- SQN=[DbGet $glMMdb $idx Sqn]"; #cDEBUG
+		}
+	}
+	
+	# Send Sequence Number
+	DbSet $glMMdb $idx SendSeqNum 0
+	
+	# Follow On Request
+	DbSet $glMMdb $idx FollowOnReq 0
+	
+	# Number of Mm Connections
+	DbSet $glMMdb $idx NumOfMmConnections 0
+	
+	# Transaction Identifier BitMap
+	DbSet $glMMdb $idx TidBitMap 0x00
+	
+	# Sms Transaction Identifier BitMap
+	DbSet $glMMdb $idx SmsTidBitMap 0x00
+	
+	# Sms Transaction Identifier BitMap
+	DbSet $glMMdb $idx VgcsTidBitMap 0x00
+	
+	# Ss Transaction Identifier BitMap
+	DbSet $glMMdb $idx SsTidBitMap 0x00
+	
+	# Timer T_3250
+	set t3250id [tmrnew T_3250 12000]
+	DbSet $glMMdb $idx T_3250id $t3250id
+	
+	# Timer T_3255
+	set t3255id [tmrnew T_3255 12000]
+	DbSet $glMMdb $idx T_3255id $t3255id
+	
+	# Timer T_3260
+	set t3260id [tmrnew T_3260 12000]
+	DbSet $glMMdb $idx T_3260id $t3260id
+	
+	# Timer T_3270
+	set t3270id [tmrnew T_3270 12000]
+	DbSet $glMMdb $idx T_3270id $t3270id
+	
+	# Timer T_TRIG_AUTH
+	if { [info exists __auth_delay] } {
+		set val $__auth_delay
+	} else {
+		set val 1500
+	}
+	set tTrigAuthid [tmrnew T_TRIG_AUTH $val]
+	DbSet $glMMdb $idx T_TRIG_AUTHid $tTrigAuthid
+	
+	# Timer T_TRIG_SEC
+	set tTrigSecid [tmrnew T_TRIG_SEC 10]
+	DbSet $glMMdb $idx T_TRIG_SECid $tTrigSecid
+	
+	# Set State
+	DbSet $glMMdb $idx State MMIdle 
+	
+	# Add some fields to manage the Gs interface
+	if { !$_is_umts } {
+		if [GsInterfaceActive] {
+			# Set "not on GS link" by default
+			log "AddMmEntity: setting to 0 Gs link MS=$idx"
+			DbSet $glMMdb $idx GsLink 0
+			DbSet $glMMdb $idx GsLinkReleased 0	
+			# Set the activation status for the Gs interface
+			DbSet $glMMdb $idx GsLinkEstablished 0
+		}
+	}
+	
+	# CELLNET RESTYLING
+	global __CellNet	
+	if { [info exists __CellNet] && $__CellNet } {
+		if {[string equal $type "Regular"]} {
+			set text [DbGet $glCommonDb $idx TextMessage]
+			log "idx= $idx text = $text"
+			if { $text != "dummyMs" } {
+				log "setting subscriptionid for idx = $idx to $idx"
+				DbSet $glMMdb $idx SubscriptionId $idx 
+			} else {
+				log "skipping setting of flag SubscriptionId"
+				DbSet $glMMdb $idx SubscriptionId ? 
+			}
+		}
+	}
+	# END
+}
+
+proc Config { } {
+	
+	# Declare and Initialize Global Variables
+	global glMMdb glCommonDb
+	
+	set nstate MMIdle
+	
+	# Create Internal Database
+	set glMMdb MM_cn_db
+	
+	#CN parameter used because ms_cn.tsm could be started
+	#on MsSide
+	CreateDataBase $glMMdb CN
+	
+	
+	# Create Instance Null
+	DbCreateDefEntry $glMMdb 0
+	DbSet $glMMdb 0 State $nstate 
+	DbSet $glMMdb 0 SendSeqNum 0
+	DbSet $glMMdb 0 AuthNeeded 0
+	DbSet $glMMdb 0 IdentNeeded 0
+	DbSet $glMMdb 0 SecurNeeded 0
+	DbSet $glMMdb 0 FollowOnReq 0
+	DbSet $glMMdb 0 NumOfMmConnections 0
+	DbSet $glMMdb 0 TidBitMap 0x00
+	DbSet $glMMdb 0 SmsTidBitMap 0x00	
+	DbSet $glMMdb 0 VgcsTidBitMap 0x00	
+	DbSet $glMMdb 0 SsTidBitMap 0x00	
+	
+	# Configure Parameters for every DB Index
+	set idxlist [DbGetIndexList $glCommonDb]
+	foreach index $idxlist {
+		AddMmEntity $index "Regular"
+	}
+	
+	# Mm Config Ack
+	global _parent
+	new	MM_CONFIG_ACK s
+	send s $_parent
+	
+	LogOutputMsg $s
+	
+	logscr ""
+	logscr "MM BRING-UP COMPLETE"
+	logscr ""
+	
+	nextstate $nstate
+}
+
+proc SetUserPid { } {
+
+	global _sig glMMdb _src glListMs
+
+	LogInputMsg $_sig
+
+	#set userPid [lindex $_sig 1]
+	set userPid $_src
+	set listMs [lindex $_sig 2]
+
+	if { [IsVoid $listMs] } {
+        set firstMS [lindex $_sig 3]
+        set numMS [lindex $_sig 4]
+		set listMs ""
+        for {set i 0} {$i<$numMS} {incr i} {
+			lappend listMs [expr $i + $firstMS]
+		}
+    }
+
+	set glListMs [lsort -unique [concat $glListMs $listMs]]
+	log "SetUserPid: glListMs=[lsort -increasing -integer $glListMs]"
+
+	# Configure Parameters for every DB Index
+	foreach index $listMs {
+		
+		# Update Data Base
+		if { [DbEntryExists $glMMdb $index] } {
+			DbSet $glMMdb $index UserPid $userPid
+			if { [DbFieldExists $glMMdb ProfileName] } {
+				DbSet $glMMdb $index ProfileName [rd _sig ProfileName]
+				if { ![IsVoid [rd _sig ProfileName]] } {
+					logscr "SetUserPid: MS=$index saving profile = [rd _sig ProfileName]"
+				} else {
+					log "SetUserPid: MS = $index saving profile = [rd _sig ProfileName]"
+				}
+			}
+		}
+	}
+	
+	global __SupportUnknownMS __gsmr __CellNet
+	if { [info exists __SupportUnknownMS] && $__SupportUnknownMS || 
+         [info exists __gsmr] && $__gsmr ||
+         [info exists __CellNet] && $__CellNet } {
+		DbSet $glMMdb 0 UserPid $userPid
+	} 
+
+	# TODO RESTYLING: SETTARE QUESTA CELLA DEL DB LA PRIMA VOLTA
+	# 				  CHE IL SUPPORT VIENE ABILITATO 
+	# vedi proc SetGlobalVarHnd
+}
+
+proc StartLoadRedistrHnd {} {
+	
+	LogInputSig
+	
+	global glReDistrActive
+	set glReDistrActive 1
+	
+	#when MSC is in load re-distribution phase, it uses Null_NRI
+	global glNriShifted __null_nri glNriShift
+	set glNriShifted [expr {$__null_nri << $glNriShift}]
+	log "StartLoadRedistrHnd: glNriShifted=$glNriShifted"; #cDEBUG
+}
+
+proc StopLoadRedistrHnd {} {
+	
+	LogInputSig
+	
+	global glReDistrActive
+	set glReDistrActive 0
+	
+	global glNriShifted __nri glNriShift
+	set glNriShifted [expr {$__nri << $glNriShift}]
+}
+
+
+##############################################################
+#
+# Resource Management Procedures
+#
+##############################################################
+
+proc DedicatedResAssignment { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMMdb glMsId
+	
+	LogInputSig
+	set msId [rd _sig MsId]
+	#TODO: Calculate correctly the Tio value
+	# Check if new Transaction Id
+	#set tid [rd _sig Tio]
+	set tid 0
+	set bmap [DbGet $glMMdb $glMsId VgcsTidBitMap]
+	set check [expr {$bmap & [expr {0x01 << $tid}]}]
+	logscr "DedicatedResAssignment: bmap = $bmap"
+	# Update Number of Mm Connections and Transaction Id BitMap
+	set conn_num [DbGet $glMMdb $glMsId NumOfMmConnections]
+	DbSet $glMMdb $glMsId NumOfMmConnections [expr {$conn_num + 1}]
+	set new_bmap [expr {$bmap | [expr {0x01 << $tid}]}]
+	logscr "DedicatedResAssignment: new_bmap = $new_bmap"
+	DbSet $glMMdb $glMsId VgcsTidBitMap $new_bmap
+	#TODO: Check with Umberto these settings in the Db
+	DbSet $glMMdb $msId CurrentMMProc VGCall
+	
+	SendApSyncReq $msId [rd _sig CauseVal] [rd _sig GroupCallReference]
+	
+	nextstate MMConnectionActive
+}
+
+proc ResourceAssignment { } {
+	global _sig  
+	
+	LogInputMsg $_sig
+	
+	# Get Parameters
+	set msid [rd _sig MsId]
+	set cause [rd _sig CauseVal]
+	
+	# Send To Lower Layer
+	SendApSyncReq $msid $cause
+}
+
+proc GroupCallResourceAssignment { } {
+	global _sig  
+	
+	LogInputMsg $_sig
+	
+	# Get Parameters
+	set msid [rd _sig MsId]
+	set cause [rd _sig CauseVal]
+	set groupCallRef [rd _sig GroupCallReference]
+	
+	SendApSyncReq $msid $cause $groupCallRef
+}
+
+proc ResourceAssigned { } {
+	global _sig glMMdb glMsId 
+	
+	LogInputMsgv0 $_sig
+	
+	# Check Cause
+	set cause [rd _sig Cause]
+	set result [rd _sig Res]
+	if { $result == "-1" && [IsVoid $cause] } { 
+		set cause e1af
+	}
+	
+	# Get Current Procedure 
+	set currproc [DbGet $glMMdb $glMsId CurrentMMProc]
+	if { [string equal $currproc "VGCall"] } {
+		# Confirm GCC Layer
+		new		MM_GCC_SYNC_CNF s
+		wr      s MsId [rd _sig MsId]
+		wr		s Res $result
+		wr		s Cause $cause
+		send  s
+	} else {
+		# Confirm CC Layer
+		new		MM_CC_SYNC_CNF s
+		wr      s MsId [rd _sig MsId]
+		wr		s Res $result
+		wr		s Cause $cause
+		send  	s $::glMmCcSapPid
+	}
+	LogOutputMsgv0 $s
+}
+
+##############################################################
+#
+# Timers Handling Procedures
+#
+##############################################################
+
+proc T_3250Expired { { cause "e1e633323530" } } {
+	
+	# Global Variables
+	global _sig
+	
+	LogInputMsg $_sig
+	
+	# Release Mm Connection
+	ReleaseMmConnection $cause
+	
+	# Release Connection
+	ReleaseApConnection "TimerExpired_MM"
+	
+	# Reset Parameters
+	MmParamReset
+	
+	nextstate MMIdle
+	
+	DequeueRequests
+}
+
+proc T_3255Expired { } {
+	
+	T_3250Expired "e1e633323535"
+}
+
+proc T_3260Expired { } {
+	
+	T_3250Expired "e1e633323630"
+}
+
+proc T_3270Expired { } {
+	
+	T_3250Expired "e1e633323730"
+}
+
+##############################################################
+#
+# Specific Procedures
+#
+##############################################################
+
+proc isImeiCatcher {} {  ; # duplicated in rsl_utils.tsm and smc_cn.tsm
+	global __imei_catcher_on
+	set fOk false
+	if { [info exists __imei_catcher_on] && $__imei_catcher_on==1} {
+        set fOk true
+    }
+	return $fOk
+}
+
+proc LocationUpdating { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMMdb glMsId glCommonDb glDbOffset 
+
+	log "LocationUpdating: glMMdb=$glMMdb, glMsId=$glMsId, glCommonDb=$glCommonDb, glDbOffset=$glDbOffset"
+	LogInputMsg $_sig
+
+	# Start correction Issue TMA-227
+	set LinkGs [IsMSOnGsLink $glMsId] 
+	log "LocationUpdating MSId = $glMsId GsLink=$LinkGs"
+	if { $LinkGs==0} {
+		log "LocationUpdating MSId = $glMsId has to close the Gs"
+		DbSet $glMMdb $glMsId GsLinkReleased 0
+	}
+	# End correction Issue TMA-227
+
+	# Select Boundary for Sequence Number
+	set clmark [rd _sig MsClassmark]
+	set revlev [hbits $clmark 1 2]
+	DbSet $glMMdb $glMsId RevLev $revlev
+
+	# Update Classmark1 
+	SendApClassmark1 $clmark
+	# Update Classmark2 
+	set clmark2 [rd _sig MsClassmarkUMTS]
+	if { ![string match "?" $clmark2] } {
+		
+		log "LocationUpdating: if sendclsmark2"
+		
+		SendApClassmark2 $clmark2
+	}
+	
+	# Check Send Sequence Number
+	set sndseqnum [rd _sig Sn]
+	if { [CheckSendSeqNum $glMsId $sndseqnum $glMMdb $revlev] != "1" } {
+		logscr "Unexpected Send Sequence Number ($sndseqnum)"
+		#SendMmrErrorInd e1b1
+		return
+	}
+	
+	# Set follow-on-request
+	set type [GetNibble [rd _sig CipKeySeqNum_LocUpType] 1]
+	set followonreq [hbits $type 4]
+	if { $followonreq == 1 } {
+		set tmp 000000
+		append tmp [hbits $type 6 7]
+		set type [btoh $tmp] 
+	}	
+	DbSet $glMMdb $glMsId FollowOnReq $followonreq
+	
+	# Set Current Procedure
+	# Check if TMSI or IMSI
+	set idtype [GetTypeFromMsIdentity [rd _sig MsIdentity]]
+	if { [IsVoid $idtype] } {
+		LocationUpdateReject 03 0
+		return
+	}
+	log "LocationUpdating: type=$type, idtype=$idtype"
+	if { 0 && [isImeiCatcher] } {
+        log "LocationUpdating: forcing ImsiUnknownNimei"
+    	if { $glMsId < $glDbOffset } {
+			abort "ABORT: LocationUpdating. $glMsId >= $glDbOffset"
+		}
+        DbSet $glMMdb $glMsId CurrentMMProc ImsiUnknownNimei
+    	StartNextProcedure
+        return
+    }
+	
+    # REJECT TEST
+    global __RejectCauseTest
+    if { [info exists __RejectCauseTest] && $__RejectCauseTest } {
+        set testProc [DbGet $glMMdb $glMsId TestProc]
+        set cause [DbGet $glMMdb $glMsId TestCause]
+        log "msid = $glMsId testProc = $testProc cause = $cause"
+        if { $testProc == "LOC_UPD_REJ" && ![IsVoid $cause] } {
+		    LocationUpdateReject $cause 0
+		    return
+        }
+    }
+    # END
+
+	set msNowKnown 0
+	global __SupportUnknownMS
+	if { [info exists __SupportUnknownMS] && $__SupportUnknownMS } {
+		# check useful during periodic loc upd
+		log "LocationUpdating: visitors are supported"
+		set msNowKnown [IsRealAndUnknownMsId $glMsId]
+	} else {
+		# CELLNET RESTYLING: 
+    	global __CellNet
+    	if { [info exists __CellNet] && $__CellNet } {
+			log "LocationUpdating: visitors are not supported"
+			set msNowKnown [IsRealAndUnknownMsId $glMsId]
+			set subId [DbGet $glMMdb $glMsId SubscriptionId]
+			log "LocationUpdating: msid = $glMsId subId = $subId msNowKnown = $msNowKnown"
+			if { $msNowKnown && ![IsVoid $subId]} {
+				log "LocationUpdating: msid = $glMsId is subscribed (ex-visitor)"
+				# accept the MS 
+			} elseif { $msNowKnown } {
+				log "LocationUpdating: msid = $glMsId is a pending MS from a previous session"
+				# TODO: detect whether this is the first LUP after power-on
+				# in case of first LUP after power-on do not accept the MS
+				LocationUpdateReject 03 0
+				return
+			} else {
+				if { $glMsId >= $glDbOffset } {
+					# Discard the new visitors and check id for the tmp virtual MS
+					log "LocationUpdating: msid = $glMsId is a virtual tmp MS or a new visitor"
+				} else {
+					log "LocationUpdating: msid = $glMsId is a subscribed MS"
+					# accept the MS
+				}
+				log "idtype = $idtype"
+			}
+		}
+		# END
+	}
+	
+	if { $glMsId >= $glDbOffset && $msNowKnown == 0} {
+		log "LocationUpdating: glMsId ($glMsId) >= glDbOffset ($glDbOffset); msNowKnown=$msNowKnown"; #cDEBUG
+		if { $idtype == "01" } {
+			if { [isImeiCatcher] } {
+				DbSet $glMMdb $glMsId CurrentMMProc ImsiUnknownNlu
+			} else {
+				global __SupportUnknownMS
+				if { [info exists __SupportUnknownMS] && $__SupportUnknownMS } {
+					#ReplaceWithRealUnknownMs [rd _sig MsIdentity] $type "NO_RR"
+					log "glMsId = $glMsId SupportUnknownMS get IMEI"
+					DbSet $glMMdb $glMsId ImeiRetrieved 0
+					# sono sicuro che arrivato qui IMSI non e' noto nel CSV
+					# devo associargli un MS reale non consociuto
+					# lo faccio quando ricevo IMEI
+					# devo forzare la richiesta di IMEI con ID_REQ
+					DbSet $glMMdb $glMsId IdentNeeded 1
+					# END
+					DbSet $glMMdb $glMsId ImsiReceived [rd _sig MsIdentity]
+					switch -exact -- $type {
+						"00" 		{ DbSet $glMMdb $glMsId CurrentMMProc NormLocUpd }
+						"01" 		{ DbSet $glMMdb $glMsId CurrentMMProc PerLocUpd }
+						"02" 		{ DbSet $glMMdb $glMsId CurrentMMProc ImsiAttach }
+						default		{ logscr "Unexpected Attach Type ($type)"
+							return }
+					}
+				} else {
+                    global __CellNet __ImsiDir __ImsiFile
+			        if { [info exists __CellNet] && $__CellNet ||
+                         [info exists __ImsiDir] && [file isdirectory $__ImsiDir] } {
+                        set unsubId [rd _sig MsIdentity]
+                        log "unsubId"
+                        set unsubId [GetImsiFrom24008Format $unsubId]
+                        log "unsubId"
+			            set nowTxt [exec date "+%c"]
+                        log "nowTxt"
+                        if {[info exists __CellNet] && $__CellNet } {
+			                #save_info "/lsu/tstm/TSTM/StartScript/tmp/Imsi.txt" "${nowTxt} ${unsubId}" "append"
+                            # TC EXTENSION
+                            set cellId [DbGet $glMMdb $glMsId CellId]
+                            set RegPid [DbGet $glMMdb 0 UserPid]
+                            SendImsiEvt $unsubId $cellId $RegPid
+                            # END
+                        } else {
+                            save_info "${__ImsiDir}${__ImsiFile}" "${nowTxt} ${unsubId}" "append"
+                        }
+                    }
+
+                    global __gsmr
+                    if { [info exists __gsmr] && $__gsmr } {
+						global __INFO_STATUS
+                        if { [info exists __INFO_STATUS] && $__INFO_STATUS } {
+                            set RegPid [DbGet $glMMdb 0 UserPid]
+                            log "RegPid = $RegPid"
+                            if {$RegPid != "-1" && ![IsVoid $RegPid]} { 
+                                set unsubId [rd _sig MsIdentity]
+                                log "unsubId"
+                                set unsubId [GetImsiFrom24008Format $unsubId]
+                                log "unsubId"
+                                set s [list MM_REG_UNKNOWN_IMSI_IND $unsubId]
+                                send s $RegPid
+                            } else {
+                                log "problems with reg pid"
+                            }
+                        }
+                    }
+
+					DbSet $glMMdb $glMsId CurrentMMProc ImsiUnknownHlr
+				}
+			}
+		} elseif { $idtype != "04" } {
+			DbSet $glMMdb $glMsId CurrentMMProc IllegalMs
+		} else {
+			log "LocationUpdating: case of 'idtype' equal to 4"; #cDEBUG
+			DbSet $glMMdb $glMsId TmsiAssigned 0
+			switch -exact -- $type {
+				"00" 	{ DbSet $glMMdb $glMsId CurrentMMProc ImsiUnknownNlu }
+				"01" 	{ DbSet $glMMdb $glMsId CurrentMMProc ImsiUnknownPlu }
+				"02" 	{ DbSet $glMMdb $glMsId CurrentMMProc ImsiUnknownIa }
+				default	{ logscr "Unexpected Attach Type ($type)" 
+					return }
+			}
+		}
+	} else {
+		log "LocationUpdating: glMsId < glDbOffset or msNowKnown != 0"; #cDEBUG
+		if { $idtype == "04" } {
+			DbSet $glMMdb $glMsId TmsiAssigned 1
+		} else {
+			DbSet $glMMdb $glMsId TmsiAssigned 0
+		}
+		switch -exact -- $type {
+			"00" 		{ DbSet $glMMdb $glMsId CurrentMMProc NormLocUpd }
+			"01" 		{ DbSet $glMMdb $glMsId CurrentMMProc PerLocUpd }
+			"02" 		{ DbSet $glMMdb $glMsId CurrentMMProc ImsiAttach }
+			default		{ logscr "Unexpected Attach Type ($type)"
+				return }
+		}
+		
+    	# CELLNET-251
+    	global __CellNet    
+    	if { [info exists __CellNet] && $__CellNet && $idtype != "01" } { 
+			# This is to detect change of IMEI for an already registered MS
+			# we force the network to ask IMEI 
+			log "Resetting Imei flag"
+			DbSet $glMMdb $glMsId ImeiRetrieved 0
+			DbSet $glMMdb $glMsId IdentNeeded 1
+			if { $idtype == "04" } {
+				#DbSet $glMMdb $glMsId TmsiAssigned 0
+			}
+		}
+    	# END 
+	}	
+	
+	StartNextProcedure
+}
+
+proc CmServiceRequest { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMMdb glMsId glCommonDb glDbOffset 
+	
+	LogInputMsg $_sig
+	
+	# Select Boundary for Sequence Number
+	set clmark [rd _sig MsClassmark]
+	set revlev [hbits $clmark 1 2]
+	DbSet $glMMdb $glMsId RevLev $revlev
+	
+	# Update Classmark
+	SendApClassmark2 $clmark
+	
+	# Check Send Sequence Number
+	set sndseqnum [rd _sig Sn]
+	if { [CheckSendSeqNum $glMsId $sndseqnum $glMMdb $revlev] != "1" } {
+		logscr "Unexpected Send Sequence Number ($sndseqnum)"
+		#SendMmrErrorInd e1b1 
+		return
+	}
+	
+	
+	# Stop Timers
+	tmrstop [DbGet $glMMdb $glMsId T_3255id]
+	
+	# Set Current Procedure
+	set type [GetNibble [rd _sig CipKeySeqNum_CMServType] 1]
+	# Check if TMSI or IMSI
+	set idtype [GetTypeFromMsIdentity [rd _sig MsIdentity]]
+
+    global __gsmr
+    if { [info exists __gsmr] && $__gsmr } {
+        if { $type != "01" } {
+            logscr "service $type not supported"
+    		# 24.008 4.5.1.1
+			# Requested service option not subscribed
+			SendCmServiceReject 21 0
+			return
+        }
+    }
+
+	set msNowKnown 0
+	global __SupportUnknownMS
+	if { [info exists __SupportUnknownMS] && $__SupportUnknownMS } {
+		set msNowKnown [IsRealAndUnknownMsId $glMsId] 		
+	} else {
+		# CELLNET RESTYLING: 
+    	global __CellNet
+    	if { [info exists __CellNet] && $__CellNet } {
+			set subId [DbGet $glMMdb $glMsId SubscriptionId]
+			log "CmServiceRequest: msid = $glMsId subId = $subId"
+			if {![IsVoid $subId]} {
+				set msNowKnown 1
+			}
+		}
+		# END
+	}
+	
+	log "CmServiceRequest: procedure_type=$type; IMSIorTMSI=$idtype"; #cDEBUG
+	
+	# CELLNET RESTYLING 
+	global __CellNet
+	if { [info exists __CellNet] && $__CellNet} {
+
+        # TEST REJECT
+        global __RejectCauseTest
+        if { [info exists __RejectCauseTest] && $__RejectCauseTest } {
+            set testProc [DbGet $glMMdb $glMsId TestProc]
+            set cause [DbGet $glMMdb $glMsId TestCause]
+            log "msid = $glMsId testProc = $testProc cause = $cause"
+            if { $testProc == "CM_SERV_REJ" && ![IsVoid $cause] } {
+				SendCmServiceReject $cause 0
+		        return
+            }
+        }
+        # END
+
+		# in case the MS is a visitor
+		if {[IsRealAndUnknownMsId $glMsId]} {
+			set subId [DbGet $glMMdb $glMsId SubscriptionId]
+			log "CmServiceRequest: subId = $subId"
+			if {[IsVoid $subId]} {
+				log "CmServiceRequest: msid = $glMsId is not subscribed"
+				# 24.008 4.5.1.1
+				# Requested service option not subscribed
+				SendCmServiceReject 21 0
+				return
+			} else {
+				log "CmServiceRequest: msid = $glMsId is a subscribed visitor now it can access the services"
+			}
+		} else {
+			log "CmServiceRequest: msid = $glMsId is an original subscribed MS and is allowed to services"
+		}
+	}
+	# END
+	
+	if { $glMsId >= $glDbOffset && $msNowKnown == 0} {
+		if { $idtype == "01" } {	
+			DbSet $glMMdb $glMsId CurrentMMProc ServRejImsiUnkn
+		} elseif { $idtype != "04" } {
+			DbSet $glMMdb $glMsId CurrentMMProc ServRejIllegalME
+		} else {
+			switch -exact -- $type {
+				"01" 	{ DbSet $glMMdb $glMsId CurrentMMProc ImsiUnknownMPCall }
+				"02" 	{ DbSet $glMMdb $glMsId CurrentMMProc ImsiUnknownEmCall }
+				"04" 	{ DbSet $glMMdb $glMsId CurrentMMProc ImsiUnknownMoSms }
+				"08" 	{ DbSet $glMMdb $glMsId CurrentMMProc ImsiUnknownSsAct }
+				"09" 	{ DbSet $glMMdb $glMsId CurrentMMProc ImsiUnknownVGCall }
+				"0a" 	{ DbSet $glMMdb $glMsId CurrentMMProc ImsiUnknownVBCall }
+				"0b" 	{ DbSet $glMMdb $glMsId CurrentMMProc ImsiUnknownLocServ }
+				default	{ logscr "Unexpected Service Type ($type)"
+					return }
+			}
+		}
+	} else {
+		switch -exact -- $type {
+			"01" 		{ DbSet $glMMdb $glMsId CurrentMMProc MocPdCall }
+			"02" 		{ DbSet $glMMdb $glMsId CurrentMMProc EmergencyCall }
+			"04" 		{ DbSet $glMMdb $glMsId CurrentMMProc MoSms }
+			"08" 		{ DbSet $glMMdb $glMsId CurrentMMProc SsActivation }
+			"09" 		{ DbSet $glMMdb $glMsId CurrentMMProc VGCall }
+			"0a" 		{ DbSet $glMMdb $glMsId CurrentMMProc VBCall }
+			"0b" 		{ DbSet $glMMdb $glMsId CurrentMMProc LocationServices }
+			default		{ logscr "Unexpected Service Type ($type)"
+				return }
+		}
+	}	
+	
+	StartNextProcedure
+}
+
+proc CmServiceAbort { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMMdb glMsId
+	
+	LogInputMsg $_sig
+	
+	# Check Send Sequence Number
+	set sndseqnum [rd _sig Sn]
+	set revlev [DbGet $glMMdb $glMsId RevLev]
+	if { [CheckSendSeqNum $glMsId $sndseqnum $glMMdb $revlev] != "1" } {
+		logscr "Unexpected Send Sequence Number ($sndseqnum)"
+		#SendMmrErrorInd e1b1  
+		return
+	}
+	
+	# Stop Timers
+	tmrstop [DbGet $glMMdb $glMsId T_3250id]
+	tmrstop [DbGet $glMMdb $glMsId T_3260id]
+	tmrstop [DbGet $glMMdb $glMsId T_3270id]
+	tmrstop [DbGet $glMMdb $glMsId T_3255id]
+	tmrstop [DbGet $glMMdb $glMsId T_TRIG_AUTHid]
+	tmrstop [DbGet $glMMdb $glMsId T_TRIG_SECid]
+	
+	# Release Connection
+	ReleaseApConnection "Service_Abort_MM"
+	
+	# Reset Parameters
+	MmParamReset
+	
+	nextstate MMIdle
+	
+	DequeueRequests
+}
+
+proc TmsiReallocateMMActive { } {
+	
+	global glMMdb glMsId _sig
+	
+	LogInputMsg $_sig
+	
+	# Check Send Sequence Number
+	set sndseqnum [rd _sig Sn]
+	set revlev [DbGet $glMMdb $glMsId RevLev]
+	if { [CheckSendSeqNum $glMsId $sndseqnum $glMMdb $revlev] != "1" } {
+		logscr "Unexpected Send Sequence Number ($sndseqnum)"
+		#SendMmrErrorInd e1b1  
+		return
+	}
+	
+	tmrstop [DbGet $glMMdb $glMsId T_3250id] 	
+	
+	# Save the TMSI just reallocated
+	set tmsi [DbGet $glMMdb $glMsId PendingTmsi]
+	DbSet $glMMdb $glMsId TMSI $tmsi
+	DbSet $glMMdb $glMsId TmsiAssigned 1
+	
+	log "TmsiReallocateMMActive: UE $glMsId is Registered (TMSI: $tmsi)"
+}
+
+proc SendTmsiReallocationCommand { } {
+	global glMsId glMMdb glReDistrActive
+	
+	# Calculate a new identity
+	set tmsi [GetNextTmsi $glMsId 1]
+
+	### Carlo 10/10/2012 --vedi stessa aggiunta dopo la LocUpdAcc
+	for { set notFound 0 } { $notFound <= 1 } { incr notFound } {
+		if { [DbKeyExists $glMMdb TMSI $tmsi] } {
+			logscr "SendTmsiReallocationCommand: recomputes tmsi because $tmsi still computed is already present in MMdb (WARNING: probable load cpu in load&stress test!)"
+            set tmsi [GetNextTmsi $msid 1]
+		} else {
+			break
+		}
+		set notFound 0
+	}
+
+	###
+	
+	log "Tmsi reallocation forced during CmServiceReq = $tmsi"
+	
+	if { $glReDistrActive } {
+		
+		global __non_broadcast_lac __bssap_plmn
+		if { [info exists __bssap_plmn] } {
+			set nonbroadcastlai $__bssap_plmn
+		} else {
+			global __MCC __MNC
+			set nonbroadcastlai [GetPLMN $__MCC $__MNC]
+		}
+		
+		append nonbroadcastlai $__non_broadcast_lac
+		
+		set lai $nonbroadcastlai 
+		
+	} else {
+		set lai [DbGet $glMMdb $glMsId LAI]
+	} 
+	
+	new MM_TMSI_REAL_CMD s
+	
+	wr	s Sn 0
+	wr	s LAI $lai
+	wr	s MsIdentity $tmsi
+	
+	DbSet $glMMdb $glMsId PendingTmsi $tmsi
+	
+	LogOutputMsg $s
+	SendApDataReq $glMsId 0 [mmSigToPdu s]
+	
+	# Start the timer
+	tmrstart [DbGet $glMMdb $glMsId T_3250id]
+}
+
+###########################################################
+proc StartNextProcedure { } {
+	
+	# Declare and Initialize Global Variables
+	global glMMdb glMsId glCommonDb 
+	set authNeeded    [DbGet $glMMdb $glMsId AuthNeeded]
+	set identNeeded   [DbGet $glMMdb $glMsId IdentNeeded]
+	set imeiRetrieved [DbGet $glMMdb $glMsId ImeiRetrieved]
+	set securNeeded   [DbGet $glMMdb $glMsId SecurNeeded]
+	
+	# Start TMA-327
+	global _tstm_db
+	# Check if AFlex mode
+	if { [info exist _tstm_db] } {
+		set ownedMs [DbGet $glMMdb $glMsId AFlexOwned]
+		log "StartNextProcedure ownedMs=$ownedMs"
+		if { $ownedMs!="1" } {
+			log "StartNextProcedure the ms=$glMsId is not owned by this MSC, forcing authentication"
+			# Force authentication for MS
+			DbSet $glMMdb $glMsId AuthNeeded 1
+			set authNeeded 1
+			# Now the MS should belong to this MSC
+			DbSet $glMMdb $glMsId AFlexOwned 1
+		}
+	}
+	# End TMA-327
+	
+	set numConn [DbGet $glMMdb $glMsId NumOfMmConnections]
+	set connAvail [expr ($numConn > 0)]
+	
+	log "StartNextProcedure: glMsId=$glMsId, authNeeded=$authNeeded, identNeeded=$identNeeded, imeiRetrieved=$imeiRetrieved, securNeeded=$securNeeded"
+	
+	if { [IsEmpty [lsearch -inline -exact -integer $::glListMs $glMsId]] } {
+		log "StartNextProcedure: -DEBUG- WARNING: glMsId=$glMsId isn't included in the scenario test mobiles list!"; #cDEBUG
+		#DbSet $glMMdb $glMsId CurrentMMProc ServRejIllegalME
+	}
+	
+	# Start TMA-225
+	# Authentication
+	if { ![IsMSOnGsLink $glMsId] } {
+		if { [DbGet $glMMdb $glMsId AuthNeeded] == 1 } {
+			global __iu_auth
+			if { [DbFieldExists $glCommonDb AuthAlg] } {
+				set AuthAlg [DbGet $glCommonDb $glMsId AuthAlg]
+				log "StartNextProcedure: AuthAlg= $AuthAlg"
+				if { [info exists __iu_auth] &&  $__iu_auth && [string compare $AuthAlg "disabled"]} {
+					if {[info exists ::__UMTS_AUTHENTICATION]} {
+						if {[info exists ::__OP_C]} {
+							unset ::__OP_C
+						}
+						if {[info exists ::__OP]} {
+							unset ::__OP
+						}
+						if {![string compare $AuthAlg "milenage_opc"]} {
+							set ::__OP_C [DbGet $glCommonDb $glMsId AuthOPC]
+							set ::__iu_auth_type 0; # milenage
+						}
+						if {![string compare $AuthAlg "milenage_op"]} {
+							set ::__OP [DbGet $glCommonDb $glMsId AuthOP]
+							set op [binary format H* $::__OP]
+							sim_extSetOp $op
+							set ::__iu_auth_type 0; # milenage
+						}
+						if {![string compare $AuthAlg "dummy_xor"]} {
+							set ::__iu_auth_type 1; 
+						}
+						if {![string compare $AuthAlg "dummy_a3a8"]} {
+							set ::__iu_auth_type 2; 
+						}
+						log "StartNextProcedure: AuthAlg = $AuthAlg"
+					}
+					#log "MAP_SendAuthInfo: AuthAlg = $AuthAlg, ::__iu_auth_type = $::__iu_auth_type"
+					if {[info exists ::__OP_C]} {
+						log "MAP_SendAuthInfo: OP_C = $::__OP_C"
+					}
+					if {[info exists op]} {
+						log "MAP_SendAuthInfo: op = $op"
+					}
+				}
+			}
+
+			if { [info exists __iu_auth] &&  $__iu_auth } {
+				if { [MAP_SendAuthInfo "CS"] } {
+					log "StartNextProcedure: Authentication Data Request/Response Successfull"
+				} else {
+					log "StartNextProcedure: - ERROR - Authentication Data Request/Response Unsuccessfull"
+				}
+			}
+			set tid [DbGet $glMMdb $glMsId T_TRIG_AUTHid]
+			if { [tmrtout $tid] != 0 } {
+				tmrstart $tid
+			} else {
+				SendAuthenticationRequest
+			}	
+			return 
+		}
+	}
+	# END TMA-225	
+	# Identification, in case of Gs interface the identification has to be postponed
+	if { ![IsMSOnGsLink $glMsId] } {
+		if { [DbGet $glMMdb $glMsId IdentNeeded] == 1 } {
+			if { [DbGet $glMMdb $glMsId ImeiRetrieved] == 0 } {
+				RetrieveImei
+				return
+			} else {
+				DbSet $glMMdb $glMsId IdentNeeded 0
+			}
+		}	
+	}
+	# Security Mode, does not exists in Gs
+	if { ![IsMSOnGsLink $glMsId] } {
+		if { [DbGet $glMMdb $glMsId SecurNeeded] == 1 } {
+			set tid [DbGet $glMMdb $glMsId T_TRIG_SECid]
+			if { [tmrtout $tid] != 0 } {
+				tmrstart $tid
+			} else {
+				SendSecurityMode
+			}
+			return 
+		}
+	}
+	
+	
+	set currproc [DbGet $glMMdb $glMsId CurrentMMProc]
+	log "StartNextProcedure: CurrentMMProc=$currproc, glMsId=$glMsId"
+	switch -exact -- $currproc {
+		"ImeiLocUpd"			{ LocationUpdateAccept $glMsId 03 }	
+		"NormLocUpd"			{ LocationUpdateAccept $glMsId 00 }	
+		"PerLocUpd"				{ LocationUpdateAccept $glMsId 01 }
+		"ImsiAttach"			{ LocationUpdateAccept $glMsId 02 } 
+		"MocPdCall"				{ AwaitMmConnection }
+		"MoSms"					{ AwaitMmConnection }
+		"EmergencyCall"			{ AwaitMmConnection }
+		"VGCall"				{ AwaitMmConnection }
+		"SsActivation"			{ AwaitMmConnection }
+		"MtcPdCall"				{ MmEstablishConfirm 1 }
+		"MtSms"					{ MmEstablishConfirm 4 }
+		"MtSs"					{ MmEstablishConfirm 8 }
+		"ImsiUnknownIa"			{ SendIdentityRequest 01 }
+		"ImsiUnknownNlu"		{ SendIdentityRequest 01 }
+		"ImsiUnknownNimei"		{ RetrieveImei }
+		"ImsiUnknownPlu"		{ SendIdentityRequest 01 }
+		"ImsiUnknownHlr"		{ LocationUpdateReject 02 1 }
+		"IllegalMs"				{ LocationUpdateReject 03 1 }
+		"ImsiUnknownVlr"		{ LocationUpdateReject 04 1 }
+		"LANotAllowed"			{ LocationUpdateReject 0c 1 }
+		"ServRejImsiUnkn"		{ SendCmServiceReject 04 0 }
+		"ServRejIllegalME"		{ SendCmServiceReject 06 1 }
+		"ImsiUnknownMPCall"		{ SendIdentityRequest 01 }
+		"ImsiUnknownMoSms"		{ SendIdentityRequest 01 }
+		"ImsiUnknownEmCall"		{ SendIdentityRequest 01 }
+		"ImsiUnknownVGCall"		{ SendIdentityRequest 01 }
+        "ImsiUnknownSsAct"		{ SendIdentityRequest 01 }
+		default					{ UnexpectedProcedure $currproc }
+	}	
+}
+
+proc ImsiDetachIndication { } {
+	
+	# Global Variables
+	global _sig glMsId glMMdb glCommonDb
+	
+	LogInputMsg $_sig
+	
+	# Check Send Sequence Number
+	set sndseqnum [rd _sig Sn]
+	set clmark [rd _sig MsClassmark]
+	set revlev [hbits $clmark 1 2]
+	if { [CheckSendSeqNum $glMsId $sndseqnum $glMMdb $revlev] != "1" } {
+		logscr "Unexpected Send Sequence Number ($sndseqnum)"
+		#SendMmrErrorInd e1b1  
+		return
+	}
+	
+	# Stop Timers
+	tmrstop [DbGet $glMMdb $glMsId T_3255id]
+	
+	# Unassign TMSI
+	DbSet $glMMdb $glMsId TmsiAssigned 0
+	
+	if { ![IsMSOnGsLink $glMsId] } {
+		# Set cause for release (see "ranap.txt")
+		set cause "Normal_Event_MM"
+		ReleaseApConnection $cause
+	}
+	
+	# PATCH CELLNET
+	global __INFO_STATUS
+	if { [info exists __INFO_STATUS] && $__INFO_STATUS } {
+        SendInfoToUserScript $glMsId "Deregistered"
+    }
+	# END
+	
+	# Reset Parameters - may be Temporary Instance
+	if { [DbEntryExists $glCommonDb $glMsId] } {
+		MmParamReset
+	} else {
+		DbSet $glMMdb $glMsId SendSeqNum 0
+	}
+}
+
+proc ImsiDetachActive { } {
+	
+	# Global Variables
+	global _sig glMsId glMMdb glCommonDb
+	
+	LogInputMsg $_sig
+	
+	# Check Send Sequence Number
+	set sndseqnum [rd _sig Sn]
+	set revlev [DbGet $glMMdb $glMsId RevLev]
+	if { [CheckSendSeqNum $glMsId $sndseqnum $glMMdb $revlev] != "1" } {
+		logscr "Unexpected Send Sequence Number ($sndseqnum)"
+		#SendMmrErrorInd e1b1  
+		return
+	}
+	
+	# Unassign TMSI
+	DbSet $glMMdb $glMsId TmsiAssigned 0
+	
+	if { ![IsMSOnGsLink $glMsId] } {
+		# Set cause for release (see "ranap.txt")
+		set cause "Normal_Event_MM"
+		ReleaseApConnection $cause
+	}
+	
+	# Release Connection
+	set cause e19f
+	ApConnectionReleased $cause
+	
+	# PATCH CELLNET
+	global __INFO_STATUS
+	if { [info exists __INFO_STATUS] && $__INFO_STATUS } {
+        SendInfoToUserScript $glMsId "Deregistered"
+    }
+	# END
+	
+	nextstate MMIdle
+	
+	DequeueRequests
+}
+
+proc LocationUpdateReject { cause rmv } {
+	
+	# Declare and Initialize Global Variables
+	global glMsId __gprs_on
+	
+    global __RejectCauseTest
+    if { ![info exists __RejectCauseTest] || !$__RejectCauseTest } {
+	    if { [info exists __gprs_on] && $__gprs_on } {
+	        logscr "LocationUpdateReject: cause=$cause, rmv=$rmv. forcing cause to luRej_LACNotAllowed"
+    	    set cause 0c; # luRej_LACNotAllowed  0c	
+	    } else {
+	        logscr "LocationUpdateReject: cause=$cause, rmv=$rmv"
+	    }
+    }
+	
+	# CELLNET-426
+	global __CellNet
+	if { [info exists __CellNet] && $__CellNet } {
+		# MSI unknown in HLR
+		# Le sim reali possono avere problemi quando ritornano nella loro home network
+		# se uso la causa 0c
+        global __RejectCauseTest
+        if { ![info exists __RejectCauseTest] || !$__RejectCauseTest } {
+		    log "LocationUpdateReject: patch cellnet"
+		    set cause 02
+        }
+	}
+	# END
+	
+	new		MM_LOC_UPDATE_REJ s
+	wr      s Sn 0
+	wr      s RejectCause $cause
+	
+	# Send to Lower Layer on SAPI 0
+	LogOutputMsg $s
+	# PATCH CELLNET
+	#SendApDataReq $glMsId 0 [mmSigToPdu s]
+	# END
+	
+	if { [IsMSOnGsLink $glMsId] } {
+		global glMMdb _is_umts
+		if { !$_is_umts } {
+			SendApPlusDataReq $glMsId $s [DbGet $glMMdb $glMsId BssapPlusIMSI]
+		}
+	} else {
+		SendApDataReq $glMsId 0 [mmSigToPdu s]
+		# Set cause for release (see "ranap.txt")
+		set cause "Normal_Event_MM"
+		ReleaseApConnection $cause
+	}
+	
+	if { $rmv == 0 } {
+		# Reset Parameters
+		MmParamReset
+	} elseif { $rmv == 1 } {
+		# Remove Temporary Entity
+		RemoveMmEntity $glMsId
+        # GSMR
+        set glMsId 0
+        # END
+	} else {
+		logscr "Unexpected Remove Flag ($rmv)"
+	}
+	
+	global __CellNet
+	if { [info exists __CellNet] && $__CellNet } {
+        set glMsId 0
+    }
+}
+
+proc SendCmServiceReject { cause rmv } {
+	
+	# Declare and Initialize Global Variables
+	global glMsId
+	
+	new		MM_CM_SERVICE_REJ s
+	wr      s Sn 0
+	wr      s RejectCause $cause
+	
+	# Send to Lower Layer on SAPI 0
+	LogOutputMsg $s
+	SendApDataReq $glMsId 0 [mmSigToPdu s]
+	
+	# Set cause for release (see "ranap.txt")
+	set cause "Normal_Event_MM"
+	ReleaseApConnection $cause
+	
+	if { $rmv == 0 } {
+		# Reset Parameters
+		MmParamReset
+	} elseif { $rmv == 1 } {
+		# Remove Temporary Entity
+		RemoveMmEntity $glMsId
+		
+		# @Carlo workaround -TO CHECK --- #
+		nextstate MMIdle
+		# --------------------------------#
+		
+	} else {
+		logscr "Unexpected Remove Flag ($rmv)"
+	}
+}
+
+proc LocationUpdateAccept { msid lutype } {
+	
+	# Declare and Initialize Global Variables
+	global glMMdb glCommonDb
+	
+	if {[isImeiCatcher]} {
+        log "LocationUpdateAccept: imei_catcher"
+      	set realloc 1
+        #DbSet $glMMdb $msid FollowOnReq 0
+    	set followonreq 0
+    } else {
+		set realloc [DbGet $glCommonDb $msid TmsiReallocNeeded]
+    	set followonreq [DbGet $glMMdb $msid FollowOnReq]
+    }
+	
+	if { $lutype } {
+		log "LocationUpdateAccept: Periodic Location Updating"
+	}
+	
+	new		MM_LOC_UPDATE_ACC s
+	wr 		s Sn 0
+	
+	# Intra domain connection of RAN nodes to multiple CN nodes: Load Re-Distribution (Carlo see 23.236 p.4.5a)
+	global glReDistrActive
+	if {$glReDistrActive} {
+		
+		global __non_broadcast_lac __bssap_plmn
+		if { [info exists __bssap_plmn] } {
+			set nonbroadcastlai $__bssap_plmn
+		} else {
+			global __MCC __MNC
+			set nonbroadcastlai [GetPLMN $__MCC $__MNC]
+		}
+		
+		append nonbroadcastlai $__non_broadcast_lac
+		
+		wr s LAI $nonbroadcastlai 
+		
+	} else {
+		wr      s LAI [DbGet $glMMdb $msid LAI]
+	}
+
+	if { $realloc == 1 } {
+		set tmsi [GetNextTmsi $msid 1]
+		# Carlo 10/10/2012: bug fix DuplicatedIMEI caused from computed tmsi equal to tmsi initialiting stored in CommonDb
+		for { set notFound 0 } { $notFound <= 1 } { incr notFound } {
+			if { [DbKeyExists $glMMdb TMSI $tmsi] } {
+				logscr "LocationUpdateAccept: tmsi recomputation: value $tmsi already present in MMdb (WARNING: probable load cpu in load&stress test!)"
+				set tmsi [GetNextTmsi $msid 1]
+			} else {
+				break
+			}
+			set notFound 0
+		}
+
+		log "LocationUpdateAccept: TmsiReallocNeeded set to 1 --> new tmsi: $tmsi"
+		wr	s MsIdentity $tmsi
+		DbSet $glMMdb $msid PendingTmsi $tmsi
+	} else {
+		set tmsi [DbGet $glMMdb $msid TMSI]
+	}
+
+	if { $followonreq == 1 } {
+		wr 	s FollowOnProc $followonreq
+	}
+	#wr     s CTSPerm Not used
+	#wr     s EPLMN Not used
+	
+	# Send to Lower Layer on SAPI 0
+	LogOutputMsg $s
+	SendApDataReq $msid 0 [mmSigToPdu s]
+	
+	# AFLEX CORE EVOLUTION
+	global __tstm_db
+	if { [info exists __tstm_db] } {
+		set tstmIndex [gettstmindex]
+		set reg_sig [list MMR_REG_IND $msid $tstmIndex]
+		set proName [DbGet $glMMdb $msid ProfileName]
+		log "LocationUpdateAccept: informing CORE Tstm about MS registration: ms=$msid tstm=$tstmIndex proName=$proName"
+		sendtotstm 0 $proName $reg_sig
+		#TMA-327
+		# Store the MS as belonging to this MSC
+		DbSet $glMMdb $msid AFlexOwned 1
+		#TMA-327
+	}
+	
+	# PATCH CELLNET
+	global __INFO_STATUS
+	if { [info exists __INFO_STATUS] && $__INFO_STATUS } {
+		if {[IsRealAndUnknownMsId $msid]} {
+			log "__INFO_STATUS lutype = $lutype __welcome_guest"
+		} else {
+			log "__INFO_STATUS lutype = $lutype __welcome_sms"
+		}
+		#SendInfoToUserScript $msid "Registered [DbGet $glMMdb $msid CellId] [DbGet $glMMdb $msid LAI] $lutype"
+		global _is_umts
+		if {$_is_umts} {
+			#SendInfoToUserScript $msid "Registered" "181_0" "00f1102a4363" $lutype
+			SendInfoToUserScript $msid "Registered" ? [DbGet $glMMdb $msid LAI] $lutype
+		} else {
+			SendInfoToUserScript $msid "Registered" [DbGet $glMMdb $msid CellId] [DbGet $glMMdb $msid LAI] $lutype
+		}
+	}
+	# END
+	
+	log "LocationUpdateAccept: realloc=$realloc; glReDistrActive=$glReDistrActive"; #cDEBUG
+	
+	if { $realloc == 1 } {
+		tmrstart [DbGet $glMMdb $msid T_3250id]
+		nextstate TmsiReallocationInitiated
+	} elseif { $realloc == 0 } {
+		DbSet $glMMdb $msid TmsiAssigned 0
+		if { $followonreq == 1 } { 
+			tmrstart [DbGet $glMMdb $msid T_3255id]
+		} else {
+			# Set cause for release (see "ranap.txt")
+			set cause "Normal_Event_MM"
+			ReleaseApConnection $cause
+			# Reset Parameters
+			MmParamReset
+		}
+		log "UE $msid is Registered (TMSI: $tmsi)"
+		nextstate MMIdle
+		DequeueRequests
+	} else {
+		logscr "Invalid Reallocation Value ($realloc)"
+	}
+}
+
+proc SendAuthenticationRequest { } {
+	
+	# Declare and Initialize Global Variables
+	global _is_umts glMMdb glCommonDb glMsId __iu_auth __iub_siemens_auth
+	
+	# Authentication Request
+	new		MM_AUTH_REQ s
+	wr		s Sn 0
+	wr      s CipKeySeqNum [DbGet $glMMdb $glMsId CipKeySeqNum]
+	wr      s RAND [DbGet $glCommonDb $glMsId RAND]
+	if { $_is_umts } {
+		# Increase the authentication attemps counter
+		set authCount [DbGet $glMMdb $glMsId AuthCounter]
+		DbSet $glMMdb $glMsId AuthCounter [expr {$authCount + 1}]
+		
+		if { [info exists __iu_auth] && [DbFieldExists $glCommonDb AuthParResp] && [DbGet $glCommonDb $glMsId AuthParResp]== "-1"} {
+			if { $__iu_auth } {
+				if {[info exists ::__UMTS_AUTHENTICATION]} {
+					if {[info exists ::__OP_C]} {
+						unset ::__OP_C
+					}
+					if {[info exists ::__OP]} {
+						unset ::__OP
+					}
+
+					set AuthAlg [DbGet $glCommonDb $glMsId AuthAlg]
+					if {![string compare $AuthAlg "milenage_opc"]} {
+						set ::__OP_C [DbGet $glCommonDb $glMsId AuthOPC]
+						set ::__iu_auth_type 0; # milenage
+					}
+					if {![string compare $AuthAlg "milenage_op"]} {
+						set ::__OP [DbGet $glCommonDb $glMsId AuthOP]
+						set op [binary format H* $::__OP]
+						sim_extSetOp $op
+						set ::__iu_auth_type 0; # milenage
+					}
+					if {![string compare $AuthAlg "dummy_xor"]} {
+						set ::__iu_auth_type 1; 
+					}
+					if {![string compare $AuthAlg "dummy_a3a8"]} {
+						set ::__iu_auth_type 2; 
+					}
+				}
+
+				set autn [AuthCompute $glMMdb]
+			} else {
+				set autn [DbGet $glCommonDb $glMsId AUTN]
+			}
+			wr  s AUTN $autn
+			
+			log "SendAuthenticationRequest: CipKeySeqNum=[DbGet $glMMdb $glMsId CipKeySeqNum]; Rand=[DbGet $glCommonDb $glMsId RAND]; AUTN=$autn"; #cDEBUG
+        } elseif { [info exists __iu_auth] && ![DbFieldExists $glCommonDb AuthParResp] } {
+            # LSUNET
+            if { $__iu_auth } {
+                set autn [AuthCompute $glMMdb]
+            } else {
+                set autn [DbGet $glCommonDb $glMsId AUTN]
+            }
+            wr  s AUTN $autn
+            log "SendAuthenticationRequest LSUNET: CipKeySeqNum=[DbGet $glMMdb $glMsId CipKeySeqNum]; Rand=[DbGet $glCommonDb $glMsId RAND]; AUTN=$autn";
+		} elseif { [info exists __iub_siemens_auth] } {
+			if { $__iub_siemens_auth } {
+				set autn [AuthCompute $glMMdb]
+			} else {
+				set autn [DbGet $glCommonDb $glMsId AUTN]
+			}
+			wr  s AUTN $autn
+			
+		} else {
+			logscr "UMTS case: neither __iu_auth nor __iub_siemens_auth exist"
+		}
+	}
+	
+	# Send to Lower Layer on SAPI 0
+	LogOutputMsg $s
+	SendApDataReq $glMsId 0 [mmSigToPdu s]
+	
+	tmrstart [DbGet $glMMdb $glMsId T_3260id]
+	
+	nextstate AuthenticationInitiated
+}
+
+proc SendIdentityRequest { type } {
+	
+	# Declare and Initialize Global Variables
+	global glMMdb glMsId
+	
+	new		MM_ID_REQ s
+	wr 		s Sn 0
+	wr		s IdType $type
+	
+	# Send to Lower Layer on SAPI 0
+	LogOutputMsg $s
+	SendApDataReq $glMsId 0 [mmSigToPdu s]
+	
+	tmrstart [DbGet $glMMdb $glMsId T_3270id]
+	
+	nextstate IdentificationInitiated
+}
+
+proc SendSecurityMode { } {
+	
+	# Global Variables
+	global glMsId
+	
+	set cause "MM_SYNC_CPHR"
+	
+	# Send to Lower Layer
+	SendApSyncReq $glMsId $cause
+	
+	nextstate SecurityModeInitiated
+}
+
+proc AuthenticationResponse { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMMdb glMsId
+	global __iub_siemens_auth __iu_auth __UMTS_AUTHENTICATION
+	global glCommonDb
+	
+	LogInputMsg $_sig
+	
+	# Check Send Sequence Number
+	set sndseqnum [rd _sig Sn]
+	set revlev [DbGet $glMMdb $glMsId RevLev]
+	if { [CheckSendSeqNum $glMsId $sndseqnum $glMMdb $revlev] != "1" } {
+		logscr "Unexpected Send Sequence Number ($sndseqnum)"
+		#SendMmrErrorInd e1b1  
+		return
+	}
+	tmrstop [DbGet $glMMdb $glMsId T_3260id]
+	
+	#this check could be removed if all the test managers
+	#include a file with AuthRespHnd defined
+	if { [info exists __iub_siemens_auth] && $__iub_siemens_auth } {
+		AuthRespHnd
+		DbSet $glMMdb $glMsId AuthCounter 0 ; #occorre sistemare come nel caso Iu
+		DbSet $glMMdb $glMsId AuthNeeded 0 ; # occorre sistemare come nel caso Iu
+		
+	} elseif { [info exists __iu_auth] &&  $__iu_auth } {
+		set recRes [rd _sig AuthParResp]
+		set recExtRes [rd _sig ExtAuthParResp]	
+		log "AuthenticationResponse: recRes=$recRes  ---  recExtRes=$recExtRes"
+		#Carlo PATCH 25/05/2010 -start-
+		if { [DbFieldExists $glCommonDb AuthParResp] && ![IsVoid [DbGet $glCommonDb $glMsId AuthParResp]] && [DbGet $glCommonDb $glMsId AuthParResp] != -1 } {
+			log "SIM with unknown private Key K but known Sres/Res and ExtRes"
+			log "AuthenticationResponse: xRes=[DbGet $glCommonDb $glMsId AuthParResp]; ExtXRes=[DbGet $glCommonDb $glMsId ExtAuthParResp]"
+			set xRes    [DbSet $glMMdb $glMsId XRes [DbGet $glCommonDb $glMsId AuthParResp]]
+			set extXres [DbSet $glMMdb $glMsId ExtXRes [DbGet $glCommonDb $glMsId ExtAuthParResp]]
+		}
+		# -end-
+		
+		set authHnd [IuAuthRespHnd $recRes $recExtRes $glMMdb]
+		
+		if { !$authHnd } {
+			#Failure: 'Illegal Mobile': (Res or/and ExtRes don't match)
+			DbSet $glMMdb $glMsId CurrentMMProc IllegalMs
+			DbSet $glMMdb $glMsId IdentNeeded 0
+			DbSet $glMMdb $glMsId SecurNeeded 0
+			
+			nextstate MMIdle
+		} else {
+			if {[info exists __UMTS_AUTHENTICATION] && [DbFieldExists $glCommonDb AuthParResp] && [DbGet $glCommonDb $glMsId AuthParResp]== "-1"} {
+				#pass the new Kc, Ki to lower layer
+				AuthRespHnd
+			}
+		}
+	} else {
+		# reset authentication attempts counter
+		DbSet $glMMdb $glMsId AuthCounter 0
+		
+		# Unset Authentication
+		DbSet $glMMdb $glMsId AuthNeeded 0
+	}
+	
+	StartNextProcedure
+}
+
+######################################################
+proc AuthenticationFailure { } {
+	
+	# Global Variables
+	global glMMdb glMsId _sig glCommonDb _state _is_umts _is_gsm
+	
+	LogInputMsg $_sig
+	
+	# Check Send Sequence Number
+	set sndseqnum [rd _sig Sn]
+	set revlev [DbGet $glMMdb $glMsId RevLev]
+	if { [CheckSendSeqNum $glMsId $sndseqnum $glMMdb $revlev] != "1" } {
+		logscr "Unexpected Send Sequence Number ($sndseqnum)"
+		#SendMmrErrorInd e1b1  
+		return
+	}
+	
+	tmrstop [DbGet $glMMdb $glMsId T_3260id]
+	
+	if { $_is_gsm } {	
+		
+		# Carlo TODO
+		log "msid = $glMsId GSM AUTHENTICATION FAILURE"
+		
+	} elseif { $_is_umts } {
+		log "msid = $glMsId UMTS AUTHENTICATION FAILURE"
+		set reject_cause [rd _sig RejectCause]
+		set auth_fail_par [rd _sig AuthFailPar]
+		
+		set newAuth [AuthRej $reject_cause $auth_fail_par]
+		
+		if {$newAuth} {
+if {0} {        
+            global __CellNet
+            if { [info exists __CellNet] && $__CellNet } {
+                set currProc [DbGet $glMMdb $glMsId CurrentMMProc]
+                log "RAFFAELE: MM currProc = $currProc"
+                if { $reject_cause == "15" } {
+                    # MILENAGE PROBLEM
+                    log "MM re-trying AUTH procedure and not id procedure"
+                    StartNextProcedure
+                    return
+                    # END
+                }
+            } 
+}            
+			log "AuthenticationFailure: --> Send Identity Request (IMSI unknown: type= 01)"
+			DbSet $glMMdb $glMsId CurrentMMProc ImsiUnknownIa
+			IdentityReq_AfterMacFailure 01
+			nextstate	NetAuthFail_WaitIdentityResp
+		} else {
+	        global __CellNet	
+   	        if { [info exists __CellNet] && $__CellNet } {
+                # BACO MILENAGE
+                SendAuthRej
+                # END
+            }
+			logscr "AuthenticationFailure: AUTHENTICATION PROCEDURE NOT REPEATED"
+		}
+	}
+}
+
+##########################################################
+proc AuthRej { {cause ?} {data ?} } {
+	
+	#Global Variables
+	global glMMdb glMsId __iu_auth glAuCdb
+	
+	# operator choice: retry authentication for 4 times (24008-790 Table 11.4 Note:3)
+	if { [DbGet $glMMdb $glMsId AuthCounter] <= 4 } {
+		
+		# Increments authentication attempts counter
+		set authCount [DbGet $glMMdb $glMsId AuthCounter]
+		DbSet $glMMdb $glMsId AuthCounter [expr {$authCount + 1}]
+		
+		DbSet $glMMdb $glMsId AuthNeeded 1
+		
+		if { [info exists __iu_auth] &&  $__iu_auth } {
+			if { ![IsVoid cause] && $cause == 15 } {
+				log "AuthRej: Synchronization Failure case"
+
+	            global __CellNet	
+   	            if { [info exists __CellNet] && $__CellNet } {
+                    # BACO MILENAGE: 24.008 4.3.2.6 d) NOTE
+                    set authSynchFailCount [DbGet $glMMdb $glMsId AuthSynchFailCounter]
+                    if { $authSynchFailCount == 1 } {
+                        log "two consecutive Synchronization Failure"
+                        DbSet $glMMdb $glMsId AuthSynchFailCounter 0
+                        #return 0
+                    }
+                    DbSet $glMMdb $glMsId AuthSynchFailCounter 1
+                    # END
+                }
+
+				if { ![IsVoid data] } {
+					# data field 'AUTS' isn't void --> triggering Resynchronization Procedure
+					if { [AuthParametersResynch $glAuCdb $data] } {
+						log "AuthRej: Authentication Resynchronitation Procedure Successfull"
+						return 1
+					} else {
+						log "AuthRej: -WARNING- Authentication Resynchronitation Procedure Unsuccessfull"
+						return 0
+					}	
+				} else {
+					log "AuthRej: AUTS isn't provided by MS side; anyway recomputing a new authentication quintuplet"
+					return 1
+				}
+			} elseif { ![IsVoid cause] && $cause == 14 } {
+	            global __CellNet	
+   	            if { [info exists __CellNet] && $__CellNet } {
+                    # BACO MILENAGE: 24.008 4.3.2.6 d) NOTE
+                    DbSet $glMMdb $glMsId AuthSynchFailCounter 0
+                    # END
+                }
+				log "AuthRej: MAC Failure case"
+				return 1
+	 		} else {
+	            global __CellNet	
+   	            if { [info exists __CellNet] && $__CellNet } {
+                    # BACO MILENAGE: 24.008 4.3.2.6 d) NOTE
+                    DbSet $glMMdb $glMsId AuthSynchFailCounter 0
+                    # END
+                }
+				log "AuthRej: reject_cause=$cause isn't neither Synchronitation Failure nor MAC Failure"
+				logscr "AuthRej: AUTHENTICATION REJECTED for the MsId=$glMsId"
+				
+				return 0; #Hardcoded: any actions done
+			}
+		} else {
+			logscr "AuthRej: MsId=$glMsId: AUTHENTICATION REJECTED"
+			return 0; #Hardcoded: any actions done
+			
+			#SendAuthRej; # Carlo TODO
+			#nextstate ...; # Carlo TODO
+		}
+	} else {
+		logscr "AuthRej: AUTHENTICATION REJECTED for MsId=$glMsId"
+		
+		# Unset Authentication
+		DbSet $glMMdb $glMsId AuthNeeded 0
+	
+		return 0; #Hardcoded: any actions done
+		
+		#SendAuthRej; # Carlo TODO
+    	#nextstate ...; # Carlo TODO
+	}
+}
+
+##########################################################
+proc IdentityReq_AfterMacFailure { type } {
+	
+	global glMsId glMMdb
+	
+	new		MM_ID_REQ s
+	wr 		s Sn 0
+	wr		s IdType $type
+	
+	# Send to Lower Layer on SAPI 0
+	LogOutputMsg $s
+	SendApDataReq $glMsId 0 [mmSigToPdu s]
+	
+	tmrstart [DbGet $glMMdb $glMsId T_3270id]
+}
+
+##########################################################
+proc IdentityResp_AfterNetAuthFail { } {
+	
+	global _sig glImeiDb glMMdb glMsId glCommonDb
+	
+	LogInputMsg $_sig
+	
+	# Check Send Sequence Number
+	set sndseqnum [rd _sig Sn]
+	set revlev [DbGet $glMMdb $glMsId RevLev]
+	if { [CheckSendSeqNum $glMsId $sndseqnum $glMMdb $revlev] != "1" } {
+		logscr "Unexpected Send Sequence Number ($sndseqnum)"
+		return
+	}
+	tmrstop [DbGet $glMMdb $glMsId T_3270id]
+	
+	# Store and Unset Identification
+	set id [rd _sig MsIdentity]
+	set type [GetTypeFromMsIdentity $id]
+	set currproc [DbGet $glMMdb $glMsId CurrentMMProc]
+	log "IdentityResp_AfterNetAuthFail: glMsId=$glMsId, id=$id, type=$type, currproc=$currproc"
+	
+	if { $type == "01" } {
+		# IMSI
+		switch -exact -- $currproc {
+			"ImsiUnknownNlu"	{ DbSet $glMMdb $glMsId CurrentMMProc NormLocUpd }
+			"ImsiUnknownPlu"    { DbSet $glMMdb $glMsId CurrentMMProc PerLocUpd }
+			"ImsiUnknownIa"     { DbSet $glMMdb $glMsId CurrentMMProc ImsiAttach }
+			"ImsiUnknownMPCall" { DbSet $glMMdb $glMsId CurrentMMProc MocPdCall }
+			"ImsiUnknownMoSms"  { DbSet $glMMdb $glMsId CurrentMMProc MoSms }
+			"ImsiUnknownEmCall" { DbSet $glMMdb $glMsId CurrentMMProc EmergencyCall }
+			"ImsiUnknownVGCall" { DbSet $glMMdb $glMsId CurrentMMProc VGCall }
+			default             { logscr "Unexpected Response Procedure ($currproc)"
+				return }
+		}
+		set idx [GetIdxFromMsIdentity $id $glMMdb $glCommonDb]
+		if { [string compare $idx ""] } {
+			log "IdentityResp_AfterNetAuthFail: before releasing check if some timer is running"
+			CheckTimersAndRelease $idx
+			log "glMsId = $glMsId; idx = $idx"
+			if { $glMsId != $idx } {
+				# in teoria il MS e' gia' noto, devo evitare di eseguire questa replace del MS con se stesso
+				log "IdentityResp_AfterNetAuthFail: replace msid"
+				ReplaceMmEntity $idx
+			}
+			DbSet $glMMdb $glMsId AuthNeeded  1; # BEWARE: after I want to make again the authentication procedure!! 
+			DbSet $glMMdb $glMsId IdentNeeded [DbGet $glCommonDb $glMsId ImeiNeeded]
+			DbSet $glMMdb $glMsId SecurNeeded [DbGet $glCommonDb $glMsId SecurNeeded]
+		} else {
+			log "IdentityResp_AfterNetAuthFail: FAILED id=$id"
+			DbSet $glMMdb $glMsId CurrentMMProc LANotAllowed
+			DbSet $glMMdb $glMsId AuthNeeded 0
+			DbSet $glMMdb $glMsId IdentNeeded 0
+			DbSet $glMMdb $glMsId SecurNeeded 0
+		}
+	} else {
+		log "Identity Type Unknown ($id) or not managed in this state"
+        return
+	}
+	
+	nextstate MMIdle
+	
+	StartNextProcedure
+}
+
+##########################################################
+proc AuthSuccess { } {
+	
+	global glMMdb glMsId
+	
+	# reset authentication attempts counter
+	DbSet $glMMdb $glMsId AuthCounter 0
+
+    global __CellNet	
+    if { [info exists __CellNet] && $__CellNet } {
+        # BACO MILENAGE: 24.008 4.3.2.6 d) NOTE
+        DbSet $glMMdb $glMsId AuthSynchFailCounter 0
+        # END
+    }
+
+	# Unset Authentication
+	DbSet $glMMdb $glMsId AuthNeeded 0
+}
+
+###########################################################
+proc SendAuthRej { } {
+	
+	# Declare and Initialize Global Variables
+	global glMMdb glMsId
+	
+	# Authentication Request
+	new		MM_AUTH_REJ s
+	wr      s Sn 0
+
+	LogOutputMsg $s
+	SendApDataReq $glMsId 0 [mmSigToPdu s]
+
+    MmParamReset
+
+    # ridondanti??? Da mettere nella reset
+	DbSet $glMMdb $glMsId AuthCounter 0
+	DbSet $glMMdb $glMsId AuthNeeded 1
+    DbSet $glMMdb $glMsId AuthSynchFailCounter 0
+
+    nextstate MMIdle
+}
+
+###########################################################
+proc imeiCatcherNotifyImei { imeiTxt imei msId res imeiInfo} {
+    
+	global glImeiCatcherPid glMMdb ; # glMsId
+    
+	#set lai [DbGet $glMMdb $glMsId LAI]
+	set lai [DbGet $glMMdb $msId LAI]
+	#log "imeiCatcherNotifyImei: IMEI=$imeiTxt, lai=$lai"
+	lassign {mcc mnc lac} [BreakLai $lai]
+	new IMEICATCHER_IMEI_IND s
+	wr s MccMnc ${mcc}_${mnc}
+	wr s ImeiTxt $imeiTxt
+	wr s Imei    $imei
+	wr s MsId $msId
+	wr s Info $imeiInfo
+	wr s Res $res
+	send s $glImeiCatcherPid
+}
+
+###########################################################
+proc CheckTimersAndRelease { idx } {
+	global glMMdb glMsId
+	
+	set t [DbGet $glMMdb $idx T_3250id]
+	
+	if { [tmrrunning $t] } {
+		# Release the MM connection
+		log "CheckTimersAndRelease: releasing link for idx=$idx"
+		log "CheckTimersAndRelease: current MS: glMsId=$glMsId"	
+		SendApRelReq $idx "TimerExpired_MM"
+	}
+}
+
+proc IdentificationResponse { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glImeiDb glMMdb glMsId glCommonDb
+	
+	LogInputMsg $_sig
+	
+	# Check Send Sequence Number
+	set sndseqnum [rd _sig Sn]
+	set revlev [DbGet $glMMdb $glMsId RevLev]
+	if { [CheckSendSeqNum $glMsId $sndseqnum $glMMdb $revlev] != "1" } {
+		logscr "Unexpected Send Sequence Number ($sndseqnum)"
+		#SendMmrErrorInd e1b1  
+		return
+	}
+	tmrstop [DbGet $glMMdb $glMsId T_3270id]
+	
+	# Store and Unset Identification
+	set id [rd _sig MsIdentity]
+	set type [GetTypeFromMsIdentity $id]
+	set currproc [DbGet $glMMdb $glMsId CurrentMMProc]
+	log "IdentificationResponse: glMsId=$glMsId, id=$id, type=$type, currproc=$currproc"
+	if { $type == "02" } {
+		# IMEI
+		# Checking IMEI (optional)
+		if { [info exists glImeiDb] } {
+			log "IMEI DB EXISTS"
+			if {[isImeiCatcher]} {
+				set imeiTxt [GetImeiFrom24008Format $id]
+				if { ![DbKeyExists $glImeiDb IMEI $id] } {
+					logscr "----------------------------------------------"
+					logscr "IMEI=$imeiTxt not authenticated"
+					logscr "----------------------------------------------"
+					#msgBox "ko" "IMEI=[string range $imeiTxt 0 end-1]* not authenticated"
+					# Notify the imei to the imei catcher
+					imeiCatcherNotifyImei $imeiTxt $id $glMsId 0 ""
+					# send reject to the MS
+					set luRej_PlmnNotAllowed 0b
+					set luRej_LACNotAllowed  0c
+					set luRej_NoSuitableCellsInLAC 0f; # !!! This makes the MS no retry (non e' vero!)
+					LocationUpdateReject $luRej_NoSuitableCellsInLAC 1
+					return
+				} else {
+					set imeiId [DbGetIdx $glImeiDb IMEI $id]
+					set imeiInfo [DbGet $glImeiDb $imeiId Info]
+					logscr "----------------------------------------------"
+					logscr "IMEI=$imeiTxt is valid. info=$imeiInfo"
+					logscr "----------------------------------------------"
+					#msgBox "ok" "IMEI=[string range $imeiTxt 0 end-1]* is valid\n$imeiInfo"
+					# ensure that ...
+					if { [DbKeyExists $glMMdb IMEI $id] } {
+						abort "### IdentificationResponse id=$id already used ###"
+						#set prevId [DbGetIdx $glMMdb IMEI $id]
+						#SendApEstAck $glMsId $prevId
+						#RemoveMmEntity $prevId
+					}
+					# Notify the imei to the imei catcher
+					imeiCatcherNotifyImei $imeiTxt $id $glMsId 1 $imeiInfo
+					# @@@ Create the entry with default values ???
+					DbSet $glMMdb $glMsId CurrentMMProc "ImeiLocUpd"
+				}
+			} else {
+				global __SupportUnknownMS
+				if { [info exists __SupportUnknownMS] && $__SupportUnknownMS } {
+					set imsiReceived [DbGet $glMMdb $glMsId ImsiReceived]
+					log "SUPPORT FOR UNKNOWN MS ENABLED: do not perform imei checking"
+					if {![IsVoid $imsiReceived]} {
+						log "msid = $glMsId found an imsi receievd"
+						# CELLNET-251
+						# il MS aveva usato IMSI nella loc upd req, quindi devo creare
+						# il MS visitor; se esiste gia' allora cambio solo l'IMEI
+						#ReplaceWithRealUnknownMs $imsiReceived	
+						set idx [GetIdxFromMsIdentity $imsiReceived $glMMdb $glCommonDb]
+						log "idx = $idx"
+						if { $idx != "" } {
+							log "imsi = $imsiReceived already used by idx = $idx"
+							if { $idx != $glMsId } {
+								abort "I thought it was not possible to be here!!!"
+							} else {
+								log "msid = $glMsId has changed IMEI to $id" 
+							}
+						} else {
+							log "imsi = $imsiReceived is not used by others MS"
+							ReplaceWithRealUnknownMs $imsiReceived	
+						}	
+						# END
+					}
+				} else {
+					if {0} {
+						log "PERFORM IMEI CHECKING"
+						if { ![DbKeyExists $glImeiDb IMEI $id] } {
+							logscr "WARNING: IMEI ($id) not valid for MS $glMsId"
+							LocationUpdateReject 02 0
+							return
+						}
+					} else {
+						log "UNKNOWN NOT SUPPPORTED AND IMEI CHECK ALWAYS DISABLED"
+					}
+				}
+			}
+		} else {
+			log "IMEI DB DOES NOT EXIST, DO NOT PERFORM IMEI CHECKING"
+			global __SupportUnknownMS
+			if { [info exists __SupportUnknownMS] && $__SupportUnknownMS } {
+				set imsiReceived [DbGet $glMMdb $glMsId ImsiReceived]
+				log "SUPPORT FOR UNKNOWN MS ENABLED: do not perform imei checking"
+				if {![IsVoid $imsiReceived]} {
+					log "msid = $glMsId found an imsi receievd"
+					# CELLNET-251
+					#ReplaceWithRealUnknownMs $imsiReceived	
+					set idx [GetIdxFromMsIdentity $imsiReceived $glMMdb $glCommonDb]
+					log "idx = $idx"
+					if { $idx != "" } {
+						log "imsi = $imsiReceived already used by idx = $idx"
+						if { $idx != $glMsId } {
+							abort "I thought it was not possible to be here"
+						} else {
+							log "msid = $glMsId has changed IMEI to $id" 
+						}
+					} else {
+						log "imsi = $imsiReceived is not used by others MS"
+						ReplaceWithRealUnknownMs $imsiReceived	
+					}	
+					# END
+				}
+			} else {
+				log "UNKNOWN MS NOT SUPPORTED AND DO NOT IMEI CHECKING"
+			}
+		}
+		switch -exact -- $currproc {
+			"ImsiUnknownEmCall" { DbSet $glMMdb $glMsId CurrentMMProc EmergencyCall }
+			default             { }
+		}
+		
+		# PATCH CELLNET	
+		global __CellNet	
+   		if { [info exists __CellNet] && $__CellNet } {
+			if {![IsVoid $id]} {
+				set prevId [DbKeyExists $glMMdb IMEI $id]
+				if { $prevId } {
+					log "IMEI $id already used by msid = $prevId"
+					log "setting VOID IMEI for msid = $glMsId"
+					DbSet $glMMdb $glMsId IMEIsec $id
+					set id ?
+				} else {
+					log "IMEI $id is not used by other MSs"
+				}	
+			} 
+		}
+		# END
+		
+        global __MsDetector
+        if { [info exists __MsDetector] && $__MsDetector} {
+			set nowTxt [exec date "+%c"]
+			set myImei [GetImeiFrom24008Format $id]
+			#set msg "TIME=${nowTxt} IDRESP REALID=$glMsId IMEI=$myImei"
+			#save_info "/lsu/tstm/TSTM/StartScript/tmp/MsDetector.txt" "${msg}" "append"
+			set s [list MS_DETECTOR_IMEI $glMsId $myImei]
+			set userPid [DbGet $glMMdb $glMsId UserPid]
+			# PATCH ATOM
+			log "userPid = $userPid"
+			if { [IsVoid $userPid] } {
+				set userPid [DbGet $glMMdb 0 UserPid]
+			}
+			log "userPid = $userPid"
+			if { ![IsVoid $userPid] } {
+				send s $userPid
+			} else {
+				log "msid = $glMsId UserPid is VOID"
+			}
+			# END
+			#send s $userPid
+		}
+		
+		#Carlo workaround to fix bug 28/09/2010 -start-
+		if {[DbKeyExists $glMMdb IMEI $id]} {
+			LogDb $glMMdb; #cDEBUG
+			set ms [DbGetIdx $glMMdb IMEI $id]
+			log "IdentificationResponse: WARNING: IMEI=$id already present in the $glMMdb for the mobile $ms"
+		}
+		#-end-
+		
+		DbSet $glMMdb $glMsId IMEI $id
+		DbSet $glMMdb $glMsId ImeiRetrieved 1
+		DbSet $glMMdb $glMsId IdentNeeded 0
+	} elseif { $type == "01" } {
+		# IMSI
+		switch -exact -- $currproc {
+			"ImsiUnknownNlu"	{ DbSet $glMMdb $glMsId CurrentMMProc NormLocUpd }
+			"ImsiUnknownPlu"    { DbSet $glMMdb $glMsId CurrentMMProc PerLocUpd }
+			"ImsiUnknownIa"     { DbSet $glMMdb $glMsId CurrentMMProc ImsiAttach }
+			"ImsiUnknownMPCall" { DbSet $glMMdb $glMsId CurrentMMProc MocPdCall }
+			"ImsiUnknownMoSms"  { DbSet $glMMdb $glMsId CurrentMMProc MoSms }
+			"ImsiUnknownEmCall" { DbSet $glMMdb $glMsId CurrentMMProc EmergencyCall }
+			"ImsiUnknownVGCall" { DbSet $glMMdb $glMsId CurrentMMProc VGCall }
+			"ImsiUnknownSsAct"	{ DbSet $glMMdb $glMsId CurrentMMProc SsActivation }
+			default             { logscr "Unexpected Response Procedure ($currproc)"
+				return }
+		}
+		set idx [GetIdxFromMsIdentity $id $glMMdb $glCommonDb]
+		if { [string compare $idx ""] } {
+			log "IdentificationResponse: before releasing check if some timer is running"
+			CheckTimersAndRelease $idx
+			ReplaceMmEntity $idx
+			# CELLNET 3G
+			#log "CELLNET 3G PRIMA CAMBIO ISTANZA glMsId = $glMsId"
+			#GetInstance $idx  $glMMdb glMsId
+			#log "CELLNET 3G DOPO CAMBIO ISTANZA glMsId = $glMsId"
+			# END
+			DbSet $glMMdb $glMsId AuthNeeded [DbGet $glCommonDb $glMsId AuthNeeded]
+			DbSet $glMMdb $glMsId IdentNeeded [DbGet $glCommonDb $glMsId ImeiNeeded]
+			DbSet $glMMdb $glMsId SecurNeeded [DbGet $glCommonDb $glMsId SecurNeeded]
+		} else {
+			if {[isImeiCatcher]} {
+				log "IdentificationResponse: IMEICATCHER id=$id"
+				DbSet $glMMdb $glMsId CurrentMMProc ImsiUnknownNimei
+			} else {
+				global __SupportUnknownMS
+				if { [info exists __SupportUnknownMS] && $__SupportUnknownMS } {	
+					log "IdentificationResponse: Imsi not present in Db imsi=$id"
+					ReplaceWithRealUnknownMs $id 
+				} else {
+					log "IdentificationResponse: FAILED id=$id"
+					DbSet $glMMdb $glMsId CurrentMMProc LANotAllowed
+					DbSet $glMMdb $glMsId AuthNeeded 0
+					DbSet $glMMdb $glMsId IdentNeeded 0
+					DbSet $glMMdb $glMsId SecurNeeded 0
+                    global __CellNet __ImsiDir __ImsiFile
+			        if { [info exists __CellNet] && $__CellNet ||
+                         [info exists __ImsiDir] && [file isdirectory $__ImsiDir] } {
+                        set unsubId [rd _sig MsIdentity]
+                        log "unsubId"
+                        set unsubId [GetImsiFrom24008Format $unsubId]
+                        log "unsubId"
+			            set nowTxt [exec date "+%c"]
+                        log "nowTxt"
+                        if {[info exists __CellNet] && $__CellNet } {
+			                #save_info "/lsu/tstm/TSTM/StartScript/tmp/Imsi.txt" "${nowTxt} ${unsubId}" "append"
+                            # TC EXTENSION
+                            set cellId [DbGet $glMMdb $glMsId CellId]
+                            set RegPid [DbGet $glMMdb 0 UserPid]
+                            SendImsiEvt $unsubId $cellId $RegPid
+                            # END
+                        } else {
+                            save_info "${__ImsiDir}${__ImsiFile}" "${nowTxt} ${unsubId}" "append"
+                        }
+                    }
+
+                    global __gsmr
+                    if { [info exists __gsmr] && $__gsmr } {
+					    global __INFO_STATUS
+                        if { [info exists __INFO_STATUS] && $__INFO_STATUS } {
+                            set RegPid [DbGet $glMMdb 0 UserPid]
+                            log "RegPid = $RegPid"
+                            if {$RegPid != "-1" && ![IsVoid $RegPid]} { 
+                                set unsubId [rd _sig MsIdentity]
+                                log "unsubId"
+                                set unsubId [GetImsiFrom24008Format $unsubId]
+                                log "unsubId"
+                                set s [list MM_REG_UNKNOWN_IMSI_IND $unsubId]
+                                send s $RegPid
+                            } else {
+                                log "problems with reg pid"
+                            }
+					        DbSet $glMMdb $glMsId CurrentMMProc ImsiUnknownHlr
+                        }
+                    }
+                    #END
+				}
+			}
+		}
+	} else {
+		logscr "Identity Type Unknown ($id)"
+        return
+	}
+	
+	StartNextProcedure
+}
+
+proc TmsiReallocated { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMMdb glMsId
+	
+	LogInputMsg $_sig
+	
+	# Check Send Sequence Number
+	set sndseqnum [rd _sig Sn]
+	set revlev [DbGet $glMMdb $glMsId RevLev]
+	if { [CheckSendSeqNum $glMsId $sndseqnum $glMMdb $revlev] != "1" } {
+		logscr "Unexpected Send Sequence Number ($sndseqnum)"
+		#SendMmrErrorInd e1b1  
+		return
+	}
+	tmrstop [DbGet $glMMdb $glMsId T_3250id]
+    
+	if {[isImeiCatcher]} {
+        # nothing to do
+		
+		nextstate MMConnectionActive
+    } else {
+	    if { ![DbGet $glMMdb $glMsId FollowOnReq] } {
+			if { ![IsMSOnGsLink $glMsId] } {	
+				# Set cause for release (see "ranap.txt")
+				set cause "Normal_Event_MM"
+				ReleaseApConnection $cause
+			}
+			# Reset Parameters
+			MmParamReset
+		} else {
+			tmrstart [DbGet $glMMdb $glMsId T_3255id]
+		}
+		
+		nextstate MMIdle
+    }
+	
+	# Carlo 28/10/2008
+	if { ![IsVoid [DbGet $glMMdb $glMsId PendingTmsi]]\
+			 && [DbGet $glMMdb $glMsId PendingTmsi] != "?"\
+			 && ![DbKeyExists $glMMdb TMSI [DbGet $glMMdb $glMsId PendingTmsi]] } {
+		set tmsi [DbGet $glMMdb $glMsId PendingTmsi]
+	} else {
+		set tmsi [GetNextTmsi $glMsId]
+	}
+	
+	DbSet $glMMdb $glMsId TMSI $tmsi
+	DbSet $glMMdb $glMsId TmsiAssigned 1
+	log "TmsiReallocated: UE $glMsId is Registered (TMSI: $tmsi)"
+	
+	nextstate MMIdle
+	
+	DequeueRequests
+}
+
+proc SecurityModeCompleted { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glMMdb glMsId
+	
+	LogInputMsg $_sig
+	
+	# Check Result
+	set res [rd _sig Res]
+	if { $res != 0 } {
+		# Inform User Script
+		SendMmrErrorInd [rd _sig Cause]
+		return
+	}
+	
+	# Security Mode Completed
+	DbSet $glMMdb $glMsId SecurNeeded 0
+	
+	StartNextProcedure
+}
+
+proc StartCommonProcedures { } {
+	
+	# Global Variables
+	global _sig _is_umts
+	
+	LogInputMsg $_sig
+	
+	# Get Parameters
+	set msid [rd _sig MsId]
+	
+	# Send MsId to Lower Layer
+	SendApEstAck $msid [rd _sig SpcStkIdCid]
+	
+	if { [IsMSOnGsLink $msid] } {
+		log "Removing Gs link for MS=$msid"
+		global glMMdb
+		DbSet $glMMdb $msid GsLink 0
+		DbSet $glMMdb $msid GsLinkReleased 1
+		
+		new MMBSSAPPLUS_AP_PAGING_A_IND s
+		wr	s	MsId	$msid
+		
+		send s
+	}
+	
+	StartNextProcedure
+}
+
+proc RefuseApConn { } {
+	
+	# Global Variables
+	global _sig
+	
+	LogInputMsg $_sig
+	
+	# Get Parameters
+	set msid [rd _sig MsId]
+	
+	# Inform Lower Layer - Abort Flag should be set in BSSAP
+	SendApEstAck $msid [rd _sig SpcStkIdCid]
+}
+
+proc MmStatus { } {
+	
+	global _sig glMMdb glMsId
+	
+	LogInputMsg $_sig
+	
+	# Check Send Sequence Number
+	set sndseqnum [rd _sig Sn]
+	set revlev [DbGet $glMMdb $glMsId RevLev]
+	if { [CheckSendSeqNum $glMsId $sndseqnum $glMMdb $revlev] != "1" } {
+		logscr "Unexpected Send Sequence Number ($sndseqnum)"
+		#SendMmrErrorInd e1b1  
+		return
+	}
+	
+	# Set cause for release (see "ranap.txt")
+	set cause "Normal_Event_MM"
+	ReleaseApConnection $cause
+	
+	# Reset Parameters - may be Temporary Instance
+	if { [DbEntryExists $::glCommonDb $glMsId] } {
+		MmParamReset
+	} else {
+		DbSet $glMMdb $glMsId SendSeqNum 0
+	}
+	
+	nextstate MMIdle
+	
+	DequeueRequests
+}
+
+# Start TMA-225
+
+proc UnexpectedLocationReq { } {
+	
+	global glMsId _state _bssappid __slaves_db glMMdb _is_gsm
+	
+	log "UnexpectedLocationReq : msId=$glMsId state=$_state"
+	
+	if { ![info exists __slaves_db] } {
+		if { $_is_gsm } {
+			global __welcome_sms
+			if { [info exists _bssappid] && ![info exists __welcome_sms] } {
+				# Set a remote variable in BSSAP to have a different behavior
+				remcmd $_bssappid "SetgMMRemote"
+			}	
+		}
+		# Release upper layers
+		ReleaseMmConnection e19f
+		set numConn [DbGet $glMMdb $glMsId NumOfMmConnections]
+		log "UnexpectedLocationReq : numConn = $numConn"
+		if { $numConn != 0 } {
+			incr numConn -1
+			DbSet $glMMdb $glMsId NumOfMmConnections $numConn
+			log "UnexpectedLocationReq : decreasing number of connections numConn = $numConn"
+			set tid [DbGet $glMMdb $glMsId TidBitMap]
+			DbSet $glMMdb $glMsId TidBitMap 0x00
+			log "UnexpectedLocationReq TidBitMap set to 0 was: tid=$tid"
+		}
+	} else {
+		log "UnexpectedLocationReq : ERROR: called in splitted!"
+	}
+	# Reset Old MM Instance
+	ResetMmInst
+	nextstate MMIdle
+	
+	# Serve The Location Update
+	LocationUpdating
+	
+}
+
+
+# End TMA-225
+
+proc CheckMmMessage { } {
+	
+	# Global Variables
+	global _sig glMsId glMMdb
+	
+	# Check Send Sequence Number
+	set sndseqnum [rd _sig Sn]
+	set revlev [DbGet $glMMdb $glMsId RevLev]
+	
+	LogInputMsg $_sig
+	#LogDb $glMMdb; #cDEBUG
+	#log "CheckMmMessage: sndseqnum=$sndseqnum; revlev=$revlev; glMsId=$glMsId"; #cDEBUG
+	
+	if { [string equal [lindex $_sig 0] "MM_TMSI_REAL_COMP"] } {
+		log "CheckMmMessage: stop timer TMSI_REALLOC"
+		tmrstop [DbGet $glMMdb $glMsId T_3250id]
+		# Carlo: SS-BAOC: in caso di MM_TMSI_REAL_COMP successivo alla Rx del MM_CC_REL_REQ, NON vado a fare il check su Sqn
+		return
+	} else {
+		if { [CheckSendSeqNum $glMsId $sndseqnum $glMMdb $revlev] != "1" } {
+			logscr "Unexpected Send Sequence Number ($sndseqnum)"
+			return
+		}
+	}
+	# Message is Unexpected
+	Unexpected
+}
+
+proc MmCcSapRegHnd {} {
+	global glMmCcSapPid _src
+	
+	set glMmCcSapPid $_src
+	log "MmCcSapRegHnd: glMmCcSapPid=$glMmCcSapPid"
+}
+
+proc MmrCnGetMsParReqHnd {} {
+	global glMsId glCommonDb glMMdb _src
+	
+	new MMR_CN_GET_MS_PAR_RES s
+	wr s MsId $glMsId
+	wr s LAI [DbGet $glCommonDb $glMsId SysInfoLAI]
+	wr s TMSI [GetNextTmsi $glMsId] 
+	wr s CellId [DbGet $glCommonDb $glMsId LocalCellId]
+	
+	set clmark [DbGet $glCommonDb $glMsId ClassMark2]
+	if { ![IsVoid $clmark] } {
+		set revlev [hbits $clmark 1 2]
+		wr s RevLev $revlev
+	}
+	send s $_src
+	
+	LogOutputMsg $s
+}
+
+proc MmrCnInitReqHnd {} {
+	global glMMdb glMsId _sig _src _state
+	
+	LogInputSig
+	
+	#GetInstance will save _state in glCCdb
+	set _state [rd _sig State]
+	
+	DbSet $glMMdb $glMsId TMSI [rd _sig TMSI]
+	DbSet $glMMdb $glMsId TmsiAssigned [rd _sig TmsiAssigned]
+	DbSet $glMMdb $glMsId IMEI [rd _sig IMEI]
+	DbSet $glMMdb $glMsId ImeiRetrieved [rd _sig ImeiRetrieved]
+	DbSet $glMMdb $glMsId LAI [rd _sig LAI]
+	DbSet $glMMdb $glMsId CellId [rd _sig CellId]
+	DbSet $glMMdb $glMsId CurrentMMProc [rd _sig CurrentMMProc]
+	DbSet $glMMdb $glMsId AuthNeeded [rd _sig AuthNeeded]
+	DbSet $glMMdb $glMsId IdentNeeded [rd _sig IdentNeeded]
+	DbSet $glMMdb $glMsId SecurNeeded [rd _sig SecurNeeded]
+	DbSet $glMMdb $glMsId NumOfMmConnections [rd _sig NumOfMmConnections]
+	DbSet $glMMdb $glMsId TidBitMap [rd _sig TidBitMap]
+	DbSet $glMMdb $glMsId RevLev [rd _sig RevLev]
+	
+	new MMR_CN_INIT_ACK s
+	wr s MsId $glMsId
+	send s $_src
+	
+	LogOutputMsg $s
+	
+	DebugLogDbRecord $glMMdb $glMsId; #debug
+}
+
+if {![llength [info commands isSplitted]]} {
+	proc isSplitted {} {
+		return 0
+	}
+}
+
+# TC EXTENSION
+proc SendImsiEvt { imsi cellId regPid} {
+
+	set s [list API_IMSI_DETECTED $imsi $cellId]
+    send s $regPid
+}
+# END
+
+proc SendInfoToUserScript { msid status {cellId ?} {lai ?} {locUpdType ?} {imsi ?} {imei ?} } {
+	
+	global glMMdb glCommonDb
+	
+	set RegPid [DbGet $glMMdb $msid UserPid]
+	log "SendInfoToUserScript: RegPid= $RegPid cellId = $cellId lai = $lai"
+	# CELLNET-369
+	set rac ?
+	# END
+	if {$RegPid != "-1" && ![IsVoid $RegPid]} {
+        global __gsmr
+        if { ![info exists __gsmr] || !$__gsmr } {
+		    if {![IsVoid $cellId]} {
+			    global _rslpid
+			    # TODO: leggere i parametri di cella
+			    set rac [remcmd $_rslpid "GetRac $cellId"]
+			    #set rac 63 
+			    # END
+			    log "rac = $rac"
+		    } else {
+			    #set rac ?
+			    global _urslpid _is_umts
+			    if { $_is_umts } {
+				    set rac [remcmd $_urslpid "GetRacForCs $msid"]
+				    log "rac = $rac"
+			    } else {
+				    set rac ?
+			    }
+		    }
+        } else {
+            set rac ?
+        }
+		
+		if {[IsVoid $imsi]} {
+			set imsi [DbGet $glCommonDb $msid IMSI]
+		}
+		
+		if {[IsVoid $imei]} {
+			set imei [DbGet $glMMdb $msid IMEI]
+			global __CellNet
+			if { [info exists __CellNet] && $__CellNet} {
+				if {[IsVoid $imei]} {
+					set imei [DbGet $glMMdb $msid IMEIsec]
+				}
+			}
+		} 
+		
+		set s [list MM_REG_INFO_IND $msid $status $cellId $lai $locUpdType $imsi $imei $rac]
+		send s $RegPid
+	}
+}
+
+
+# Start TMA-219
+proc MmSmsConnectionRelReqInWaitForMobOrigMMConnection  { } {
+	
+	# Global Variables
+	global _sig glMMdb glMsId
+	
+	LogInputMsg $_sig
+	
+	# Check Number of Mm Connections
+	set tid [rd _sig Tio]
+	set conn_num [DbGet $glMMdb $glMsId NumOfMmConnections]
+	
+	# CASE FOR SMS WITH ACTIVE SMS 
+	DbSet $glMMdb $glMsId NumOfMmConnections [expr {$conn_num - 1}]
+	set bmap [DbGet $glMMdb $glMsId SmsTidBitMap]
+	set new_bmap [expr {$bmap & [expr {~ [expr {0x01 << $tid}]}]}]
+	DbSet $glMMdb $glMsId SmsTidBitMap 0x00
+}
+
+# End TMA-219
+
+proc MmrCnInfo {} {
+	
+	global _sig
+	
+	set msid [lindex $_sig 1]
+	set fullNateName [lindex $_sig 2]
+	log "msid = $msid fullNateName = $fullNateName"
+	
+	# MM_INFO
+	new		MM_INFO s
+	wr      s Sn 0
+	wr      s FullNameNet $fullNateName
+	
+	# Send to Lower Layer on SAPI 0
+	LogOutputMsg $s
+	SendApDataReq $msid 0 [mmSigToPdu s]
+}
+
+########################################################
+# remcmd for the m2mc_barring.tsm
+proc RoamingNumberLai { msId } {
+	
+	global glMMdb
+	
+	set Lai [DbGet $glMMdb $msId LAI]
+	return $Lai
+}
+
+# CELLNET-428
+proc GetSignallingStatus { msid } {
+	
+	# Declare and Initialize Global Variables
+	global glMMdb
+	
+	set tTrigAuthid [DbGet $glMMdb $msid T_TRIG_AUTHid]
+	if { [tmrrunning $tTrigAuthid] } {
+        log "GetSignallingStatus: AUTH TIMER RUNNING"
+        return -1
+    }
+	return 0
+}
+#END
+
+# CELLNET RESTYLING
+if {0} {
+	##############################################################
+	proc MsSubscribe {} {
+		
+		global _sig glMMdb glMsId
+		
+		set newId [lindex $_sig 2]
+		log "MsSubscribe: msid = $glMsId updating new id value = $newId"
+		DbSet $glMMdb $glMsId SubscriptionId $newId
+	}
+}
+
+proc MMnull { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig glImeiDb glMMdb glMsId glCommonDb
+	
+	LogInputMsg $_sig
+	
+	# Check Send Sequence Number
+	set sndseqnum [rd _sig Sn]
+	set revlev [DbGet $glMMdb $glMsId RevLev]
+	if { [CheckSendSeqNum $glMsId $sndseqnum $glMMdb $revlev] != "1" } {
+        logscr "Unexpected Send Sequence Number ($sndseqnum)"
+        return
+    }
+}
+##############################################################
+#
+# FSM 
+#
+##############################################################
+
+state WaitForConfig {
+	MM_CONFIG			Config
+	default	 			Unexpected
+}
+
+state MMIdle {
+	AP_EST_IND      	EstablishApConn
+	AP_EST_CNF     		RefuseApConn
+	AP_REL_IND			ApRelIndInIdle
+	GPRS_AP_REL_IND		GprsApRelIndIdle
+	AP_TALKER_IND		ApTalkerInd
+	MM_CC_EST_REQ       ApConnectionRequest
+	MM_SMS_EST_REQ      ApConnectionRequest
+	MM_SS_EST_REQ       ApConnectionRequest
+	MM_LOC_UPDATE_REQ 	LocationUpdating
+	MM_CM_SERVICE_REQ   CmServiceRequest
+	MM_CM_SERVICE_ABORT CmServiceAbort
+	MM_IMSI_DETACH_IND  ImsiDetachIndication
+	T_3255              T_3255Expired
+	MMR_CN_GET_MS_PAR_REQ		MmrCnGetMsParReqHnd
+	MMR_CN_INIT_REQ				MmrCnInitReqHnd
+	MM_CC_PROT			Unexpected
+	default	 			Common
+}
+
+state WaitForRRConnection {
+	AP_EST_IND      	EstablishApConnInRR
+	AP_EST_CNF          StartCommonProcedures
+	AP_REL_IND			ApRelInd
+	GPRS_AP_REL_IND		GprsApRelInd
+	MM_CC_REL_REQ       MmCcConnectionRelReq
+	MM_SMS_REL_REQ      MmSmsConnectionRelReq
+	MM_SS_REL_REQ	    MmSsConnectionRelReq
+	MM_LOC_UPDATE_REQ 	LocationUpdating
+	default 			Common
+}
+
+state MMConnectionActive {
+	AP_REL_IND          ApRelInd
+	GPRS_AP_REL_IND     GprsApRelInd
+	MM_CC_EST_REQ       ApConnectionRequest
+	MM_SMS_EST_REQ      ApConnectionRequest
+	MM_SS_EST_REQ		ApConnectionRequest
+	MM_CC_PROT          RouteToCallControl
+	MM_SMS_PROT         RouteToSms
+	MM_SS_PROT			RouteToSs
+	MM_GCC_PROT         RouteToGroupCallControl
+	MM_CC_DATA_REQ      MmCcDataReq
+	MM_SMS_DATA_REQ     MmSmsDataReq
+	MM_GCC_DATA_REQ		MmGccDataReq
+	MM_SS_DATA_REQ      MmSsDataReq
+	AP_SYNC_CNF     	ResourceAssigned
+	MM_CC_SYNC_REQ  	ResourceAssignment
+	MM_GCC_SYNC_REQ  	GroupCallResourceAssignment
+	MM_CC_REL_REQ       MmCcConnectionRelReq
+	MM_SMS_REL_REQ   	MmSmsConnectionRelReq
+	MM_SS_REL_REQ   	MmSsConnectionRelReq
+	MM_GCC_REL_REQ		MmGccConnectionRelReq
+	MM_CM_SERVICE_REQ   CmServiceRequest
+	MM_IMSI_DETACH_IND  ImsiDetachActive
+	MM_TMSI_REAL_COMP	TmsiReallocateMMActive
+	MM_STATUS			LogInputSig
+	default 			Common
+}
+
+state IdentificationInitiated {
+	MM_ID_RESP          IdentificationResponse
+	MM_CM_SERVICE_ABORT CmServiceAbort
+	MM_STATUS			MmStatus
+	MM_CC_EST_REQ       EnqueueMmCcRequest     
+	MM_SMS_EST_REQ      EnqueueMmSmsRequest
+	MM_GCC_EST_REQ      EnqueueMmVgcsRequest
+	MM_CC_REL_REQ       MmCcConnectionRelReq
+	MM_SMS_REL_REQ   	MmSmsConnectionRelReq
+	AP_REL_IND          ApRelInd
+	GPRS_AP_REL_IND     GprsApRelInd
+	T_3270              T_3270Expired
+	default 			Common
+}
+
+state AuthenticationInitiated {
+	MM_AUTH_RESP        AuthenticationResponse
+	MM_AUTH_FAIL        AuthenticationFailure
+	MM_CM_SERVICE_ABORT CmServiceAbort
+	MM_STATUS			MmStatus
+	MM_CC_EST_REQ       EnqueueMmCcRequest
+	MM_SMS_EST_REQ      EnqueueMmSmsRequest
+	MM_GCC_EST_REQ      EnqueueMmVgcsRequest
+	MM_CC_REL_REQ       MmCcConnectionRelReq
+	MM_SMS_REL_REQ   	MmSmsConnectionRelReq
+	AP_REL_IND          ApRelInd
+	GPRS_AP_REL_IND     GprsApRelInd
+	T_3260          	T_3260Expired
+	default 			Common
+}
+
+state TmsiReallocationInitiated {
+	MM_TMSI_REAL_COMP   TmsiReallocated
+	MM_CM_SERVICE_ABORT CmServiceAbort
+	MM_STATUS			MmStatus
+	MM_CC_EST_REQ       EnqueueMmCcRequest
+	MM_SMS_EST_REQ      EnqueueMmSmsRequest
+	MM_GCC_EST_REQ      EnqueueMmVgcsRequest
+	MM_CC_REL_REQ       MmCcConnectionRelReq
+	MM_SMS_REL_REQ   	MmSmsConnectionRelReq
+	AP_REL_IND          ApRelInd
+	T_3250          	T_3250Expired
+	default 			Common
+}
+
+state SecurityModeInitiated {
+	MM_CC_EST_REQ       EnqueueMmCcRequest
+	MM_SMS_EST_REQ      EnqueueMmSmsRequest
+	MM_GCC_EST_REQ      EnqueueMmVgcsRequest
+	MM_CC_REL_REQ       MmCcConnectionRelReq
+	MM_SMS_REL_REQ   	MmSmsConnectionRelReq
+	MM_CC_PROT			ActivateMMConnSecMode
+	MM_SMS_PROT			ActivateMMConnSmsSecMode
+	MM_GCC_PROT			ActivateMMConnVgcsSecMode
+	MM_SS_PROT			ActivateMMConnSsSecMode
+	AP_SYNC_CNF	    	SecurityModeCompleted
+	AP_REL_IND          ApRelInd
+	MM_CM_SERVICE_ABORT CmServiceAbort
+	default 			Common
+}
+
+state WaitForMobOrigMMConnection {
+	MM_CC_PROT			ActivateMMConnection
+	MM_SMS_PROT			ActivateMMConnectionSms
+	MM_GCC_PROT			ActivateMMConnectionVgcs
+	MM_SS_PROT			ActivateMMConnectionSs
+	AP_REL_IND          ApRelInd
+	MM_CM_SERVICE_ABORT CmServiceAbort
+	MM_SMS_REL_REQ 		MmSmsConnectionRelReqInWaitForMobOrigMMConnection
+	default 			Common
+}
+
+state WaitForNtwOrigMMConnection {
+	default 			Common
+}
+
+state WaitForReestablishment {
+	default 			Common
+}
+
+state WaitOfAGroupCall {
+	default 			Common
+}
+
+state MMConnectionActive_GroupCall {
+	MM_GCC_SYNC_REQ		DedicatedResAssignment
+	default 			Common
+}
+
+state WaitForBroadcastCall {
+	default 			Common
+}
+
+state BroadcastCallActive {
+	default 			Common
+}
+
+state NetAuthFail_WaitIdentityResp {
+	MM_ID_RESP          IdentityResp_AfterNetAuthFail
+	T_3270              T_3270Expired
+	AP_REL_IND          ApRelInd
+	default				Common 
+}
+
+state Common {
+	MM_SET_USER_PID		SetUserPid
+	T_TRIG_AUTH			SendAuthenticationRequest
+	T_TRIG_SEC          SendSecurityMode
+	MM_START_LOAD_REDISTR StartLoadRedistrHnd
+	MM_STOP_LOAD_REDISTR StopLoadRedistrHnd
+	AP_ABORT_IND		ApAbortInd
+	default				Any
+}
+
+state Any {
+	MM_LOC_UPDATE_REQ   UnexpectedLocationReq	
+	MM_CM_SERVICE_REQ   CheckMmMessage
+	MM_CM_SERVICE_ABORT CheckMmMessage
+	MM_IMSI_DETACH_IND  CheckMmMessage
+	MM_ID_RESP          CheckMmMessage
+	MM_AUTH_RESP        CheckMmMessage
+	MM_AUTH_FAIL	    CheckMmMessage			        
+	MM_TMSI_REAL_COMP	CheckMmMessage
+	AP_EST_IND			UnexpectedApEstInd
+	MM_CC_SAP_REG		MmCcSapRegHnd
+	MMR_CN_INFO			MmrCnInfo
+	MMR_MS_SUBSCRIBE	save
+	MM_NULL				MMnull
+	default				Unexpected
+}

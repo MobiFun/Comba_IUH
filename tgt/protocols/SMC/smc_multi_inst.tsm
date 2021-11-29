@@ -1,0 +1,501 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/SMC/tags/SMC-0.7.19/scripts/smc_multi_inst.tsm $
+#
+# $Author: sergiol $
+#
+# Description: SMS CP Mutli Instance Handler
+#
+#
+# $Rev: 54532 $
+#
+# $Date: 2012-09-21 15:56:03 +0200 (Fri, 21 Sep 2012) $
+##############################################################
+
+proc SmcMultiInstanceHdl { } {
+
+	# Declare Global Variables
+	global _sig  
+
+	set primName [lindex $_sig 0]
+
+	switch -exact -- $primName {
+		"MN_SMS_EST_REQ"		{ MnSmsEstReqHnd }
+		"MM_SMS_EST_IND"        { MmSmsEstIndHnd }
+		"MM_SMS_EST_CNF"        { MmSmsEstCnfHnd }
+		"MM_SMS_DATA_IND"       { MmSmsDataIndHnd }
+		"MM_SMS_REL_IND"        { MmSmsRelIndHnd }
+		"SMC_CONFIG"            { SmcConfigHnd }
+		"SMC_SET_USER_PID"		{ SetUserPidHnd }
+		"T_TC1"                 { DefaultTmrHnd } 
+		"T_DBG_GET_STATS"       { GetStatistics }
+		"IMEICATCHER_SETPID"    { SmcSetImeiCatcherPid; skipMsg}
+		"MN_SET_GLOBAL_VAR"     { MnSetGlobalVar }
+		"GMM_SM_REG_STATE_RSP"  { GmmSmRegStateRsp }
+        "MN_SMS_ATK_STP_CMD"    { SmsStopAttackHnd }
+		"LLSMS_UNITDATA_IND"    { LlSmsDataIndHnd }
+        "MN_USR_SUBSCRIBE_REQ"  { MnUsrSubscribeReqHnd }
+		default 				{ DefaultHnd }
+	}
+}
+
+proc SmcSetImeiCatcherPid {} {
+    global _sig glImeiCatcherInfo
+    set pid [rd _sig Pid]
+    log "MmSetImeiCatcherPid. pid=$pid"
+    set glImeiCatcherInfo(Pid) $pid
+}
+
+
+##############################################################
+# Statistics
+##############################################################
+
+proc GetStatistics { } {
+
+	log "---------- START OF SMC STATISTICS ----------"
+	
+	# Dump Statistics Variable
+	log "[::profiler::print]"
+
+	log "----------  END OF SMC STATISTICS  ----------"
+
+	skipMsg
+}
+
+##############################################################
+# Data Base handling
+##############################################################
+
+proc SmcConfigHnd { } {
+
+	# Global Variables
+    global glIdx
+
+	# Settings
+	set glIdx 0
+}
+
+proc SetUserPidHnd { } {
+
+	# Global Variables
+}
+
+proc CreateDataBase { dbname } {
+	
+	# Global Variables
+    global __net_side
+
+	# Set DB Name
+	if { [CnSide] } {
+		lappend idxList [list Idx Index Read_Only]
+		lappend idxList [list State Normal Read/Write]
+		lappend idxList [list ExpectedTif Normal Read/Write]
+		lappend idxList [list PendingTid Key Read/Write]
+		lappend idxList [list T_TC1id Key Read/Write]
+		lappend idxList [list TC1CurrentCount Normal Read/Write]
+		lappend idxList [list TC1MaxCount Normal Read/Write]
+		lappend idxList [list RpData Normal Read/Write]
+		lappend idxList [list PendingRelReq Normal Read/Write]
+		lappend idxList [list BlockUnitTime Normal Read/Write]
+		lappend idxList [list UserPid Normal Read/Write]
+        global __CellNet
+        if { [info exists __CellNet] && $__CellNet } {
+		    lappend idxList [list More Normal Read/Write]
+        }
+		#Used to indicate whether to use sms via ps or not.
+		lappend idxList [list RadPrioSMS Normal Read/Write]
+
+	} elseif { [MsSide] } {
+		lappend idxList [list Idx Index Read_Only]
+		lappend idxList [list State Normal Read/Write]
+		lappend idxList [list ExpectedTif Normal Read/Write]
+		lappend idxList [list T_TC1id Key Read/Write]
+		lappend idxList [list TC1CurrentCount Normal Read/Write]
+		lappend idxList [list TC1MaxCount Normal Read/Write]
+		lappend idxList [list PendingTid Key Read/Write]
+		lappend idxList [list RpData Normal Read/Write]
+		lappend idxList [list PendingRelReq Normal Read/Write]
+		lappend idxList [list ConcatShortMessage Normal Read/Write]
+		lappend idxList [list BlockUnitTime Normal Read/Write]
+		lappend idxList [list UserPid Normal Read/Write]
+
+		#Used to indicate whether to use sms via ps or not.
+		lappend idxList [list RadPrioSMS Normal Read/Write]
+	} else {
+		logscr "Unexpexted Type ($__net_side)"
+		return
+	}
+
+	DbCreate $dbname $idxList
+}
+
+##############################################################
+# Procedures
+##############################################################
+
+proc MmSmsEstIndHnd { } {
+
+	# Global Variables
+	global _sig _state _sigpdu __net_side glSMCdb glIdx 
+
+	LogInputPrim $_sig
+
+	# Get Transaction Id
+	set binpdu [rd _sig Pdu]
+	if { [IsVoid $binpdu] } {
+		logscr "WARNING: skipMsg. Unexpected Empty MmSmsEstInd"
+		skipMsg
+		return
+	} 
+	smcPduToSig binpdu
+	if { ![info exists _sigpdu] } {
+		logscr "WARNING: skipMsg. Unexpected Bad MmSmsEstInd"
+		skipMsg
+		return
+	}
+
+	set tiflag [rd _sigpdu TIFlag]
+	if { $tiflag == 1 } {
+		# MMCC Release Request
+		new		MM_SMS_REL_REQ s
+		wr      s MsId [rd _sig MsId]
+		wr      s Tio [rd _sigpdu TIO]
+		send  s
+		LogOutputMsg $s
+		skipMsg
+		return
+	}
+	set tio [rd _sigpdu TIO]
+	set tid [BuildTid $tiflag $tio]
+
+	# Get Current Index 
+	set msid [rd _sig MsId]
+	set idx [GetIdxFromTidMsid $tid $msid]
+	
+	# Set Initial State
+	if { [CnSide] } {
+		set initst "MO_Idle"
+	} elseif { [MsSide] } {
+		set initst "MT_Idle"
+	} else {
+		logscr "WARNING: skipMsg. Unexpected Net Side ($__net_side)"
+		skipMsg
+		return
+	}
+
+	if { [CreateNewSmcEntity $idx $initst] == "-1" } {
+		logscr "WARNING: skipMsg. Impossible to Create New Instance"
+		skipMsg
+		return
+	}
+
+	# Save Previous
+	if { $glIdx != 0 && [DbEntryExists $glSMCdb $glIdx] } {
+		DbSet $glSMCdb $glIdx State $_state 
+	}
+	# Always Get Instance
+	set glIdx $idx
+	set _state $initst
+	set _sig $_sigpdu
+}
+
+proc SmsStopAttackHnd {} {
+
+    global _sig glSMCdb
+
+    set inst [lindex $_sig 1]
+    set tid [lindex $_sig 2]
+    set idx [GetIdxFromTidMsid $tid $inst]
+    log "SmsStopAttackHnd: inst = $inst tid = $tid idx = $idx"
+    if {[DbEntryExists $glSMCdb $idx]} {
+        DbSet $glSMCdb $idx More ? 
+    }
+    skipMsg
+}
+
+proc MnSmsEstReqHnd { } {
+
+	# Declare Global Variables
+	global _sig _state __net_side glSMCdb glIdx
+
+	# Get Parameters
+	set msid [rd _sig MsId]
+
+	# Get Index
+	set idx [CSGetNextIndexByTi $msid $glSMCdb 8 16]
+	if { $idx == "-1" } {
+		logscr "WARNING: skipMsg. Transaction Ids all in use"
+		skipMsg
+		return
+	}
+
+	# Set Initial State
+	if { [CnSide] } {
+		set initst "MT_Idle"
+	} elseif { [MsSide] } {
+		set initst "MO_Idle"
+	} else {
+		logscr "WARNING: skipMsg. Unexpected Net Side ($__net_side)"
+		skipMsg
+		return
+	}
+
+	# New Instance
+	if { [CreateNewSmcEntity $idx $initst] == "-1" } {
+		logscr "WARNING: skipMsg. Impossible to Create New Instance"
+		skipMsg
+		return
+	}
+
+	# Save Previous
+	if { $glIdx != 0 && [DbEntryExists $glSMCdb $glIdx] } {
+		DbSet $glSMCdb $glIdx State $_state 
+	}
+	# Always Get Instance
+	set glIdx $idx
+	set _state $initst
+}
+
+proc MmSmsEstCnfHnd { } {
+
+	# Declare Global Variables
+	global _sig glSMCdb glIdx
+
+	# Get Transaction Id
+	set msid [rd _sig MsId]
+	if { [DbKeyExists $glSMCdb PendingTid $msid] } {
+		set idx [DbGetIdx $glSMCdb PendingTid $msid]
+	} else {
+		logscr "WARNING: skipMsg. No Establishment Request Pending (MsId: $msid)"
+		skipMsg
+		return
+	} 
+
+	# Instance
+	GetInstance	$idx $glSMCdb glIdx
+}
+
+proc GmmSmRegStateRsp {} {
+
+	global _sig glIdx glSMCdb
+
+	LogInputPrim $_sig
+
+	set idx [rd _sig Tio]
+
+	# Instance
+	GetInstance	$idx $glSMCdb glIdx
+}
+
+proc LlSmsDataIndHnd {} {
+
+	global _sig _state _sigpdu __net_side glSMCdb glIdx 
+
+	LogInputPrim $_sig
+
+	# Get Transaction Id
+	set binpdu [rd _sig Data]
+	if { [IsVoid $binpdu] } {
+		logscr "WARNING: skipMsg. Unexpected Empty LlSmsEstInd"
+		skipMsg
+		return
+	} 
+	smcPduToSig binpdu
+	if { ![info exists _sigpdu] } {
+		logscr "WARNING: skipMsg. Unexpected Bad LlSmsEstInd"
+		skipMsg
+		return
+	}
+
+	set tiflag [rd _sigpdu TIFlag]
+	set tio [rd _sigpdu TIO]
+	set tid [BuildTid $tiflag $tio]
+
+	# Get Parameters
+	set msid [rd _sig MsId]
+	set idx [GetIdxFromTidMsid $tid $msid]
+
+	if { [CnSide] } {
+		logscr "LlSmsDataIndHnd: cn side not yet implemented"
+		exit
+	}
+
+	if { ![DbEntryExists $glSMCdb $idx] } {
+
+		#MT CP-Data case, create new instance
+
+		set initst "MT_Idle"
+		CreateNewSmcEntity $idx $initst
+
+		#set lowest radio priority in this case
+		#TODO ask gmm for it as is done for MO-SMS?
+		DbSet $glSMCdb $idx RadPrioSMS 4
+	}
+	GetInstance	$idx $glSMCdb glIdx
+
+	# Store Pdu in $_sig
+	set _sig $_sigpdu
+}
+
+proc MmSmsDataIndHnd { } {
+
+	# Declare Global Variables
+	global _sig _sigpdu glSMCdb glIdx
+
+	LogInputPrim $_sig
+
+	# Get Transaction Id
+	set binpdu [rd _sig Pdu]
+	if { [IsVoid $binpdu] } {
+		logscr "WARNING: skipMsg. Unexpected Empty MmSmsDataInd"
+		skipMsg
+		return
+	}
+	smcPduToSig binpdu
+	if { ![info exists _sigpdu] } {
+		logscr "WARNING: skipMsg. Unexpected Bad MmSmsDataInd"
+		skipMsg
+		return
+	}
+
+	set tiflag [rd _sigpdu TIFlag]
+	set tio [rd _sigpdu TIO]
+	set tid [BuildTid $tiflag $tio]
+
+	# Get Parameters
+	set msid [rd _sig MsId]
+	set idx [GetIdxFromTidMsid $tid $msid]
+
+	# Instance
+	if { [DbEntryExists $glSMCdb $idx] } {
+		GetInstance	$idx $glSMCdb glIdx
+	} else {
+		logscr "WARNING: skipMsg. Index $idx not found in Data Base $glSMCdb"
+		skipMsg
+		return
+	}
+
+	# Store Pdu in $_sig
+	set _sig $_sigpdu
+}
+
+proc MmSmsRelIndHnd { } {
+
+	# Declare Global Variables
+	global _sig glSMCdb glIdx
+
+	# Get Any Transaction Id
+	set msid [rd _sig MsId]
+	for { set i 0 } { $i < 16 } { incr i } {
+		set tid $i
+		set idx [GetIdxFromTidMsid $tid $msid]
+		if { [DbEntryExists $glSMCdb $idx] } {
+			# Get Instance
+			GetInstance $idx $glSMCdb glIdx
+			return
+		}
+	}
+	
+	# No Instance found
+	logscr "WARNING: skipMsg. No Transaction exists for Msid $msid"
+	skipMsg
+	return
+}
+
+proc DefaultHnd { } {
+
+	# Declare Global Variables
+	global _sig glSMCdb glIdx
+
+	# Get Transaction Id 
+	set tid [rd _sig TIO]
+
+	# Get Parameters
+	set msid [rd _sig MsId]
+	set idx [GetIdxFromTidMsid $tid $msid]
+
+	# Instance
+	if { [DbEntryExists $glSMCdb $idx] } {
+		GetInstance	$idx $glSMCdb glIdx
+	} else {
+		logscr "WARNING: skipMsg. Index $idx not found in Data Base $glSMCdb"
+		skipMsg
+		return
+	}
+}
+
+proc DefaultTmrHnd { } {
+
+	# Global Variables
+	global glSMCdb glIdx 
+
+	GetInstanceFromTimer $glSMCdb glIdx
+}
+
+# CELLNET RESTYLING
+proc MnSetGlobalVar {} {
+
+    global _sig
+
+    log "MnSetGlobalVar"
+
+    set gVar [lindex $_sig 1]
+    set value [lindex $_sig 2]
+
+    # set the variable
+    global $gVar
+    set $gVar $value
+
+    # in case of __SupportUnknownMS set update the userPid
+    if {$gVar == "__SupportUnknownMS"} {
+        global __ExtSupportUnknownMS
+        if { $value > 1 } {
+            set __ExtSupportUnknownMS 1
+            set __SupportUnknownMS 1
+            set value 1
+        } else {
+            set __ExtSupportUnknownMS 0
+        }
+
+        if {$value} {
+            global _src glPidArray
+            set userPid $_src
+            set glPidArray(0) $userPid
+            log "MnSetGlobalVar: updating glPidArray = $userPid"
+        }
+    }
+    skipMsg
+}
+# END
+
+# LSUNet TC EXTENSION
+proc MnUsrSubscribeReqHnd {} {
+
+    global _sig glSMCdb glPidArray
+
+    set index [lindex $_sig 1]
+    log "MnUsrSubscribeReqHnd: SMC index = $index"
+
+    set userPid $glPidArray(1)
+    log "userPid = $userPid"
+
+    # Set User Pid
+    set glPidArray($index) $userPid
+
+    # Update Data Base
+    set start [expr {$index * 8}]
+    for { set i 0 } { $i < 8 } { incr i } {
+        set el [expr {$i + $start}]
+        if { [DbEntryExists $glSMCdb $el] } {
+            log "updated el = $el"
+            DbSet $glSMCdb $el UserPid $glPidArray($index)
+        }
+    }
+
+    skipMsg
+}
+
+
+
+
+#EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE#

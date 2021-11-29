@@ -1,0 +1,108 @@
+#
+# taglist
+#
+##############################################################
+#
+# Riceve una lista di nomi versionati ed emette una lista di
+# triple <nome-base> <versione> <suffisso>.
+#
+# <nome-base> e <suffisso> possono non esserci; se <nome-base>
+# non c'e', in output viene rappresentato come punto.
+#
+#
+#       <nome-versionato> := <nome-ver>[/]
+#
+#       <nome-ver>        := [<nome-base>] <versione> [<suffisso>]
+#
+#       <nome-base>       := <fchar>*-
+#       <versione>        := <num>.<num>.<num>
+#       <suffisso>        := -<fchar>*
+#
+#       <fchar>           := qualsiasi carattere valido per i nomi file
+#       <num>             := [0-9]+
+#
+#
+# Ciascun <nome-versionato> produce:
+#
+#       <prefisso> <versione> [<suffisso>]
+#
+# <prefisso> = '.'            se <nome-base> e' vuoto;
+# <prefisso> = <nome-base>    altrimenti.
+#
+# <suffisso>    e' quello di input; se non c'e', la riga di
+#               output contiene solo le prime due colonne.
+#
+#
+#
+# es.:
+#       foo-bar-1.2.3               -->           foo-bar- 1.2.3
+#       foo-11.2-1.2.3              -->          foo-11.2- 1.2.3
+#       1-2.3.4-beta                -->                 1- 2.3.4 -beta
+#       1.2.3                       --> .                  1.2.3
+#       1.2.4-prova                 --> .                  1.2.4 -prova
+#       1.2.3-base-3.4.5-suff       -->        1.2.3-base- 3.4.5 -suff
+#       1.2.3-base-3.4.5-6.7.8-suff -->  1.2.3-base-3.4.5- 6.7.8 -suff
+#
+# oppure niente, se il nome versionato non e' valido.
+#
+##############################################################
+
+
+List()
+    {
+    typeset ls v
+    for v in "$@"; do ls=${ls}\\n$v; done
+    echo -e "${ls//\/}"
+    }
+
+
+Split()
+    {
+    typeset patt='^\(.*-\)\?'
+           patt+='\([0-9]\+\.[0-9]\+\.[0-9]\+\)'
+           patt+='\(-.*\)\?$'
+
+    sed -n "s/$patt/\2 .\1 \3/; T; s/\./ /; s/\./ /p"
+    }
+
+
+Sort()  { sort -b -k4,4 -k1n,1 -k2n,2 -k3n,3 -k5,5; }
+
+
+Join()  { sed "s/ /./; s/ /./"; }
+
+
+Exam()
+    {
+    typeset pre ver suf lpre=0
+    while read ver pre suf; do lpre=$(Max $lpre $pre); done
+    echo $lpre
+    }
+
+
+Fmat()
+    {
+    typeset lpre=$1
+    typeset pre ver suf fpre ppre=.
+
+    while read ver pre suf
+    do
+        [ $pre != . ] && { pre=$(Trim "$pre"); fpre='*'; } || fpre='-*'
+        [ $pre != $ppre ] && { ppre=$pre; echo; }
+
+        printf "%${fpre}s %s %s\n" $lpre $pre $ver "$suf"
+    done
+    }
+
+
+Trim()  { echo ${1#.}; }
+Max()   { typeset len=${#2}; [ $len -gt $1 ] && echo $len || echo $1; }
+
+###########################################################
+
+list=$(List $(cat) | Split | Sort | Join)
+
+
+ex() { echo "$list" | "$@"; }
+
+ex Fmat $(ex Exam)

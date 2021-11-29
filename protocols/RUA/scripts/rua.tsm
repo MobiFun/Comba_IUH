@@ -1,0 +1,254 @@
+############################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/RUA/tags/RUA-1.3.0/scripts/rua.tsm $
+#
+# $Author: roger $
+#
+# Description: RUA procedures
+#
+# $Rev: 53219 $
+#
+# $Date: 2012-07-17 18:11:43 +0200 (Tue, 17 Jul 2012) $
+##############################################################
+
+include "common/utils/generalUtils.tsm"
+include "common/localutils/sctp.tsm"
+include "common/localutils/rm_itf.tsm"
+include "common/localutils/dbIuh.tsm"
+include "protocols/RUA/rua_db.tsm"
+include "protocols/RUA/rua_multi_inst.tsm"
+include "protocols/RUA/rua_utils.tsm"
+
+set glMsCreateBeforeGtpSetup 0; # TMP: solo per poter invertire l'ordine di MS_CREATE + GTP_SETUP
+
+proc Init { cfgfile } {
+
+    uplevel #0 include $cfgfile
+
+	SetNetside
+
+	register "RUA"
+
+	dbRuaIuhCreate
+	dbRuaAssocCreate
+
+	set ::_HandleRxSignalProc RuaMultiInstanceHdl
+
+	typedef {VOID RUA_OM_CFG_ACK}
+
+	if {[info exists ::__gw_conn_addr] || [info exists ::__ap_conn_port]} {
+		SendOmConfigAck
+		return
+	}
+
+	RuaOmCfg
+}
+
+##############################################################
+# Config Procedures
+##############################################################
+
+proc SendOmConfigAck { } {
+    new RUA_OM_CFG_ACK s
+	send s $::_parent
+	logscr ""
+	logscr "RUA O&M BRING-UP COMPLETE"
+	logscr ""
+}
+
+proc ruaSctpInitializeNext {} {
+    log "ruaSctpInitializeNext: glRuaSctpListToSetup={$::glRuaSctpListToSetup}"
+    if { [llength $::glRuaSctpListToSetup] > 0 } {
+        set enbIdx [lindex $::glRuaSctpListToSetup 0]
+        lassign {ip port} [dbEnbGetIpPort $enbIdx CtlLocalIpPort]
+        sctpTxInitialize $ip $port [dbEnbGet $enbIdx CtlSpc] [dbEnbGet $enbIdx CtlStkId]
+        dbRuaEnbNextState $enbIdx st_Idle
+        return true
+    } else {
+        SendOmConfigAck
+        return false
+    }
+}
+
+proc RuaOmCfg { } {
+    set ::glRuaSctpListToSetup [getRuaSctpList]
+    ruaSctpInitializeNext
+}
+
+proc getRuaSctpList {} {
+
+	set res ""; #init
+
+	foreach ne [dbEnbGetIndexList] {
+
+		if { [string eq [dbEnbGet $ne TypeOfCtl] "rua"] } {
+			lappend res $ne
+		}
+	}
+
+	return $res
+}
+
+
+##############################################################
+# STATE MACHINE Procedures
+##############################################################
+
+proc SctpInitAckHnd { } {
+
+	set spc    [rd ::_sig Spc]
+	set stkId  [rd ::_sig StkId]
+	set sctpId [rd ::_sig SctpId]
+	dbRuaEnbInstSet SctpKey [dbRuaEnbComposeSctpKey $spc $stkId $sctpId]        
+
+	log "sctpInitAckHnd: glRuaSctpListToSetup={$::glRuaSctpListToSetup}"
+	set ::glRuaSctpListToSetup [lreplace $::glRuaSctpListToSetup 0 0] 
+
+	# NOTE: SCTP_COMMUNICATION_UP_IND might arrive before all sctp
+	# instances have been initialized if the peer is trying to associate
+	if { ![ruaSctpInitializeNext] } {
+
+		logscr "SctpInitAckHnd: all SCTP instances are initialized"
+
+		if { [MsSide] } {
+			# I'm simulating AP side of Iuh 
+
+			foreach enbIdx [getRuaSctpList] {
+
+				set gwList [dbEnbGet $enbIdx CtlPeerNetElemList]
+				logscr "SctpInitAckHnd: enbIdx=$enbIdx, gwList={$gwList}"
+
+				if { ![IsVoid $gwList] } {
+
+					foreach gw $gwList {
+
+						set assocIdx "${enbIdx}-[lindex $gw 0]"
+						logscr "SctpInitAckHnd: assocIdx=$assocIdx"
+						lassign {ip port} [dbRuaAssocGetPeerIpPort $assocIdx]
+						lassign {spc stkId sctpId} [dbRuaEnbGetSctpKeyParts $enbIdx]
+						sctpTxAssociate $ip $port $spc $stkId $sctpId
+						tmrstart [dbRuaAssocGet $assocIdx T_SCTP_ASSOCIATEid]
+					}
+				}
+			}
+		}
+	}
+}
+
+proc assocTryConnect {} {
+	set assocIdx [dbRuaAssocThis]
+    lassign {enbIdx mmeIdx} [dbRuaAssocInstGetEnbIdxMmeIdx]
+	#lassign {enbIdx mmeIdx} [split $assocIdx -]
+	logscr "assocTryConnect: assocIdx=$assocIdx"
+	lassign {ip port} [dbRuaAssocGetPeerIpPort $assocIdx]
+	lassign {spc stkId sctpId} [dbRuaEnbGetSctpKeyParts $enbIdx]
+	sctpTxAssociate $ip $port $spc $stkId $sctpId
+	tmrstart [dbRuaAssocInstGet T_SCTP_ASSOCIATEid]
+}
+
+proc SctpCommUpIndHnd { } {
+
+	lassign {spc stkId sctpId assId} [dbRuaAssocInstGetAssocKeyParts]
+	logscr "SctpCommUpIndHnd: assId=$assId"
+	tmrstop [dbRuaAssocInstGet T_SCTP_ASSOCIATEid]
+
+	if { [MsSide] } {
+		txRUA_CONNECT
+	}
+
+    dbRuaAssocInstNextState stAssoc_Connected
+}
+
+proc SctpCommLostIndHnd { } {
+	set enbIdx   [dbRuaEnbThis]
+	set assocIdx [dbRuaAssocThis]
+
+	exit "### EXITING: SCTP_COMMUNICATION_LOST_IND for enbIdx=$enbIdx, assocIdx=$assocIdx"
+}
+
+proc SctpShutDownCmplIndHnd { } {
+	set enbIdx   [dbRuaEnbThis]
+	set assocIdx [dbRuaAssocThis]
+	
+	logscr "### SctpShutDownCmplIndHnd: enbIdx=$enbIdx, assocIdx=$assocIdx"
+	CRASH
+}
+
+proc txRUA_CONNECT { } {
+    # 8.7.3   Rua Setup
+
+	set enbIdx   [dbRuaEnbThis]
+	set assocIdx [dbRuaAssocThis]
+	log "txRUA_CONNECT: enbIdx=$enbIdx, assocIdx=$assocIdx"
+	new RUA_CONNECT s
+	wr s CnDomain	0; # cs-domain
+	wr s ContextId	0
+	wr s EstCause	0
+	wr s RanapMsg	[binary format H* 12345678]
+
+    sctpTxRua $s "common"
+}
+
+proc sctpTxRua {dataSig streamType} {
+    
+    lassign {spc stkId sctpId assId} [dbRuaAssocInstGetAssocKeyParts]
+    logscr "sctpTxRua: spc=$spc, stkId=$stkId, sctpId=$sctpId, assId=$assId, streamType=$streamType"
+    set dataPdu [RUASigToPdu dataSig]
+    if { $streamType == "common" } {
+        set streamId $::__stream_id_common
+    } else {
+        set streamId $::__stream_id_dedicated
+    }
+    new SCTP_DATA_REQ       s
+    
+    wr  s   Spc             $spc
+    wr  s   StkId           $stkId
+    wr  s   SctpId          $sctpId
+    wr  s   AssId           $assId
+    wr  s   Context         0
+    wr  s   StreamId        $streamId
+    wr  s   LifeTime        0
+    wr  s   DstAddrFamily   0
+    wr  s   DstAddrPort     0
+    wr  s   DstAddrHost     [iptoh 0.0.0.0 B]
+    wr  s   UnorderFlag     0
+    wr  s   NoBundleFlag    0
+    wr  s   PayloadProtocolId   $::__rua_protocol_id
+    if { ![IsVoid $dataSig] } {
+        wr  s   DataSize        [string length $dataPdu]
+        wr  s   Data            $dataPdu
+    } else {
+        wr  s   DataSize    0
+    }
+    send s
+}
+
+
+##############################################################
+# STATE MACHINE
+##############################################################
+
+state st_Idle {
+    SCTP_INITIALIZE_ACK				SctpInitAckHnd
+    SCTP_INITIALIZE_NAK				{exit "st_Idle: SCTP_INITIALIZE_NAK"}
+    default							stAny
+}
+
+state stAssoc_down {
+	T_SCTP_ASSOCIATE				assocTryConnect
+	SCTP_COMMUNICATION_UP_IND		SctpCommUpIndHnd
+	default							stAny
+}
+
+state stAssoc_Connected {
+
+	RUA_CONNECT						LogInputSig
+	default							stAny
+}
+
+state stAny {
+	SCTP_NETWORK_STATUS_CHANGE_IND		LogInputSig
+	SCTP_COMMUNICATION_LOST_IND			SctpCommLostIndHnd
+	SCTP_SHUTDOWN_COMPLETE_IND			SctpShutDownCmplIndHnd
+	SCTP_DATA_IND						{exit "ABORT-stAny.SCTP_DATA_IND"}
+	default                             {AbortUnexpectedSig "stAny"}
+}

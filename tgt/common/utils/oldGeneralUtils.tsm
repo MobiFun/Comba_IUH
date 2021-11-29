@@ -1,0 +1,123 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/tstmUtils/scriptUtils/tags/scriptUtils-2.51.6/oldGeneralUtils.tsm $
+#
+# $Author: roger $
+#
+# $Rev: 24481 $
+#
+# $Date: 2008-12-22 11:39:22 +0100 (Mon, 22 Dec 2008) $
+##############################################################
+
+##############################################################
+#
+# ex file "global.tcl"
+#
+# This section contains some procedures of previous "global.tcl".
+#
+##############################################################
+
+proc LogSentSig { sig } { 
+
+	global Visible
+
+	if { $Visible==1 } {
+		logscr "  -->  sending $sig"
+	}
+}
+
+proc LogReceivedSig { } {
+
+	global _sig Visible
+
+	if { $Visible == 1 } {
+		if { [string length $_sig] != 0 } {
+			logscr "  <--   received $_sig"
+		} else {logscr " Starting Process " }
+	}
+}
+
+proc MsGet {FieldName Index} {
+	global MsDb_Name
+	return [DbGet $MsDb_Name $Index $FieldName]
+}
+
+proc MsSet {FieldName Index Val} {
+	global MsDb_Name
+	return [DbSet $MsDb_Name $Index $FieldName $Val]
+}
+
+proc GetNumOfMs { } {
+	global MsDb_Name
+	return [DbSize $MsDb_Name]
+}
+
+proc GetMsList { } {
+	global MsDb_Name
+	return [DbGetIndexList $MsDb_Name]
+}
+
+proc SectorGet {FieldName Index} {
+	global BtsDb_Name
+	return [DbGet $BtsDb_Name $Index $FieldName]
+}
+
+proc SectorSet {FieldName Index Val} {
+	global BtsDb_Name
+	return [DbSet $BtsDb_Name $Index $FieldName $Val]
+}
+
+proc GetNumOfSector { } {
+	global BtsDb_Name
+	return [DbSize $BtsDb_Name]
+}
+
+proc GetSectorList { } {
+	global BtsDb_Name
+	return [DbGetIndexList $BtsDb_Name]
+}
+
+proc LsuGet { FieldName } {
+	global LsuDb_Name
+	return [DbGet $LsuDb_Name 0 $FieldName]
+}
+
+proc LsuSet { FieldName Val } {
+	global LsuDb_Name
+	return [DbSet $LsuDb_Name 0 $FieldName $Val]
+}
+
+proc ExtractRemoteCommand {} {
+	global _sig
+	#logscr "received signal $_sig"
+	set Data  [rd _sig Data]
+	set Command [tok $Data ,]
+	#logscr "$Command"
+	return $Command
+}
+
+proc BuildRemoteResponse {Response} {
+	set Data  [join $Response ,]
+	return $Data
+}
+
+proc RespondToRemote {Response} {
+		new RMT_CTRL_IND s	
+		wr s Data	[BuildRemoteResponse $Response]
+		#logscr "sending signal $s"
+		send s
+}
+
+proc EventDataToRemote {id Data} {
+		new RMT_DATA_IND s
+        set binId [binary format s $id]
+        append binData $binId $Data
+		wr s Data $binData
+        
+        #binary scan $binData H* hexBinData
+		#logscr "EventDataToRemote: id=$id, dataLen=[string length $Data]"
+        #logscr "hexBinData=($hexBinData)"
+		send s
+}
+
+### end of file ##############################################
+##############################################################

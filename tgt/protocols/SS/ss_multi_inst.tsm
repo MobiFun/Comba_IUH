@@ -1,0 +1,378 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/SS/tags/SS-0.3.6/scripts/ss_multi_inst.tsm $
+#
+# $Author: sergiol $
+#
+# Description: SS Multi Instance Handler
+#
+#
+# $Rev: 54727 $
+#
+# $Date: 2012-09-28 15:14:25 +0200 (Fri, 28 Sep 2012) $
+##############################################################
+
+proc SsMultiInstanceHdl { } {
+
+	# Declare Global Variables
+	global _sig  
+
+	set primName [lindex $_sig 0]
+
+	switch -exact -- $primName {
+		"MN_SS_BEGIN_REQ"	{ if { [MnSsBeginReqHnd] == "-1" } { skipMsg } }
+		"MM_SS_EST_IND"   	{ if { [MmSsEstIndHnd] == "-1" } { skipMsg } }
+		"MM_SS_EST_CNF" 	{ if { [MmSsEstCnfHnd] == "-1" } { skipMsg } }
+		"MM_SS_DATA_IND" 	{ if { [MmSsDataIndHnd] == "-1" } { skipMsg } }
+		"MM_SS_REL_IND"		{ if { [MmSsRelIndHnd] == "-1" } { skipMsg } }
+		"SS_CONFIG"			{ SsConfigHnd }
+		"SS_SET_USER_PID"	-
+		"HLR_SET_USER_PID"	{ SetUserPidHnd }
+		"SS_HLR_REQ_INFO"	-
+		"SS_HLR_REQ_FAC"	{ SsHlrHnd }
+		"T_UNBLOCK"			{ DefaultTmrHnd }
+		"T_RELEASE"			{ DefaultTmrHnd }
+		"MN_SET_GLOBAL_VAR"     { MnSetGlobalVar }
+        "MN_USR_SUBSCRIBE_REQ"  { MnUsrSubscribeReqHnd }
+		default 			{ if { [DefaultHnd] == "-1" } { skipMsg } }
+	}
+}
+
+##############################################################
+# Data Base handling
+##############################################################
+
+proc SsConfigHnd { } {
+
+	# Global Variables
+    global glIdx
+
+	# Settings
+	set glIdx 0
+}
+
+proc SsHlrHnd { } {
+
+	# Global Variables
+    global _sig glSSdb glIdx glMsId glMsNum
+
+	# Set Global Instance
+	set idx 0
+	set glMsId [rd _sig MsId]; # MS asking
+	set glMsNum [rd _sig MsNum]; # MS interrogated
+# fede
+#logscr ""
+#logscr "### SsHlrHnd: state_$idx=[DbGet $glSSdb $idx State] ###"
+#logscr ""
+
+	# Instance                                                        |    # Send Sequence Number
+	GetInstance $idx $glSSdb glIdx
+}
+
+proc SetUserPidHnd { } {
+
+	# Global Variables
+}
+
+proc CreateDataBase { dbname } {
+	
+	# Global Variables
+    global __net_side glIdx
+
+	# Set DB Name
+	if { [CnSide] } {
+		lappend idxList [list Idx Index Read_Only]
+		lappend idxList [list State Normal Read/Write]
+		lappend idxList [list ExpectedTif Normal Read/Write]
+		lappend idxList [list SendSeqNum Normal Read/Write]
+		lappend idxList [list RevLev Normal Read/Write]
+		lappend idxList [list PendingTid Key Read/Write]
+		lappend idxList [list SsUserPid Normal Read/Write]
+		lappend idxList [list Operation Normal Read/Write]
+		# CELLNET-361
+		lappend idxList [list Error Normal Read/Write]
+		# END
+		lappend idxList [list Service Normal Read/Write]
+		lappend idxList [list LinkedID Normal Read/Write]
+		lappend idxList [list RegInvokeId Normal Read/Write]
+		lappend idxList [list UssdDataCodSch Normal Read/Write]
+		lappend idxList [list UssdStr Normal Read/Write]
+		lappend idxList [list T_UNBLOCKid Key Read/Write]
+		lappend idxList [list T_RELEASEid Key Read/Write]
+	} else {
+		lappend idxList [list Idx Index Read_Only]
+		lappend idxList [list State Normal Read/Write]
+		lappend idxList [list ExpectedTif Normal Read/Write]
+		lappend idxList [list SendSeqNum Normal Read/Write]
+		lappend idxList [list RevLev Normal Read/Write]
+		lappend idxList [list PendingTid Key Read/Write]
+		lappend idxList [list SsUserPid Normal Read/Write]
+		lappend idxList [list Operation Normal Read/Write]
+		lappend idxList [list Service Normal Read/Write]
+		lappend idxList [list ForwardedMsNum Normal Read/Write]
+		lappend idxList [list UssdDataCodSch Normal Read/Write]
+		lappend idxList [list UssdStr Normal Read/Write]
+	}
+	
+	DbCreate $dbname $idxList
+
+	# Create Global Instance
+	#logscr "CreateDataBase: creating global instance; glIdx=$glIdx"
+	DbCreateDefEntry $dbname $glIdx
+	DbSet $dbname $glIdx State "Null"
+}
+
+##############################################################
+# Procedures
+##############################################################
+
+proc MnSsBeginReqHnd { } {
+
+	# Declare Global Variables
+	global _sig glSSdb glIdx
+
+	# Get Parameters
+	set msid [rd _sig MsId]
+
+	# Get Index
+	set idx [CSGetNextIndexByTi $msid $glSSdb 8]
+# fede
+#logscr ""
+#logscr "### MnSsBeginReqHnd msid=$msid, idx=$idx ###"
+#logscr ""
+	if { $idx == "-1" } {
+		logscr "Transaction Ids all in use"
+		return -1
+	}
+	if { [DbEntryExists $glSSdb $idx] } {
+		logscr "Instance $idx already created"
+		return -1
+	}
+	# New Instance
+	CreateNewSsEntity $idx
+
+	# Instance
+	GetInstance	$idx $glSSdb glIdx
+# fede
+#logscr ""
+#logscr "### MnSsBeginReqHnd glIdx=$glIdx ###"
+#logscr "### MnSsBeginReqHnd state0=[DbGet $glSSdb 0 State] ###"
+#logscr ""
+}
+
+proc MmSsEstIndHnd { } {
+
+	# Global Variables
+	global _sig _sigpdu glSSdb glIdx 
+
+	LogInputPrim $_sig
+
+	# Get Transaction Id
+	set binpdu [rd _sig Pdu]
+	if { [IsVoid $binpdu] } {
+		logscr "Unexpected Empty MmSsEstInd"
+		return -1
+	} 
+	ssPduToSig binpdu
+	set tival [rd _sigpdu TIO]
+
+	# Get Current Index 
+	set msid [rd _sig MsId]
+	set idx [expr {$msid * 8 + $tival}]
+	if { [DbEntryExists $glSSdb $idx] } {
+		logscr "Instance $idx already created"
+		return -1
+	}
+
+	global _state
+	#log "MmSsEstIndHnd: preCreateNewSsEntity --> state=$_state"; #cDEBUG
+
+	# New Instance
+	CreateNewSsEntity $idx
+
+	#log "MmSsEstIndHnd: postCreateNewSsEntity and preGetInstance --> state=$_state"; #cDEBUG
+	
+	# Get Instance
+	GetInstance $idx $glSSdb glIdx
+
+	#log "MmSsEstIndHnd: postGetInstance --> state=$_state"; #cDEBUG
+
+	DbSet $glSSdb $glIdx SendSeqNum [rd _sig SeqNum]
+	DbSet $glSSdb $glIdx RevLev [rd _sig RevLev]
+
+	set _sig $_sigpdu
+
+	#log "MmSsEstIndHnd: _sig=$_sig"; #cDEBUG
+}
+
+proc MmSsEstCnfHnd { } {
+
+	# Global Variables
+	global _sig glSSdb glIdx
+
+	# Get Transaction Id
+	set msid [rd _sig MsId]
+	if { [DbKeyExists $glSSdb PendingTid $msid] } {
+		set idx [DbGetIdx $glSSdb PendingTid $msid]
+	} else {
+		logscr "No Establishment Request Pending (MsId: $msid)"
+		return -1
+	} 
+
+	# Get Instance
+	GetInstance $idx $glSSdb glIdx
+}
+
+proc MmSsDataIndHnd { } {
+
+	# Global Variables
+	global _sig _sigpdu glSSdb glIdx 
+
+	LogInputPrim $_sig
+
+	# Get Transaction Id
+	set binpdu [rd _sig Pdu]
+	if { [IsVoid $binpdu] } {
+		logscr "Unexpected Empty MmCcDataInd"
+		return -1
+	}
+	ssPduToSig binpdu
+	set tival [rd _sigpdu TIO]
+
+	# Get Current Index 
+	set msid [rd _sig MsId]
+	set idx [expr {$msid * 8 + $tival}]
+	
+	# Get Instance
+	if { [DbEntryExists $glSSdb $idx] } {
+		GetInstance $idx $glSSdb glIdx
+	} else {
+		logscr "Index $idx not found in Data Base $glSSdb"
+		return -1
+	}
+
+	# Store Pdu in _sig
+	set _sig $_sigpdu
+}
+
+proc MmSsRelIndHnd { } {
+
+	# Global Variables
+	global _sig glSSdb glIdx
+		
+	# Get Any Transaction Id
+	set msid [rd _sig MsId]
+	for { set i 0 } { $i < 8 } { incr i } {
+		set tival $i
+		set idx [expr {$msid * 8 + $tival}]
+		if { [DbEntryExists $glSSdb $idx] } {
+			# Get Instance
+			GetInstance $idx $glSSdb glIdx
+			return 0
+		}
+	}
+
+	# No Instance found
+	logscr "No Transaction exists for MsId $msid"
+	return -1
+}
+
+proc DefaultTmrHnd { } {
+
+    # Global Variables
+    global glSSdb glIdx
+
+    GetInstanceFromTimer $glSSdb glIdx
+}
+
+proc DefaultHnd { } {
+
+	# Declare Global Variables
+	global _sig _sigpdu glSSdb glIdx
+
+	# Get Transaction Id 
+	set tival [rd _sig Tio]
+
+	# Get Parameters
+	set msid [rd _sig MsId]
+	set idx [expr {$msid * 8 + $tival}]
+
+	# Get Instance
+	if { [DbEntryExists $glSSdb $idx] } {
+		GetInstance $idx $glSSdb glIdx
+	} else {
+		logscr "Index $idx not found in Data Base $glSSdb"
+		return -1
+	}
+}
+
+proc DefaultTmrHnd { } {
+
+	# Global Variables
+	global glSSdb glIdx 
+
+	GetInstanceFromTimer $glSSdb glIdx
+}
+
+# CELLNET RESTYLING
+proc MnSetGlobalVar {} {
+
+    global _sig
+
+    log "MnSetGlobalVar"
+
+    set glVar [lindex $_sig 1]
+    set value [lindex $_sig 2]
+
+    # set the variable
+    global $glVar
+    set $glVar $value
+
+    # in case of __SupportUnknownMS set update the userPid
+    if {$glVar == "__SupportUnknownMS"} {
+        global __ExtSupportUnknownMS
+        if { $value > 1 } {
+            set __ExtSupportUnknownMS 1
+            set __SupportUnknownMS 1
+            set value 1
+        } else {
+            set __ExtSupportUnknownMS 0
+        }
+
+        if {$value} {
+            global _src glSsPidArray
+            set userPid $_src
+			set glSsPidArray(0) $userPid
+            log "MnSetGlobalVar: updating glPidArray = $userPid"
+        }
+    }
+    skipMsg
+}
+# END
+
+proc MnUsrSubscribeReqHnd {} {
+
+    global _sig glSSdb glSsPidArray
+
+    set index [lindex $_sig 1]
+    log "MnUsrSubscribeReqHnd: index = $index"
+
+    set userPid $glSsPidArray(1)
+    log "userPid = $userPid"
+
+    # Set User Pid
+    set glSsPidArray($index) $userPid
+
+    # Update Data Base
+    set start [expr {$index * 8}]
+    for { set i 0 } { $i < 8 } { incr i } {
+        set el [expr {$i + $start}]
+        if { [DbEntryExists $glSSdb $el] } {
+            log "updated el = $el"
+            DbSet $glSSdb $el UserPid $glSsPidArray($index)
+        }
+    }
+
+    skipMsg
+}
+
+#EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE#

@@ -1,0 +1,122 @@
+##**********************************************************************
+# Title:
+#----------------------------------------------------------------------
+# $URL$
+#
+# $Author$
+# $Date$
+#
+# $Rev$
+#**********************************************************************
+
+#Multi instance management script for GCC Ms side
+
+proc RxSignalProc { } {
+	global _sig _state
+	set primName [lindex $_sig 0]
+
+	switch -exact -- $primName {
+		"MN_GCC_MS_SETUP_REQ" 	{ MnGccMsSetupReq }
+		"GCC_SET_USER_PID" 		{ GccSetUserPid }
+		"MN_GCC_ABORT_REQ" 		{ SelectMsById }
+		"GCC_CONFIG"			{ RcvConfig }
+		"T_NOCHANNEL" 			{ SelectMsByTimer Tnochannelid }
+		"T_MMEST" 				{ SelectMsByTimer TMMestid }	
+		"T_TERM" 				{ SelectMsByTimer Ttermid }
+		"T_CONNREQ" 			{ SelectMsByTimer Tconnreqid }
+		default					{ GetInstanceByMsId }
+	}
+	LogInputSig
+}
+
+proc SelectMsByTimer { dbFieldName } {
+	global _sig _src glGCCDb glCurrentMsId
+	#Look for the timer id
+	foreach idx [DbGetIndexList $glGCCDb] {
+		set timerid [DbGet $glGCCDb $idx $dbFieldName]
+		if { ![string compare $_src $timerid] } {
+			#timer found, select the instance
+			GetInstance $idx $glGCCDb glCurrentMsId			
+			set glCurrentMsId $idx
+			return
+		}
+	}
+	logscr "SelectMsByTimer: Timer not found in the Db!"
+	exit
+}
+
+proc GccSetUserPid { } {
+	global _sig glGCCDb
+	#Store the user pid of the script
+	set usrPid [rd _sig UserPid]
+	set msList [rd _sig ListMs]
+	foreach idx $msList {
+		if { [DbEntryExists $glGCCDb $idx] } {
+			DbSet $glGCCDb $idx UserPid $usrPid
+			logscr "The MS Id: $idx is registered to the pid = $usrPid"
+			skipMsg
+		} else {
+			logscr "The MsId = $idx does not exist in MS database"
+			exit
+		}
+	}
+}
+
+proc GetInstanceByMsId { } {
+	global _sig glGCCDb glCurrentMsId
+	SelectInstanceByMsId $_sig $glGCCDb
+} 
+
+proc SelectInstanceByMsId { sig db } {
+	global glCurrentMsId
+	set msId [rd sig MsId]
+	#Check if the msId has an entry and an UserPid
+	if { [DbEntryExists $db $msId] } {
+		set usrPid [DbGet $db $msId UserPid]
+		if { ![string compare $usrPid "?"] } {
+			logscr "The MSId = $msId has not register the user script pid"
+			exit
+		}
+	} else {
+		logscr "The MSId = $msId does not exist in the MS database"
+		exit
+	}
+
+	GetInstance $msId $db glCurrentMsId
+}
+
+proc MnGccMsSetupReq { } {
+	global _sig glGCCDb _src glCurrentMsId
+
+	set msId [rd _sig MsId]
+
+	GetInstance $msId $glGCCDb glCurrentMsId
+	#set grCallId [DbGet $glGCCDb $glCurrentMsId GroupCallAreaId]
+
+}
+
+proc SelectMsById { } {
+	global _sig glCurrentMsId glGCCDb
+	set msId [rd _sig MsId]
+	log "SelectMsById:"
+	GetInstance $msId $glGCCDb glCurrentMsId 
+}
+
+proc RcvConfig { } {
+	global glDebugPduCodec
+
+	new GCC_CONFIG_ACK s
+	send s $::_src
+	l3send s
+
+	logscr ""
+	logscr "GCC BRING-UP COMPLETE"
+	logscr ""
+
+	if { $glDebugPduCodec == "1" } {
+		nextstate WaitForTestMessage
+	} else {
+		nextstate Null_U0
+	}
+	skipMsg
+}

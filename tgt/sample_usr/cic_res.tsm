@@ -1,0 +1,229 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/tstmUtils/sampleUsr/trunk/$
+#
+# $Author: umbertob $
+#
+# Description: User Script - Cic reset and group reset 
+#
+#
+# $Rev: 2685 $
+#
+# $Date: 2005-02-15 14:18:37 +0100 (Tue, 15 Feb 2005) $
+##############################################################
+
+proc Init { args } {
+	
+	# Declare and Initialize Global Variables
+	global _self _isuppid glCicList glCurrentCicIndex glCicListLen
+ 
+    # Includes
+	include "common/utils/generalUtils.tsm"
+	include "common/utils/Ss7SaalUtils.tsm"
+
+	# Create Ss7 Db
+	set dbpath [lindex $args 0]
+	set ss7db [GetDbNameFromPath $dbpath] 
+	#set dbdir [GetDbDirFromPath $dbpath]
+	#spawn_unsafe "common/dbscripts/DbCreate.tsm $_self $dbdir$ss7db.csv"
+
+	# Get Network Side
+	set nside [lindex $args 1]
+
+	# Cic List
+	foreach idx [DbGetIndexList $ss7db] {
+		set firstLastListIn [GetCicFirstLast $ss7db $idx InCicRange]	
+		set firstLastListOut [GetCicFirstLast $ss7db $idx OutCicRange]	
+		set firstLastList [concat $firstLastListIn $firstLastListOut]
+		foreach { first last } $firstLastList {
+			for { set cic $first } { $cic <= $last } { incr cic } {
+				set cicSpc $cic
+				append cicSpc ":"
+				if { [string equal $nside "msc"] } {
+					append cicSpc [DbGet $ss7db $idx Dpc]
+				} elseif { [string equal $nside "pstn"] } {
+					append cicSpc [DbGet $ss7db $idx Opc]
+				} else {
+					logscr "Unexpected Net Side ($nside)"
+					return
+				}
+				lappend glCicList $cicSpc
+			}
+		}
+	}
+	
+	# Initialize Cic
+	set glCurrentCicIndex 0
+	set glCicListLen [llength $glCicList]
+
+	# Send Pid to ISUP
+	new		ISUP_SET_USER_PID s
+	wr      s UserPid $_self
+	wr      s ListOfCics $glCicList
+	send 	s $_isuppid
+	LogOutputMsg $s
+	
+	# Enable Log
+	dump_on
+
+	nextstate Null
+}
+
+############################################################
+# Scheduler Signals Handling
+############################################################
+
+proc StartHandler { } {
+
+	# Global Variables
+	global glCicList glCurrentCicIndex glTmrNextId
+
+	set cic [lindex $glCicList $glCurrentCicIndex]
+	SendReset $cic
+	SendGroupReset $cic
+	incr glCurrentCicIndex
+	set glTmrNextId [tmrnew T_NEXT 20]
+	tmrstart $glTmrNextId
+
+	nextstate Receive
+}
+
+proc DeleteHandler { } {
+
+	# Global Variables
+	global _parent
+
+	# Inform Scheduler
+	set res "DELETED"
+	send res $_parent
+	LogOutputMsg $res
+}
+
+############################################################
+# Procedures
+############################################################
+
+proc DoNext { } {
+
+	# Global Variables
+	global glCicList glCurrentCicIndex glCicListLen glTmrNextId
+
+	if { $glCurrentCicIndex < $glCicListLen } {
+		set cic [lindex $glCicList $glCurrentCicIndex]
+		SendReset $cic
+		SendGroupReset $cic
+		incr glCurrentCicIndex
+		tmrstart $glTmrNextId
+	} else {
+		logscr "All Reset Sent"
+		tmrfree $glTmrNextId
+	}
+}
+
+proc SendReset { cic } {
+
+	# Declare and Initialize Global Variables
+	global _isuppid
+
+	# Build RSC
+	new		RSC rsc
+
+	# Release Request
+	new 	RESET_REQ s
+	wr      s Id $cic
+	wr      s Cic $cic
+	wr		s Pdu1 $rsc
+	send    s $_isuppid
+	LogOutputMsg $s
+}
+
+proc SendGroupReset { cic { range 01 } } {
+
+	# Declare and Initialize Global Variables
+	global _isuppid
+
+	# Build GRS
+	new		GRS grs
+	# RANGE AND STATUS
+	wr 		grs range_and_status $range
+
+	# Release Request
+	new 	RESET_REQ s
+	wr      s Id $cic
+	wr      s Cic $cic
+	wr		s Pdu2 $grs
+	send    s $_isuppid
+	LogOutputMsg $s
+}
+
+proc ResetInd { } {
+
+	# Declare and Initialize Global Variables
+	global _sig _isuppid
+
+	LogInputMsg $_sig
+
+	# Get Parameters
+	set id [rd _sig Id]
+	set cic [rd _sig Cic]
+	set rsc [rd _sig Pdu1]
+	set grs [rd _sig Pdu2]
+
+	if { [string compare $rsc "?"] } {
+		# Build RLC
+		new		RLC rlc
+		# CAUSE 
+		#wr		rlc cause_ind
+
+		# Reset Response
+		new		RESET_RES s
+		wr		s Cic $cic
+		wr      s Pdu1 $rlc
+		send    s $_isuppid
+		LogOutputMsg $s
+	}
+
+	if { [string compare $grs "?"] } {
+		set range [rd grs range_and_status]
+		for { set i 0 } { $i < $range } { incr i } {
+			append bitStrStatus 0
+		}
+		set padLen [expr {8 - [expr {$range % 8}]}]
+		for { set i 0 } { $i < $padLen } { incr i } {
+			append bitStrStatus 0
+		}
+
+		append range [btoh $bitStrStatus]
+	
+		# Build GRA
+		new		GRA gra
+		# RANGE AND STATUS
+		wr 		gra range_and_status $range
+
+		# Reset Response
+		new		RESET_RES s
+		wr		s Cic $cic
+		wr      s Pdu2 $gra
+		send    s $_isuppid
+		LogOutputMsg $s
+	}
+}
+
+############################################################
+# FSM
+############################################################
+
+state Null {
+	START                   StartHandler
+	default 				Any
+}
+
+state Receive {
+	T_NEXT					DoNext
+	default					LogInputSig
+}
+
+state Any {
+	DELETE					DeleteHandler
+	RESET_IND				ResetInd
+	default 				Unexpected
+}

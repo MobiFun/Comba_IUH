@@ -1,0 +1,103 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/tstmUtils/sampleUsr/trunk/$
+#
+# $Author: umbertob $
+#
+# Description: User Script - Isup Outgoing Call 
+#
+#
+# $Rev: 3699 $
+#
+# $Date: 2005-04-27 17:40:58 +0200 (Wed, 27 Apr 2005) $
+##############################################################
+ 
+proc InitIsupCounters { cntList } {
+
+	foreach idx $cntList {
+		global $idx; set $idx 0
+	}
+}
+
+proc IncreaseCounter { counter } {
+	
+	global $counter
+
+	incr $counter
+}
+
+proc DecreaseCounter { counter } {
+	
+	global $counter
+
+	incr $counter -1
+}
+
+proc ResetCounter { counter } {
+
+	global $counter
+
+	set $counter 0
+}
+
+proc UpdateRatio { counter num den } {
+
+	global $counter $num $den
+
+	append tmpnum [set $num] ".0"
+
+	if { [set $den] != 0 } {
+		set ratio [format {%4.4f} [expr {$tmpnum / [set $den]}]]
+	} else {
+		set ratio -1
+	}
+	
+	set $counter $ratio
+}
+
+proc InitBhcaHandler { val } {
+	
+	global glCurrentCallsNum glPrevBhcaResult glNumOfTicks glStatsTimer glK
+
+	set glCurrentCallsNum 0
+	set glPrevBhcaResult 0
+	set glNumOfTicks 0
+	set glK $val
+	set glStatsTimer [tmrnew T_UPDATE_STATS [expr {1000 * $val}]]
+
+	tmrstart $glStatsTimer
+}
+
+proc ComputeBhca { counter } {
+
+	global glNumOfTicks glCurrentCallsNum glPrevBhcaResult $counter glK
+
+	set K1 [expr {3600 / $glK}]
+
+	append sum [expr {$glCurrentCallsNum * $K1 + $glPrevBhcaResult}] ".0"
+
+	if { $glNumOfTicks != 0 } {
+		set $counter [format {%4.4f} [expr {$sum / $glNumOfTicks}]]
+	} else {
+		set $counter -1
+	}
+}
+
+proc IncreaseBhcaCallCounter { } {
+
+	global glCurrentCallsNum
+
+	incr glCurrentCallsNum
+}
+
+proc ResumeBhcaHandler { counter } {
+
+	global glNumOfTicks glStatsTimer $counter
+
+	set glPrevBhcaResult [set $counter]
+
+	set glCurrentCallsNum 0
+
+	incr glNumOfTicks
+
+	tmrstart $glStatsTimer
+}

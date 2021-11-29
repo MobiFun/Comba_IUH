@@ -1,0 +1,651 @@
+
+       ___
+     /_\_/_\    PRISMA Engineering S.r.l.
+    |\ /_\ /|   Telecom testing solutions
+    | |   | |   Via Petrocchi, 4 - 20127 Milano (Italy)
+    |/|___|\|   Tel. +39 02 26113507 - Fax +39 02 26113597
+     \|/_\|/    info@prisma-eng.com - http://www.prisma-eng.com
+
+
+
+/*+---------------+*/
+/*+ MM PRIMITIVEs +*/
+/*+---------------+*/
+/*+ O&M +*/
+typedef {
+UINT LsuSimMngPid
+STRING LsuSimBoardDb
+} MM_CONFIG;
+
+typedef VOID MM_CONFIG_ACK;
+
+typedef {
+UINT UserPid
+LIST_OF UINT ListMs
+UINT FirstMS
+UINT NumMS
+STRING ProfileName 
+} MM_SET_USER_PID;
+
+typedef VOID MM_START_LOAD_REDISTR;
+
+typedef VOID MM_STOP_LOAD_REDISTR;
+
+/*+ MMR +*/
+typedef {
+UINT MsId
+} MMR_REG_REQ;
+
+typedef {
+UINT MsId
+} MMR_REG_CNF;
+
+typedef {
+UINT MsId
+} MMR_NREG_REQ;
+
+typedef {
+UINT MsId
+} MMR_NREG_CNF;
+
+typedef {
+UINT MsId
+HEXSTR Cause
+} MMR_NREG_IND;
+
+typedef {
+UINT MsId
+HEXSTR Cause
+} MMR_ERROR_IND;
+
+typedef {
+UINT MsId
+} MMR_CN_GET_MS_PAR_REQ;
+
+typedef {
+UINT MsId
+HEXSTR LAI
+HEXSTR TMSI
+HEXSTR CellId
+UINT RevLev
+} MMR_CN_GET_MS_PAR_RES;
+
+typedef {
+UINT MsId
+STRING State
+UCHAR UpdateSt
+HEXSTR LAI
+HEXSTR TMSI
+UCHAR TmsiAssigned
+UCHAR NumOfMmConnections
+UCHAR TidBitMap
+STRING PendingConnectionType
+UCHAR LUType
+UCHAR RegCnfNeeded
+} MMR_MS_INIT_REQ;
+
+typedef {
+UINT MsId
+} MMR_MS_INIT_ACK;
+
+typedef {
+UINT MsId
+STRING State
+HEXSTR TMSI
+UCHAR TmsiAssigned
+HEXSTR IMEI
+UCHAR ImeiRetrieved
+HEXSTR LAI
+HEXSTR CellId
+STRING CurrentMMProc
+UCHAR AuthNeeded
+UCHAR IdentNeeded
+UCHAR SecurNeeded
+UCHAR NumOfMmConnections
+UCHAR TidBitMap
+UINT RevLev
+} MMR_CN_INIT_REQ;
+
+typedef {
+UINT MsId
+} MMR_CN_INIT_ACK;
+
+typedef {
+UINT MsId
+UINT TstmIndex 
+} MMR_REG_IND;
+
+typedef {
+UINT MsId
+STRING Info
+HEXSTR Imsi
+HEXSTR Imei
+} MM_REG_INFO_IND;
+
+typedef {
+UCHAR StreamId
+STRING CallType
+UCHAR MsRate
+HEXSTR SpeechVer
+UCHAR DataRate
+} MM_SYNC_RES_ASS;
+
+typedef {
+UINT MsIdDst
+UINT DPhone 
+} MM_SYNC_CONNECT;
+
+/*+ MM_CC +*/
+typedef {
+UCHAR Tio
+UCHAR Sn
+BINSTR Pdu
+} MM_CC_PROT;
+
+typedef {
+UINT MsId
+UCHAR Tio
+UINT CmServType
+} MM_CC_EST_REQ;
+
+typedef {
+UINT MsId
+UINT SeqNum
+UINT RevLev
+BINSTR Pdu 
+} MM_CC_EST_IND;
+
+typedef {
+UINT MsId
+UINT SeqNum
+UINT RevLev 
+} MM_CC_EST_CNF;
+
+typedef {
+UINT MsId
+UCHAR Tio
+UINT Cause 
+} MM_CC_REL_REQ;
+
+typedef {
+UINT MsId
+UINT Cause 
+} MM_CC_REL_IND;
+
+typedef {
+UINT MsId
+UINT SeqNum
+BINSTR Pdu  
+} MM_CC_DATA_REQ;
+
+typedef {
+UINT MsId
+UINT SeqNum
+BINSTR Pdu 
+} MM_CC_DATA_IND;
+
+typedef {
+UINT MsId
+BINSTR Pdu 
+} MM_CC_UNITDATA_REQ;
+
+typedef {
+UINT MsId
+BINSTR Pdu 
+} MM_CC_UNITDATA_IND;
+
+typedef {
+UINT MsId
+STRUCTURE CauseVal 
+} MM_CC_SYNC_REQ;
+
+typedef {
+UINT MsId
+UINT Res
+HEXSTR Cause 
+} MM_CC_SYNC_CNF;
+
+typedef {
+UINT MsId
+UINT Res
+HEXSTR Cause 
+} MM_CC_SYNC_IND;
+
+/*+ MM_SMS +*/
+typedef {
+UCHAR Tio
+BINSTR Pdu
+} MM_SMS_PROT;
+
+typedef {
+UINT MsId
+UCHAR Tio
+UINT CmServType
+} MM_SMS_EST_REQ;
+
+typedef {
+UINT MsId
+BINSTR Pdu 
+} MM_SMS_EST_IND;
+
+typedef {
+UINT MsId 
+} MM_SMS_EST_CNF;
+
+typedef {
+UINT MsId
+UCHAR Tio
+UINT Cause 
+} MM_SMS_REL_REQ;
+
+typedef {
+UINT MsId
+UINT Cause 
+} MM_SMS_REL_IND;
+
+typedef {
+UINT MsId
+BINSTR Pdu  
+} MM_SMS_DATA_REQ;
+
+typedef {
+UINT MsId
+BINSTR Pdu 
+} MM_SMS_DATA_IND;
+
+typedef {
+UINT MsId
+BINSTR Pdu 
+} MM_SMS_UNITDATA_REQ;
+
+typedef {
+UINT MsId
+BINSTR Pdu 
+} MM_SMS_UNITDATA_IND;
+
+typedef {
+UINT MsId
+STRUCTURE CauseVal  
+} MM_SMS_SYNC_REQ;
+
+typedef {
+UINT MsId
+UINT Res
+HEXSTR Cause 
+} MM_SMS_SYNC_CNF;
+
+/*+ MM_GCC +*/
+typedef {
+UCHAR Tio
+UCHAR Sn
+BINSTR Pdu
+} MM_GCC_PROT;
+
+typedef {
+UINT MsId
+UCHAR Tio
+UINT CmServType
+} MM_GCC_EST_REQ;
+
+typedef {
+UINT MsId
+UINT RevLev
+HEXSTR CellId
+HEXSTR Lac
+BINSTR Pdu 
+} MM_GCC_EST_IND;
+
+typedef {
+UINT MsId
+BINSTR Pdu  
+} MM_GCC_DATA_REQ;
+
+typedef {
+UINT MsId
+UINT RevLev 
+} MM_GCC_EST_CNF;
+
+typedef {
+UINT MsId
+BINSTR Pdu 
+} MM_GCC_DATA_IND;
+
+typedef {
+UINT MsId
+UINT GroupCallRef
+UCHAR Priority
+} MM_GCC_SETUP_IND;
+
+typedef {
+UINT MsId
+HEXSTR GroupCallRef 
+} MM_GCC_JOIN_GC_REQ;
+
+typedef {
+UINT MsId
+HEXSTR GroupCallRef
+UINT Mode 
+} MM_GCC_JOIN_GC_CNF;
+
+typedef {
+UINT MsId
+HEXSTR GroupCallRef
+UINT Mode 
+} MM_GCC_JOIN_GC_IND;
+
+typedef {
+UINT MsId
+STRUCTURE CauseVal
+HEXSTR GroupCallReference  
+} MM_GCC_SYNC_REQ;
+
+typedef {
+UINT MsId
+UINT Res
+HEXSTR Cause 
+} MM_GCC_SYNC_CNF;
+
+typedef {
+UINT MsId
+UINT Res
+HEXSTR Cause 
+} MM_GCC_SYNC_IND;
+
+typedef {
+UINT MsId
+UINT Cause 
+} MM_GCC_REL_IND;
+
+typedef {
+UINT MsId
+UCHAR Tio
+UINT Cause 
+} MM_GCC_REL_REQ;
+
+typedef {
+UINT MsId
+UCHAR Tio
+UINT Cause 
+} MM_GCC_ABORT_REQ;
+
+typedef {
+UINT MsId
+HEXSTR GroupCallRef 
+} MM_GCC_TALKER_IND;
+
+typedef {
+UINT MsId
+HEXSTR GroupCallRef 
+} MM_GCC_TERM_IND;
+
+/*+ MM_SS +*/
+typedef {
+UCHAR Tio
+UCHAR Sn
+BINSTR Pdu
+} MM_SS_PROT;
+
+typedef {
+UINT MsId
+UCHAR Tio
+UINT CmServType
+} MM_SS_EST_REQ;
+
+typedef {
+UINT MsId
+UINT SeqNum
+UINT RevLev
+BINSTR Pdu 
+} MM_SS_EST_IND;
+
+typedef {
+UINT MsId
+UINT SeqNum
+UINT RevLev 
+} MM_SS_EST_CNF;
+
+typedef {
+UINT MsId
+UCHAR Tio
+UINT Cause 
+} MM_SS_REL_REQ;
+
+typedef {
+UINT MsId
+UINT Cause 
+} MM_SS_REL_IND;
+
+typedef {
+UINT MsId
+UINT SeqNum
+BINSTR Pdu  
+} MM_SS_DATA_REQ;
+
+typedef {
+UINT MsId
+UINT SeqNum
+BINSTR Pdu 
+} MM_SS_DATA_IND;
+
+typedef {
+UINT MsId
+BINSTR Pdu 
+} MM_SS_UNITDATA_REQ;
+
+typedef {
+UINT MsId
+BINSTR Pdu 
+} MM_SS_UNITDATA_IND;
+
+typedef {
+CHAR MsgType
+BINSTR Pdu
+} MM_RSVD_FOR_TEST;
+
+/*+ MM_GMM_COORD +*/
+typedef {
+UINT MsId
+HEXSTR Tlli
+HEXSTR RAI
+UINT GmmPid
+HEXSTR PTMSI 
+} MM_GMM_COORD_GPRS_ACT_REQ;
+
+typedef {
+UINT MsId
+UINT GmmPid 
+} MM_GMM_COORD_GPRS_DEACT_REQ;
+
+typedef {
+UINT MsId 
+} MM_GMM_COORD_GPRS_SUSPEND_IND;
+
+typedef {
+UINT MsId
+HEXSTR gprs_resmpt 
+} MM_GMM_COORD_GPRS_RESUME_IND;
+
+typedef {
+UINT MsId
+HEXSTR MsIdentity 
+} MM_GMM_COORD_PAGE_RSP_REQ;
+
+typedef {
+UINT MsId
+HEXSTR NMO
+HEXSTR TMSIstatus
+UCHAR GprsIndicator
+UCHAR CellBarred 
+} MM_GMM_COORD_SYSINFO_IND;
+
+typedef {
+UINT MsId 
+} MM_GMM_COORD_COMB_START_IND;
+
+typedef {
+UINT MsId
+HEXSTR LAI
+HEXSTR MSidentity 
+} MM_GMM_COORD_COMB_CMP_IND;
+
+typedef {
+UINT MsId
+HEXSTR Cause 
+} MM_GMM_COORD_COMB_REJ;
+
+typedef {
+UINT MsId 
+} MM_GMM_COORD_CS_STATUS_REQ;
+
+typedef {
+UINT MsId
+UCHAR CsStatus
+} MM_GMM_COORD_CS_STATUS_IND;
+
+typedef {
+UINT MsId 
+} MM_GMM_COORD_DETACH_INI_IND;
+
+typedef {
+UINT MsId
+UCHAR PowerOff
+CHAR Res 
+} MM_GMM_COORD_DETACH_CMP_IND;
+
+typedef {
+UINT MsId 
+} MM_GMM_COORD_GPRS_SUSPENDED;
+
+/*+---------+*/
+/*+ MM PDUs +*/
+/*+---------+*/
+typedef VOID MM_AUTH_REJ;
+
+typedef {
+UCHAR Sn
+HEXSTR CipKeySeqNum
+HEXSTR RAND
+HEXSTR AUTN
+} MM_AUTH_REQ;
+
+typedef {
+UCHAR Sn
+HEXSTR AuthParResp
+HEXSTR ExtAuthParResp
+} MM_AUTH_RESP;
+
+typedef {
+UCHAR Sn
+HEXSTR RejectCause
+HEXSTR AuthFailPar
+} MM_AUTH_FAIL;
+
+typedef {
+UCHAR Sn
+HEXSTR CipKeySeqNum
+HEXSTR MsClassmark
+HEXSTR MsIdentity
+HEXSTR LAI
+} MM_CM_RE_ESTABLISH_REQ;
+
+typedef {
+UCHAR Sn 
+} MM_CM_SERVICE_ACC;
+
+typedef {
+UCHAR Sn
+HEXSTR PD_SAPI
+} MM_CM_SERVICE_PROMPT;
+
+typedef {
+UCHAR Sn
+HEXSTR RejectCause
+} MM_CM_SERVICE_REJ;
+
+typedef {
+UCHAR Sn
+} MM_CM_SERVICE_ABORT;
+
+typedef {
+UCHAR Sn
+HEXSTR RejectCause
+} MM_ABORT;
+
+typedef {
+UCHAR Sn
+HEXSTR CipKeySeqNum_CMServType
+HEXSTR MsClassmark
+HEXSTR MsIdentity
+HEXSTR Priority
+} MM_CM_SERVICE_REQ;
+
+typedef {
+UCHAR Sn
+HEXSTR IdType
+} MM_ID_REQ;
+
+typedef {
+UCHAR Sn
+HEXSTR MsIdentity
+} MM_ID_RESP;
+
+typedef {
+UCHAR Sn
+HEXSTR MsClassmark
+HEXSTR MsIdentity
+} MM_IMSI_DETACH_IND;
+
+typedef {
+UCHAR Sn
+HEXSTR LAI
+HEXSTR MsIdentity
+HEXSTR FollowOnProc
+HEXSTR CTSPerm
+HEXSTR EPLMN
+} MM_LOC_UPDATE_ACC;
+
+typedef {
+UCHAR Sn
+HEXSTR RejectCause
+} MM_LOC_UPDATE_REJ;
+
+typedef {
+UCHAR Sn
+HEXSTR CipKeySeqNum_LocUpType
+HEXSTR LAI
+HEXSTR MsClassmark
+HEXSTR MsIdentity
+HEXSTR MsClassmarkUMTS
+} MM_LOC_UPDATE_REQ;
+
+typedef {
+UCHAR Sn
+HEXSTR FullNameNet
+HEXSTR ShortNameNet
+HEXSTR LocTimeZone
+HEXSTR UniTime&LocTimeZone
+HEXSTR LSAId
+HEXSTR NetDaySavTime
+} MM_INFO;
+
+typedef {
+UCHAR Sn
+HEXSTR RejectCause
+} MM_STATUS;
+
+typedef {
+UCHAR Sn 
+} MM_TMSI_REAL_COMP;
+
+typedef {
+UCHAR Sn
+HEXSTR LAI
+HEXSTR MsIdentity
+} MM_TMSI_REAL_CMD;
+
+typedef VOID MM_NULL;
+
+typedef {
+UCHAR Sn
+} MM_NULL;
+

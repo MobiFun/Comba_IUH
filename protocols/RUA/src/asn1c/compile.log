@@ -1,0 +1,108 @@
+
+
+ASN1C Compiler, Version 6.1.4
+Copyright (c) 1997-2008 Objective Systems, Inc. All Rights Reserved.
+
+Registered to: PRISMA Engineering S.r.l.
+Parsing config file 'asn1_rua.cfg'..
+Parsing ASN.1 definitions..
+WARNING: Module RUA-IEs, Prod CN_DomainIndicator: enum name changed to 'RUA_cs_domain'
+
+WARNING: Module RUA-IEs, Prod CN_DomainIndicator: enum name changed to 'RUA_ps_domain'
+
+WARNING: Module RUA-IEs, Prod Establishment_Cause: enum name changed to 'RUA_emergency_call'
+
+WARNING: Module RUA-IEs, Prod Establishment_Cause: enum name changed to 'RUA_normal_call'
+
+WARNING: Module RUA-IEs, Prod CauseRadioNetwork: enum name changed to 'RUA_normal'
+
+WARNING: Module RUA-IEs, Prod CauseRadioNetwork: enum name changed to 'RUA_connect_failed'
+
+WARNING: Module RUA-IEs, Prod CauseRadioNetwork: enum name changed to 'RUA_network_release'
+
+WARNING: Module RUA-IEs, Prod CauseRadioNetwork: enum name changed to 'RUA_unspecified'
+
+WARNING: Module RUA-IEs, Prod CauseTransport: enum name changed to 'RUA_transport_resource_unavailable'
+
+WARNING: Module RUA-IEs, Prod CauseTransport: enum name changed to 'RUA_unspecified_1'
+
+WARNING: Module RUA-IEs, Prod CauseProtocol: enum name changed to 'RUA_transfer_syntax_error'
+
+WARNING: Module RUA-IEs, Prod CauseProtocol: enum name changed to 'RUA_abstract_syntax_error_reject'
+
+WARNING: Module RUA-IEs, Prod CauseProtocol: enum name changed to 'RUA_abstract_syntax_error_ignore_and_notify'
+
+WARNING: Module RUA-IEs, Prod CauseProtocol: enum name changed to 'RUA_message_not_compatible_with_receiver_state'
+
+WARNING: Module RUA-IEs, Prod CauseProtocol: enum name changed to 'RUA_semantic_error'
+
+WARNING: Module RUA-IEs, Prod CauseProtocol: enum name changed to 'RUA_unspecified_2'
+
+WARNING: Module RUA-IEs, Prod CauseProtocol: enum name changed to 'RUA_abstract_syntax_error_falsely_constructed_message'
+
+WARNING: Module RUA-IEs, Prod CauseMisc: enum name changed to 'RUA_processing_overload'
+
+WARNING: Module RUA-IEs, Prod CauseMisc: enum name changed to 'RUA_hardware_failure'
+
+WARNING: Module RUA-IEs, Prod CauseMisc: enum name changed to 'RUA_o_and_m_intervention'
+
+WARNING: Module RUA-IEs, Prod CauseMisc: enum name changed to 'RUA_unspecified_3'
+
+WARNING: Module RUA-IEs, Prod TypeOfError: enum name changed to 'RUA_not_understood'
+
+WARNING: Module RUA-IEs, Prod TypeOfError: enum name changed to 'RUA_missing'
+
+WARNING: Module RUA-CommonDataTypes, Prod Criticality: enum name changed to 'RUA_reject'
+
+WARNING: Module RUA-CommonDataTypes, Prod Criticality: enum name changed to 'RUA_ignore'
+
+WARNING: Module RUA-CommonDataTypes, Prod Criticality: enum name changed to 'RUA_notify'
+
+WARNING: Module RUA-CommonDataTypes, Prod Presence: enum name changed to 'RUA_optional'
+
+WARNING: Module RUA-CommonDataTypes, Prod Presence: enum name changed to 'RUA_conditional'
+
+WARNING: Module RUA-CommonDataTypes, Prod Presence: enum name changed to 'RUA_mandatory'
+
+WARNING: Module RUA-CommonDataTypes, Prod TriggeringMessage: enum name changed to 'RUA_initiating_message'
+
+WARNING: Module RUA-CommonDataTypes, Prod TriggeringMessage: enum name changed to 'RUA_successful_outcome'
+
+WARNING: Module RUA-CommonDataTypes, Prod TriggeringMessage: enum name changed to 'RUA_unsuccessful_outcome'
+
+
+Writing C type definitions to file ./C/RUA-PDU-Descriptions.h..
+Writing C common definitions/functions to file ./C/RUA-PDU-Descriptions.c..
+Writing C encode functions to file ./C/RUA-PDU-DescriptionsEnc.c..
+Writing C decode functions to file ./C/RUA-PDU-DescriptionsDec.c..
+Writing C global variables to file ./C/RUA-PDU-Descriptions.c..
+Writing C print functions to file ./C/RUA-PDU-DescriptionsPrint.c..
+Writing C type definitions to file ./C/RUA-PDU-Contents.h..
+Writing C common definitions/functions to file ./C/RUA-PDU-Contents.c..
+Writing C encode functions to file ./C/RUA-PDU-ContentsEnc.c..
+Writing C decode functions to file ./C/RUA-PDU-ContentsDec.c..
+Writing C global variables to file ./C/RUA-PDU-Contents.c..
+Writing C print functions to file ./C/RUA-PDU-ContentsPrint.c..
+Writing C type definitions to file ./C/RUA-IEs.h..
+Writing C common definitions/functions to file ./C/RUA-IEs.c..
+Writing C encode functions to file ./C/RUA-IEsEnc.c..
+Writing C decode functions to file ./C/RUA-IEsDec.c..
+Writing C global variables to file ./C/RUA-IEs.c..
+Writing C print functions to file ./C/RUA-IEsPrint.c..
+Writing C type definitions to file ./C/RUA-CommonDataTypes.h..
+Writing C common definitions/functions to file ./C/RUA-CommonDataTypes.c..
+Writing C encode functions to file ./C/RUA-CommonDataTypesEnc.c..
+Writing C decode functions to file ./C/RUA-CommonDataTypesDec.c..
+Writing C global variables to file ./C/RUA-CommonDataTypes.c..
+Writing C print functions to file ./C/RUA-CommonDataTypesPrint.c..
+Writing C type definitions to file ./C/RUA-Constants.h..
+Writing C common definitions/functions to file ./C/RUA-Constants.c..
+Writing C encode functions to file ./C/RUA-ConstantsEnc.c..
+Writing C decode functions to file ./C/RUA-ConstantsDec.c..
+Writing C print functions to file ./C/RUA-ConstantsPrint.c..
+Writing C type definitions to file ./C/RUA-Containers.h..
+Writing C common definitions/functions to file ./C/RUA-Containers.c..
+Writing C encode functions to file ./C/RUA-ContainersEnc.c..
+Writing C decode functions to file ./C/RUA-ContainersDec.c..
+Writing C global variables to file ./C/RUA-Containers.c..
+Writing C print functions to file ./C/RUA-ContainersPrint.c..

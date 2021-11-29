@@ -1,0 +1,302 @@
+##############################################################
+# $URL: RANAPrua.tsm $
+#
+# $Author: Leon $
+#
+# Description: Transfer BSSAP over RUA 
+#
+# $Rev:  $
+#
+# $Date: 2012-07-21  $
+##############################################################
+
+#-------------------------------------------------------------
+# decoding primitives from lower level
+#-------------------------------------------------------------
+
+proc DecRuaConnectAck { } {
+
+	# Global Variables
+	global _sig glMsId glBssapDb 
+	set idx [rd _sig MsId]
+
+	#Check if the Db contains the entry
+	if { ![DbEntryExists $glBssapDb $idx] } {
+		#Perhaps the ReqRef belongs from VGCSBSSAP
+		#send _sig $glVGCSBSSAPPid
+		log "Warning: MS ID $idx does not exist in BSSAP DB"
+		#Force the calling proc to skip the message
+		skipMsg
+		return
+	} else {
+		# Get Instance
+	
+		set apIdcontextId [rd _sig ApId]
+		append apIdcontextId "-"
+		append apIdcontextId [rd _sig ContextId]
+		
+		GetInstance $idx $glBssapDb glMsId
+		# setting CONNECT_ACK
+		new CONNECT_ACK r
+		wr r MsId $glMsId
+		wr r ApIdContextId $apIdcontextId
+		# Store CONNECT_ACK in _sig
+		set _sig $r
+	}
+
+}
+
+proc DecRUA_DISCONNECT_ACK { } {
+	
+	global _sig _sigpdu glMsId
+
+	# get instance 
+	if { [GetInstRua] == "-1" } {
+		return -1
+	}
+	
+	set _sigpdu "?"	
+
+	# setting DISCONNECT_IND
+	new DISCONNECT_IND r
+	wr r MsId $glMsId
+	wr r Pdu $_sigpdu
+
+	# Store DISCONNECT_IND in _sig
+	set _sig $r
+}
+
+
+#################################################################################################
+proc DecRUA_DIRECTTRANSFER { } {
+	
+	global _sig _sigpdu glCn_domain glSpcStkIdCid
+
+	# Get instance 
+	if { [GetInstRua] == "-1" } {
+		return -1
+	}
+
+	# decoding RANAP pdu
+	set bssapPdu [rd _sig RanapMsg]
+	if { [IsVoid $bssapPdu] } {
+		logscr "Warning: Received Empty Data Indication"
+		return -1
+	}
+
+	# Decode Message
+	bssapPduToSig bssapPdu
+
+	# Store RANAP pdu in _sig
+	set _sig $_sigpdu
+}
+
+########################################################################
+# Unitdata Ind
+proc DecRUA_CONNECTIONLESSTRANSFER { } {
+	
+	global _sig _sigpdu glBssapDb glInstNull
+
+	# get instance 
+	GetInstRuaConnectionless
+
+	# decoding RANAP pdu
+	set bssapPdu [rd _sig RanapMsg]
+	if { [IsVoid $bssapPdu] } {
+		logscr "Warning: Received Empty UnitData Indication"
+		return -1
+	}
+
+	if { $::glPagFilterEnabled } {
+
+		set apId [DbGet $glBssapDb $glInstNull ApId]
+
+		if { [bssapPagFilter bssapPdu $apId] != 0 } {
+			skipMsg
+			return
+		}
+	}
+
+	# Decode Message
+	bssapPduToSig bssapPdu
+
+	# Store BSSAP pdu in _sig
+	set _sig $_sigpdu
+}
+
+proc DecRUA_DISCONNECT { } {
+	
+	global _sig _sigpdu glMsId
+
+	# get instance 
+	if { [GetInstRua] == "-1" } {
+		return -1
+	}
+
+	# ranapPdu
+	set bssapPdu [rd _sig RanapMsg]
+
+	
+	# decoding RANAP pdu
+	if { ![IsVoid $bssapPdu] } {
+		bssapPduToSig bssapPdu
+	} else {
+		logscr "Warning: Received Empty Ranap in RUA_DISCONNECT_IND"
+		set _sigpdu ?
+	}
+	
+	# Store RANAP pdu in _sig
+	# setting DISCONNECT_IND
+	new DISCONNECT_IND r
+	wr r MsId $glMsId
+	wr r Pdu $_sigpdu
+
+	# Store DISCONNECT_IND in _sig
+	set _sig $r
+}
+
+proc DecRUA_CONNECT { } {
+	
+	# Global Variables
+	global _sig _sigpdu glMsId
+
+	# get instance 
+	if { [GetInstRua] == "-1" } {
+		return -1
+	}
+
+	# ranapPdu
+	set bssapPdu [rd _sig RanapMsg]
+
+	
+	# decoding RANAP pdu
+	if { ![IsVoid $bssapPdu] } {
+		bssapPduToSig bssapPdu
+	} else {
+		logscr "Warning: Received Empty Ranap in RUA_DISCONNECT_IND"
+		set _sigpdu ?
+	}
+	
+	# Store BSSAP pdu in _sig
+	# setting DISCONNECT_IND
+	new CONNECT_IND r
+	wr r MsId $glMsId
+	wr r Pdu $_sigpdu
+
+	# Store DISCONNECT_IND in _sig
+	set _sig $r
+}
+
+
+#----------------------------------------------------------#
+# sending primitives to lower level
+#----------------------------------------------------------#
+
+# Connect Req
+proc SendRuaConnectReq { apid bssapSig } {
+
+	# Global Variables
+	global  glMsId _hnbapid
+
+	new RUA_CONNECT s
+	wr s CnDomain 0
+	## to fill ms id in context id
+	wr s ContextId $glMsId
+	##   RUA_emergency_call = 0,RUA_normal_call = 1
+	wr s EstCause  1
+	if { ![IsVoid $bssapSig] } {
+		wr 	s RanapMsg [bssapSigToPdu bssapSig]
+	}
+    wr s ApId $apid
+
+	send s $_hnbapid
+	LogOutputPrim $s
+}
+
+# Net Connect Req -> gw
+proc SendRuaNetConnectReq { apid bssapSig } {
+
+	# Global Variables
+	global glIdx glCn_domain _hnbapid
+
+	########
+	global _state glCn_domain 
+
+	new RUA_NET_CONNECT s
+	wr s CnDomain $glCn_domain
+	## to fill ms id in context id
+	wr s ContextId $glIdx
+
+	if { ![IsVoid $ranapSig] } {
+		wr 	s Pdu [bssapSigToPdu bssapSig]
+	}
+    	wr s ApId $apid
+
+	send s $_hnbapid
+	
+	LogOutputPrim $s
+}
+
+
+# Disconnect Req
+proc SendRuaDisconnectReq { apIdcontextId bssapSig } {
+
+	# Global Variables
+	global _hnbapid
+	set apId [lindex [split $apIdcontextId "-"] 0]
+	set contextId [lindex [split $apIdcontextId "-"] 1]
+
+	new RUA_DISCONNECT s
+	wr s CnDomain 0
+	wr s ContextId $contextId
+	new CAUSE cause
+	wr cause Tag 1 ; # radio network
+	wr cause Value 0 ; #normal:0 HNBAP_ue_RRC_telease
+	wr s Cause $cause
+	if { ![IsVoid $bssapSig] } {
+		wr 	s RanapMsg [bssapSigToPdu bssapSig]
+	}
+	wr s ApId $apId 
+	send s $_hnbapid
+	LogOutputPrim $s
+}
+
+
+###################################################
+# Data Req  => send RUA_DIRECTTRANSFER
+proc SendRuaNDataReq { apIdcontextId bssapSig } {
+
+	# Global Variables
+	global _hnbapid
+	set apId [lindex [split $apIdcontextId "-"] 0]
+	set contextId [lindex [split $apIdcontextId "-"] 1]
+
+	new RUA_DIRECTTRANSFER s
+	wr s CnDomain 0
+	wr s ContextId $contextId
+	if { ![IsVoid $bssapSig] } {
+		wr 	s RanapMsg [bssapSigToPdu bssapSig]
+	}
+	wr s ApId $apId 
+	send s $_hnbapid
+	LogOutputPrim $s
+
+}
+
+########################################################
+# Unitdata Req ->  RUA_CONNECTIONLESSTRANSFER
+proc SendRuaConnectlessReq { bssapSig } {
+	global _hnbapid glInstNull glBssapDb
+	set apid [DbGet $glBssapDb $glInstNull ApId]
+	# this msg will be sent to hnbap and it will sent it out over sctp
+	new RUA_CONNECTIONLESSTRANSFER s
+	if { ![IsVoid $bssapSig] } {
+		wr 	s RanapMsg [bssapSigToPdu bssapSig]
+	}
+	wr s ApId $apid
+	send s $_hnbapid
+	LogOutputPrim $s
+
+}
+
+#EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE#

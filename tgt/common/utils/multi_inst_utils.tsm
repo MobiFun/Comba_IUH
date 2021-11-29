@@ -1,0 +1,269 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/tstmUtils/scriptUtils/tags/scriptUtils-2.51.6/multi_inst_utils.tsm $
+#
+# $Author: stefanogr $
+#
+# $Rev: 50160 $
+#
+# $Date: 2012-04-02 13:33:05 +0200 (Mon, 02 Apr 2012) $
+##############################################################
+
+#============================================================#
+# Common State Management
+#============================================================#
+
+proc _NextState { new_state db id state } {
+
+	upvar #0 $db my_db
+	upvar #0 $id my_id
+	upvar #0 $state my_state
+
+	if { ![IsVoid $my_id] } {
+		set my_state $new_state
+		if { [DbExists $my_db] && ![IsVoid $my_db] } {
+			nextstate $new_state
+			DbSet $my_db $my_id State $new_state
+		}
+		log "(_NextState): new_state=$new_state"
+	} else {
+		logscr "ERROR (_NextState): new_state=$new_state, my_id=$my_id ##"
+		exit
+	}
+}
+
+proc _GetState { db id state } {
+
+	upvar #0 $db my_db
+	upvar #0 $id my_id
+
+	if { ![IsVoid $my_id] } {
+		if { [DbExists $my_db] && ![IsVoid $my_db] } {
+			set myState [DbGet $my_db $my_id State]
+		}
+	} else {
+		logscr "ERROR (_GetState): new_state=$new_state, my_id=$my_id ##"
+		exit
+	}
+	return $myState
+}
+
+proc _GetInstance { inst db id state } {
+
+	global _state
+
+	upvar #0 $db my_db
+	upvar #0 $id my_id
+	upvar #0 $state my_state
+
+	if { [info exists my_db] } {
+		if { ![DbEntryExists $my_db $inst] } {
+			logscr "WARNING (_GetInstance): skipMsg. my_db=$my_db, inst=$inst"
+			skipMsg
+			return -1
+		}
+		set my_state [DbGet $my_db $inst State]
+
+		if { [DbFieldExists $my_db SaveQue] } {
+			set saveQue [DbGet $my_db $inst SaveQue]
+			if { ![IsVoid $saveQue] } {
+				sdlSetSaveQue $saveQue
+			}
+		}
+	}
+	set my_id $inst
+
+	# Set FSM _state
+	if { [info exists my_state] } {
+		set _state $my_state
+	}
+	#log "(DEBUG) GetInstance: my_id=$my_id _state=$_state"
+
+}
+
+
+#============================================================#
+# MS State Management
+#============================================================#
+
+proc NextMsState { new_state } {
+
+	global glMsDbTriplet
+
+	set db [lindex $glMsDbTriplet 0]
+	set id [lindex $glMsDbTriplet 1]
+	set state [lindex $glMsDbTriplet 2]
+
+	_NextState $new_state $db $id $state
+}
+
+proc GetMsState { } {
+
+	global glMsDbTriplet
+
+	set db [lindex $glMsDbTriplet 0]
+	set id [lindex $glMsDbTriplet 1]
+	set state [lindex $glMsDbTriplet 2]
+
+	return [_GetState $db $id $state]
+}
+
+proc GetInstanceMs { inst } {
+
+	global glMsDbTriplet
+
+	set db [lindex $glMsDbTriplet 0]
+	set id [lindex $glMsDbTriplet 1]
+	set state [lindex $glMsDbTriplet 2]
+	_GetInstance $inst $db $id $state
+}
+
+proc GetInstanceMsFromTimer { } {
+
+	global _sig _src
+	global glMsDbTriplet
+
+	set db [lindex $glMsDbTriplet 0]
+	upvar #0 $db my_db
+
+	set tmr_name "[lindex $_sig 0]id"
+	# Get msid from Timer Id (if key exists)
+	if { [DbKeyExists $my_db $tmr_name $_src] } {
+		set msId [DbGetIdx $my_db $tmr_name $_src]
+
+		GetInstanceMs $msId
+	} else {
+		logscr "WARNING: skipMsg. my_db=$my_db, GetInstanceFromTimer"
+		skipMsg
+		return -1
+	}
+}
+
+
+#============================================================#
+# Inst State Management
+#============================================================#
+
+proc NextInstState { new_state } {
+
+	global glInstDbTriplet
+
+	set db [lindex $glInstDbTriplet 0]
+	set id [lindex $glInstDbTriplet 1]
+	set state [lindex $glInstDbTriplet 2]
+
+	_NextState $new_state $db $id $state
+}
+
+proc GetInstanceInst { inst } {
+
+	global glInstDbTriplet
+
+	set db [lindex $glInstDbTriplet 0]
+	set id [lindex $glInstDbTriplet 1]
+	set state [lindex $glInstDbTriplet 2]
+	_GetInstance $inst $db $id $state
+}
+
+proc GetInstanceInstFromTimer { } {
+
+	global _sig _src
+	global glInstDbTriplet
+
+	set db [lindex $glInstDbTriplet 0]
+	upvar #0 $db my_db
+
+	set tmr_name "[lindex $_sig 0]id"
+	set Inst [DbGetIdx $my_db $tmr_name $_src]
+
+	GetInstanceInst $Inst
+}
+
+#============================================================#
+# Pdp Context State Management
+#============================================================#
+
+proc NextPdpState { new_state } {
+
+	global glPdpDbTriplet
+
+	set db [lindex $glPdpDbTriplet 0]
+	set id [lindex $glPdpDbTriplet 1]
+	set state [lindex $glPdpDbTriplet 2]
+
+	_NextState $new_state $db $id $state
+}
+
+proc GetInstancePdp { inst } {
+
+	global glPdpDbTriplet
+
+	set db [lindex $glPdpDbTriplet 0]
+	set id [lindex $glPdpDbTriplet 1]
+	set state [lindex $glPdpDbTriplet 2]
+	_GetInstance $inst $db $id $state
+}
+
+
+#============================================================#
+# POOL State Management
+#============================================================#
+
+proc NextPoolState { new_state } {
+
+	global glPoolDbTriplet
+
+	set db [lindex $glPoolDbTriplet 0]
+	set id [lindex $glPoolDbTriplet 1]
+	set state [lindex $glPoolDbTriplet 2]
+
+	_NextState $new_state $db $id $state
+}
+
+proc GetInstancePool { inst } {
+
+	global glPoolDbTriplet
+
+	set db [lindex $glPoolDbTriplet 0]
+	set id [lindex $glPoolDbTriplet 1]
+	set state [lindex $glPoolDbTriplet 2]
+	_GetInstance $inst $db $id $state
+}
+
+proc GetInstancePoolFromTimer { } {
+
+	global _sig _src 
+	global glPoolDbTriplet
+
+	set db [lindex $glPoolDbTriplet 0]
+	upvar #0 $db my_db
+	set tmr_name "[lindex $_sig 0]id"
+	set poolId [DbGetIdx $my_db $tmr_name $_src]
+
+	GetInstancePool $poolId
+}
+
+#============================================================#
+# CELL State Management
+#============================================================#
+
+proc NextCellState { new_state } {
+
+	global glCellDbTriplet
+
+	set db [lindex $glCellDbTriplet 0]
+	set id [lindex $glCellDbTriplet 1]
+	set state [lindex $glCellDbTriplet 2]
+
+	_NextState $new_state $db $id $state
+}
+
+proc GetInstanceCell { inst } {
+
+	global glCellDbTriplet
+
+	set db [lindex $glCellDbTriplet 0]
+	set id [lindex $glCellDbTriplet 1]
+	set state [lindex $glCellDbTriplet 2]
+	_GetInstance $inst $db $id $state
+}
+

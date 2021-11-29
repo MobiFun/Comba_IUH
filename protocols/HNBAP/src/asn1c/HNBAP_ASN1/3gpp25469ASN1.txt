@@ -1,0 +1,1119 @@
+-- **************************************************************
+--
+-- Elementary Procedure definitions
+--
+-- **************************************************************
+HNBAP-PDU-Descriptions  { 
+itu-t (0) identified-organization (4) etsi (0) mobileDomain (0) 
+umts-Access (20) modules (3) hnbap(6) version1 (1) hnbap-PDU-Descriptions (0)}
+
+DEFINITIONS AUTOMATIC TAGS ::= 
+
+BEGIN
+
+-- **************************************************************
+--
+-- IE parameter types from other modules.
+--
+-- **************************************************************
+
+IMPORTS
+	Criticality,
+	ProcedureCode
+FROM HNBAP-CommonDataTypes
+
+	HNBRegisterRequest,
+	HNBRegisterAccept,
+	HNBRegisterReject,
+	HNBDe-Register,
+	UERegisterRequest,
+	UERegisterAccept,
+	UERegisterReject,
+	UEDe-Register,
+	ErrorIndication,
+	PrivateMessage
+
+FROM HNBAP-PDU-Contents
+	id-HNBRegister,
+	id-UERegister,
+	id-UEDe-Register,
+	id-HNBDe-Register,
+	id-ErrorIndication,
+	id-privateMessage
+FROM HNBAP-Constants;
+
+-- **************************************************************
+--
+-- Interface Elementary Procedure Class
+--
+-- **************************************************************
+
+HNBAP-ELEMENTARY-PROCEDURE ::= CLASS {
+	&InitiatingMessage			,
+	&SuccessfulOutcome			OPTIONAL,
+	&UnsuccessfulOutcome		OPTIONAL,
+	&procedureCode				ProcedureCode 	UNIQUE,
+	&criticality				Criticality 	DEFAULT ignore
+}
+
+WITH SYNTAX {
+	INITIATING MESSAGE			&InitiatingMessage
+	[SUCCESSFUL OUTCOME			&SuccessfulOutcome]
+	[UNSUCCESSFUL OUTCOME		&UnsuccessfulOutcome]
+	PROCEDURE CODE				&procedureCode
+	[CRITICALITY				&criticality]
+}
+
+-- **************************************************************
+--
+-- Interface PDU definitions
+--
+-- **************************************************************
+
+HNBAP-PDU ::= CHOICE {
+	initiatingMessage		InitiatingMessage,
+	successfulOutcome		SuccessfulOutcome,
+	unsuccessfulOutcome		UnsuccessfulOutcome,
+	...
+}
+
+
+InitiatingMessage ::= SEQUENCE {
+	procedureCode	HNBAP-ELEMENTARY-PROCEDURE.&procedureCode		({HNBAP-ELEMENTARY-PROCEDURES}),
+	criticality		HNBAP-ELEMENTARY-PROCEDURE.&criticality			({HNBAP-ELEMENTARY-PROCEDURES}{@procedureCode}),
+	value			HNBAP-ELEMENTARY-PROCEDURE.&InitiatingMessage	({HNBAP-ELEMENTARY-PROCEDURES}{@procedureCode})
+}
+
+SuccessfulOutcome ::= SEQUENCE {
+	procedureCode	HNBAP-ELEMENTARY-PROCEDURE.&procedureCode		({HNBAP-ELEMENTARY-PROCEDURES}),
+	criticality		HNBAP-ELEMENTARY-PROCEDURE.&criticality			({HNBAP-ELEMENTARY-PROCEDURES}{@procedureCode}),
+	value			HNBAP-ELEMENTARY-PROCEDURE.&SuccessfulOutcome	({HNBAP-ELEMENTARY-PROCEDURES}{@procedureCode})
+}
+
+UnsuccessfulOutcome ::= SEQUENCE {
+	procedureCode	HNBAP-ELEMENTARY-PROCEDURE.&procedureCode		({HNBAP-ELEMENTARY-PROCEDURES}),
+	criticality		HNBAP-ELEMENTARY-PROCEDURE.&criticality			({HNBAP-ELEMENTARY-PROCEDURES}{@procedureCode}),
+	value			HNBAP-ELEMENTARY-PROCEDURE.&UnsuccessfulOutcome	({HNBAP-ELEMENTARY-PROCEDURES}{@procedureCode})
+}
+
+-- **************************************************************
+--
+-- Interface Elementary Procedure List
+--
+-- **************************************************************
+
+HNBAP-ELEMENTARY-PROCEDURES HNBAP-ELEMENTARY-PROCEDURE ::= {
+	HNBAP-ELEMENTARY-PROCEDURES-CLASS-1	|
+	HNBAP-ELEMENTARY-PROCEDURES-CLASS-2	,
+	...
+}
+
+HNBAP-ELEMENTARY-PROCEDURES-CLASS-1 HNBAP-ELEMENTARY-PROCEDURE ::= {
+	hNBRegister|
+	uERegister,
+	...
+}
+
+
+HNBAP-ELEMENTARY-PROCEDURES-CLASS-2 HNBAP-ELEMENTARY-PROCEDURE ::= {
+	uEDe-Register |
+	hNBDe-Register |
+	errorIndication	|
+	privateMessage,
+	...
+}
+
+-- **************************************************************
+--
+-- Interface Elementary Procedures
+--
+-- **************************************************************
+
+
+hNBRegister HNBAP-ELEMENTARY-PROCEDURE ::= {
+	INITIATING MESSAGE		HNBRegisterRequest
+	SUCCESSFUL OUTCOME		HNBRegisterAccept
+	UNSUCCESSFUL OUTCOME	HNBRegisterReject
+	PROCEDURE CODE			id-HNBRegister
+	CRITICALITY				reject
+}
+
+uERegister HNBAP-ELEMENTARY-PROCEDURE ::= {
+	INITIATING MESSAGE		UERegisterRequest
+	SUCCESSFUL OUTCOME		UERegisterAccept
+	UNSUCCESSFUL OUTCOME	UERegisterReject
+	PROCEDURE CODE			id-UERegister
+	CRITICALITY				reject
+}
+
+uEDe-Register HNBAP-ELEMENTARY-PROCEDURE ::= {
+	INITIATING MESSAGE		UEDe-Register
+	PROCEDURE CODE			id-UEDe-Register
+	CRITICALITY				ignore
+}
+
+hNBDe-Register HNBAP-ELEMENTARY-PROCEDURE ::= {
+	INITIATING MESSAGE		HNBDe-Register
+	PROCEDURE CODE			id-HNBDe-Register
+	CRITICALITY				ignore
+}
+
+errorIndication HNBAP-ELEMENTARY-PROCEDURE ::= {
+	INITIATING MESSAGE		ErrorIndication
+	PROCEDURE CODE			id-ErrorIndication
+	CRITICALITY				ignore
+}
+
+privateMessage HNBAP-ELEMENTARY-PROCEDURE ::= {
+	INITIATING MESSAGE		PrivateMessage
+	PROCEDURE CODE			id-privateMessage
+	CRITICALITY				ignore
+}
+
+END
+
+-- **************************************************************
+--
+-- PDU definitions for HNBAP.
+--
+-- **************************************************************
+
+HNBAP-PDU-Contents {
+itu-t (0) identified-organization (4) etsi (0) mobileDomain (0) 
+umts-Access (20) modules (3) hnbap(6) version1 (1) hnbap-PDU-Contents (1) }
+
+DEFINITIONS AUTOMATIC TAGS ::= 
+
+BEGIN
+
+-- **************************************************************
+--
+-- IE parameter types from other modules.
+--
+-- **************************************************************
+
+IMPORTS
+	Cause,
+	CriticalityDiagnostics,
+	HNB-Location-Information,
+	HNB-Identity,
+	Context-ID,
+	UE-Identity,
+	LAC,
+	RAC,
+	SAC,
+	CN-DomainIndicator,
+	IP-Address,
+	Registration-Cause,
+	UE-Capabilities,
+	PLMNidentity,
+	CellIdentity,
+	RNC-ID,
+	CSG-ID,
+	BackoffTimer
+
+
+FROM HNBAP-IEs
+
+
+	ProtocolExtensionContainer{},
+	ProtocolIE-ContainerList{},
+	ProtocolIE-Container{},
+	ProtocolIE-Single-Container{},
+	PrivateIE-Container{},
+	HNBAP-PRIVATE-IES,
+	HNBAP-PROTOCOL-EXTENSION,
+	HNBAP-PROTOCOL-IES
+
+FROM HNBAP-Containers
+
+	id-Cause,
+	id-CriticalityDiagnostics,
+	id-HNB-Location-Information,
+	id-HNB-Identity,
+	id-Context-ID,
+	id-PLMNidentity,
+	id-UE-Identity,
+	id-LAC,
+	id-RAC,
+	id-SAC,
+	id-UE-Capabilities,
+	id-Registration-Cause,
+	id-CellIdentity,
+	id-RNC-ID,
+	id-CSG-ID,
+	id-BackoffTimer
+
+FROM HNBAP-Constants;
+
+-- **************************************************************
+--
+-- HNB Register REQUEST
+--
+-- **************************************************************
+
+HNBRegisterRequest ::= SEQUENCE {
+	protocolIEs			ProtocolIE-Container       { {HNBRegisterRequestIEs} },
+	protocolExtensions	ProtocolExtensionContainer { {HNBRegisterRequestExtensions} } 	OPTIONAL,
+	...
+}
+
+HNBRegisterRequestIEs HNBAP-PROTOCOL-IES ::= {
+	{ ID id-HNB-Identity						CRITICALITY reject	TYPE HNB-Identity					PRESENCE mandatory } |
+	{ ID id-HNB-Location-Information			CRITICALITY reject	TYPE HNB-Location-Information		PRESENCE mandatory } |
+	{ ID id-PLMNidentity						CRITICALITY reject	TYPE PLMNidentity					PRESENCE mandatory } |
+	{ ID id-CellIdentity						CRITICALITY reject	TYPE CellIdentity					PRESENCE mandatory } |
+	{ ID id-LAC									CRITICALITY reject	TYPE LAC							PRESENCE mandatory } |
+	{ ID id-RAC									CRITICALITY reject	TYPE RAC							PRESENCE mandatory } |
+	{ ID id-SAC									CRITICALITY reject	TYPE SAC							PRESENCE mandatory } |
+	{ ID id-CSG-ID								CRITICALITY reject	TYPE CSG-ID							PRESENCE optional } ,
+	...
+}
+
+HNBRegisterRequestExtensions HNBAP-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+-- **************************************************************
+--
+-- HNB Register Accept
+--
+-- **************************************************************
+
+HNBRegisterAccept ::= SEQUENCE {
+	protocolIEs			ProtocolIE-Container       { {HNBRegisterResponseIEs} },
+	protocolExtensions	ProtocolExtensionContainer { {HNBRegisterResponseExtensions} } 	OPTIONAL,
+	...
+}
+
+HNBRegisterResponseIEs HNBAP-PROTOCOL-IES ::= {
+	{ ID id-RNC-ID					CRITICALITY reject	TYPE RNC-ID		PRESENCE mandatory },
+	...
+}
+
+
+HNBRegisterResponseExtensions HNBAP-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+-- **************************************************************
+--
+-- HNB Register REJECT
+--
+-- **************************************************************
+
+HNBRegisterReject ::= SEQUENCE {
+	protocolIEs			ProtocolIE-Container       { {HNBRegisterRejectIEs} },
+	protocolExtensions	ProtocolExtensionContainer { {HNBRegisterRejectExtensions} } 	OPTIONAL,
+	...
+}
+
+HNBRegisterRejectIEs HNBAP-PROTOCOL-IES ::= {
+	{ ID id-Cause						CRITICALITY ignore	TYPE Cause						PRESENCE mandatory} |
+	{ ID id-CriticalityDiagnostics		CRITICALITY ignore	TYPE CriticalityDiagnostics		PRESENCE optional } |
+	{ ID id-BackoffTimer				CRITICALITY reject	TYPE BackoffTimer				PRESENCE conditional },
+	-- This IE shall be present if the Cause IE is set to "Overload".
+	...
+}
+
+HNBRegisterRejectExtensions HNBAP-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+
+
+-- **************************************************************
+--
+-- HNB De- Register
+--
+-- **************************************************************
+
+HNBDe-Register ::= SEQUENCE {
+	protocolIEs			ProtocolIE-Container       { {HNBDe-RegisterIEs} },
+	protocolExtensions	ProtocolExtensionContainer { {HNBDe-RegisterExtensions} } 	OPTIONAL,
+	...
+}
+
+HNBDe-RegisterIEs HNBAP-PROTOCOL-IES ::= {
+	{ ID id-Cause				CRITICALITY ignore	TYPE Cause			PRESENCE mandatory } |
+	{ ID id-BackoffTimer		CRITICALITY reject	TYPE BackoffTimer	PRESENCE conditional },
+	-- This IE shall be present if the Cause IE is set to "Overload".
+	...
+}
+
+HNBDe-RegisterExtensions HNBAP-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+
+-- **************************************************************
+--
+-- UE Register REQUEST
+--
+-- **************************************************************
+
+UERegisterRequest ::= SEQUENCE {
+	protocolIEs			ProtocolIE-Container       { {UERegisterRequestIEs} },
+	protocolExtensions	ProtocolExtensionContainer { {UERegisterRequestExtensions} } 	OPTIONAL,
+	...
+}
+
+UERegisterRequestIEs HNBAP-PROTOCOL-IES ::= {
+	{ ID id-UE-Identity						CRITICALITY reject	TYPE UE-Identity				PRESENCE mandatory } |
+	{ ID id-Registration-Cause				CRITICALITY ignore	TYPE Registration-Cause			PRESENCE mandatory } |
+	{ ID id-UE-Capabilities					CRITICALITY reject	TYPE UE-Capabilities			PRESENCE mandatory },
+	...
+}
+
+UERegisterRequestExtensions HNBAP-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+-- **************************************************************
+--
+-- UE Register ACCEPT
+--
+-- **************************************************************
+
+UERegisterAccept ::= SEQUENCE {
+	protocolIEs			ProtocolIE-Container		{ {UERegisterAcceptIEs} },
+	protocolExtensions	ProtocolExtensionContainer	{ {UERegisterAcceptExtensions} } 	OPTIONAL,
+	...
+}
+
+UERegisterAcceptIEs HNBAP-PROTOCOL-IES ::= {
+	{ ID id-UE-Identity				CRITICALITY reject	TYPE UE-Identity		PRESENCE mandatory } |
+	{ ID id-Context-ID				CRITICALITY ignore	TYPE Context-ID			PRESENCE mandatory },
+	...
+}
+
+
+UERegisterAcceptExtensions HNBAP-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+-- **************************************************************
+--
+-- UE Register REJECT
+--
+-- **************************************************************
+
+UERegisterReject ::= SEQUENCE {
+	protocolIEs			ProtocolIE-Container		{ {UERegisterRejectIEs} },
+	protocolExtensions	ProtocolExtensionContainer	{ {UERegisterRejectExtensions} } 	OPTIONAL,
+	...
+}
+
+UERegisterRejectIEs HNBAP-PROTOCOL-IES ::= {
+	{ ID id-UE-Identity					CRITICALITY reject	TYPE UE-Identity				PRESENCE mandatory } |
+	{ ID id-Cause						CRITICALITY ignore	TYPE Cause						PRESENCE mandatory} |
+	{ ID id-CriticalityDiagnostics		CRITICALITY ignore	TYPE CriticalityDiagnostics		PRESENCE optional },
+	...
+}
+
+UERegisterRejectExtensions HNBAP-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+
+-- **************************************************************
+--
+-- UE De-Register
+--
+-- **************************************************************
+
+UEDe-Register ::= SEQUENCE {
+	protocolIEs			ProtocolIE-Container		{ {UEDe-RegisterIEs} },
+	protocolExtensions	ProtocolExtensionContainer	{ {UEDe-RegisterExtensions} } 	OPTIONAL,
+	...
+}
+
+UEDe-RegisterIEs HNBAP-PROTOCOL-IES ::= {
+	{ ID id-Context-ID						CRITICALITY reject	TYPE Context-ID				PRESENCE mandatory } |
+	{ ID id-Cause							CRITICALITY ignore	TYPE Cause					PRESENCE mandatory } ,
+	...
+}
+
+UEDe-RegisterExtensions HNBAP-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+
+
+-- **************************************************************
+--
+-- ERROR INDICATION
+--
+-- **************************************************************
+
+ErrorIndication ::= SEQUENCE {
+	protocolIEs			ProtocolIE-Container		{ {ErrorIndicationIEs} },
+	protocolExtensions	ProtocolExtensionContainer	{ {ErrorIndicationExtensions} } 	OPTIONAL,
+	...
+}
+
+ErrorIndicationIEs HNBAP-PROTOCOL-IES ::= {
+	{ ID id-Cause						CRITICALITY ignore	TYPE Cause						PRESENCE mandatory } |
+	{ ID id-CriticalityDiagnostics		CRITICALITY ignore	TYPE CriticalityDiagnostics		PRESENCE optional },
+		...
+}
+
+ErrorIndicationExtensions HNBAP-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+-- **************************************************************
+--
+-- PRIVATE MESSAGE
+--
+-- **************************************************************
+
+PrivateMessage ::= SEQUENCE {
+	privateIEs		PrivateIE-Container  {{PrivateMessage-IEs}},
+	...
+}
+
+PrivateMessage-IEs HNBAP-PRIVATE-IES ::= {
+	...
+}
+
+END
+
+-- **************************************************************
+--
+-- Information Element Definitions
+--
+-- **************************************************************
+
+HNBAP-IEs {
+itu-t (0) identified-organization (4) etsi (0) mobileDomain (0) 
+umts-Access (20) modules (3) hnbap(6) version1 (1) hnbap-IEs (2) }
+
+DEFINITIONS AUTOMATIC TAGS ::= 
+
+BEGIN
+
+IMPORTS
+	maxNrOfErrors,
+	id-HNB-Internet-Information
+	
+FROM HNBAP-Constants
+
+	Criticality,
+	ProcedureCode,
+	ProtocolIE-ID,
+	TriggeringMessage
+FROM HNBAP-CommonDataTypes
+
+	ProtocolExtensionContainer{},
+	HNBAP-PROTOCOL-EXTENSION
+FROM HNBAP-Containers;
+
+
+--A
+Access-stratum-release-indicator ::=	ENUMERATED {r99,
+										rel-4, rel-5, rel-6, rel-7, rel-8,
+										...}
+
+AltitudeAndDirection ::= SEQUENCE {
+	directionOfAltitude		ENUMERATED {height, depth},
+	altitude		INTEGER (0..32767),
+	...
+}
+
+--B
+BackoffTimer ::= INTEGER(0..3600)
+
+--C
+Cause ::= CHOICE {
+	radioNetwork			CauseRadioNetwork,
+	transport				CauseTransport,
+	protocol				CauseProtocol,
+	misc					CauseMisc,
+	...
+}
+CauseRadioNetwork ::= ENUMERATED {
+	overload,
+	unauthorised-Location,
+	unauthorised-HNB,
+	hNB-parameter-mismatch,
+	invalid-UE-identity,
+	uE-not-allowed-on-this-HNB,
+	uE-unauthorised,
+	connection-with-UE-lost,
+	ue-RRC-telease,
+	hNB-not-registered,
+	unspecified,
+	normal,
+	uE-relocated,
+	ue-registered-in-another-HNB,
+	...
+}
+
+CauseTransport ::= ENUMERATED {
+	transport-resource-unavailable,
+	unspecified,
+	...
+}
+
+CauseProtocol ::= ENUMERATED {
+	transfer-syntax-error,
+	abstract-syntax-error-reject,
+	abstract-syntax-error-ignore-and-notify,
+	message-not-compatible-with-receiver-state,
+	semantic-error,
+	unspecified,
+	abstract-syntax-error-falsely-constructed-message,
+	...
+}
+
+CauseMisc ::= ENUMERATED {
+	processing-overload,
+	hardware-failure,
+	o-and-m-intervention,
+	unspecified,
+	...
+}
+						
+CellIdentity ::=		BIT STRING (SIZE (28))
+
+Context-ID	::=	 BIT STRING (SIZE(24))
+
+CriticalityDiagnostics ::= SEQUENCE {
+	procedureCode				ProcedureCode													OPTIONAL,
+	triggeringMessage			TriggeringMessage												OPTIONAL,
+	procedureCriticality		Criticality														OPTIONAL,
+	iEsCriticalityDiagnostics	CriticalityDiagnostics-IE-List									OPTIONAL,
+	iE-Extensions				ProtocolExtensionContainer { {CriticalityDiagnostics-ExtIEs} } 	OPTIONAL,
+	...
+}
+
+CriticalityDiagnostics-IE-List ::= SEQUENCE (SIZE (1..maxNrOfErrors)) OF
+	SEQUENCE {
+		iECriticality			Criticality,
+		iE-ID					ProtocolIE-ID,
+		typeOfError				TypeOfError,
+		iE-Extensions			ProtocolExtensionContainer { {CriticalityDiagnostics-IE-List-ExtIEs} }	OPTIONAL,
+		...
+	}
+
+CriticalityDiagnostics-IE-List-ExtIEs HNBAP-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+CriticalityDiagnostics-ExtIEs HNBAP-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+CSG-ID			::=	BIT STRING (SIZE (27))
+
+CSG-Indicator	::=	ENUMERATED {
+				csg-capable,
+				not-csg-capable,
+				...
+			}
+
+CGI ::= SEQUENCE {
+	pLMNidentity		PLMNidentity,
+	lAC					LAC,
+	cI					CI,
+	iE-Extensions		ProtocolExtensionContainer { {CGI-ExtIEs} } OPTIONAL
+}
+
+CGI-ExtIEs HNBAP-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+CI					::= OCTET STRING (SIZE (2))
+
+
+CN-DomainIndicator ::= ENUMERATED { 
+	cs-domain, 
+	ps-domain 
+}
+--D
+--E
+ESN		::=	BIT STRING (SIZE(32))
+--F
+--G
+GeographicalLocation ::= SEQUENCE {
+	geographicalCoordinates		GeographicalCoordinates,
+	altitudeAndDirection		AltitudeAndDirection,
+	iE-Extensions				ProtocolExtensionContainer { { GeographicLocation-ExtIEs} } OPTIONAL,
+	...
+}
+
+GeographicLocation-ExtIEs HNBAP-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+GeographicalCoordinates ::= SEQUENCE {
+	latitudeSign			ENUMERATED {north, south},
+	latitude				INTEGER (0..8388607),
+	longitude				INTEGER (-8388608..8388607),
+	iE-Extensions			ProtocolExtensionContainer { {GeographicalCoordinates-ExtIEs} }		OPTIONAL,
+	...
+}
+
+GeographicalCoordinates-ExtIEs HNBAP-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+--H
+HNB-Location-Information	::=	SEQUENCE	{
+	macroCoverageInfo		MacroCoverageInformation	OPTIONAL,
+	geographicalCoordinates	GeographicalLocation	OPTIONAL,
+	iE-Extensions			ProtocolExtensionContainer { { HNB-Location-Information-ExtIEs } }		OPTIONAL,
+		...
+}
+
+HNB-Location-Information-ExtIEs HNBAP-PROTOCOL-EXTENSION ::= {
+-- Extension for release-8 to support IP address for location verification --
+{ID id-HNB-Internet-Information	CRITICALITY reject	EXTENSION IP-Address	PRESENCE optional	},
+	...
+}
+
+
+
+HNB-Identity	::=		SEQUENCE {
+	hNB-Identity-Info		HNB-Identity-Info,
+	iE-Extensions		ProtocolExtensionContainer { { HNB-Identity-ExtIEs } }		OPTIONAL,
+	...
+}
+
+HNB-Identity-ExtIEs HNBAP-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+
+HNB-Identity-Info ::= OCTET STRING (SIZE (1..255))
+
+--I
+
+IMEI					::= BIT STRING (SIZE(60))
+
+IMSI					::= OCTET STRING (SIZE (3..8))
+-- Reference: 23.003
+IMSIDS41				::= OCTET STRING (SIZE (5..7))
+
+IMSIESN				::= SEQUENCE {
+	iMSIDS41		IMSIDS41,
+	eSN				ESN
+}	
+
+
+IP-Address		::=SEQUENCE {
+		ipaddress		CHOICE {
+			ipv4info		Ipv4Address,
+			ipv6info		Ipv6Address,
+			...
+		},
+	iE-Extensions		ProtocolExtensionContainer { { IP-Address-ExtIEs } }		OPTIONAL,
+		...
+}
+
+IP-Address-ExtIEs HNBAP-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+Ipv4Address		::= OCTET STRING (SIZE (4))
+
+Ipv6Address		::= OCTET STRING (SIZE (16))
+
+
+
+
+--J
+--K
+--L
+LAC			::= OCTET STRING(SIZE(2))
+
+LAI			::= SEQUENCE {
+	pLMNID		PLMNidentity,
+	lAC			LAC,
+	...
+			}
+			
+-- M
+
+MacroCoverageInformation	::= SEQUENCE {
+		cellIdentity		MacroCellID,
+		iE-Extensions		ProtocolExtensionContainer { { MacroCoverageInformation-ExtIEs } }		OPTIONAL,
+		...
+}
+
+MacroCoverageInformation-ExtIEs HNBAP-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+MacroCellID ::= CHOICE {
+	uTRANCellID			UTRANCellID, 
+	gERANCellID			CGI,
+	...
+}
+
+--N
+--O
+--P
+PLMNidentity 				::= OCTET STRING (SIZE (3))
+
+PTMSI		::=	BIT STRING (SIZE(32))
+
+PTMSIRAI		::= SEQUENCE {
+	pTMSI		PTMSI,
+	rAI			RAI,
+	...
+	}
+	
+
+--Q
+--R
+RAC			::= OCTET STRING(SIZE(1))
+
+RAI			::= SEQUENCE {
+	lAI			LAI,
+	rAC			RAC,
+	...
+}
+
+
+Registration-Cause	::= ENUMERATED {
+				emergency-call,
+				normal,
+				...
+			}
+
+RNC-ID	::=	INTEGER(0..65535)
+
+--S
+
+SAC			::= OCTET STRING(SIZE(2))
+
+--T
+TMSILAI		::=	SEQUENCE {
+	tMSI		BIT STRING(SIZE (32)),
+	lAI			LAI
+}
+
+TMSIDS41	::=		OCTET STRING (SIZE (2..17))
+
+TypeOfError ::= ENUMERATED {
+	not-understood,
+	missing,
+	...
+}
+--U
+UE-Capabilities ::= SEQUENCE {
+	access-stratum-release-indicator	Access-stratum-release-indicator,
+	csg-indicator						CSG-Indicator,
+	iE-Extensions		ProtocolExtensionContainer { { UE-Capabilities-ExtIEs } }		OPTIONAL,
+...
+}
+
+UE-Capabilities-ExtIEs HNBAP-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+UTRANCellID ::= SEQUENCE {
+	lAC						LAC,
+	rAC						RAC,
+	pLMNidentity			PLMNidentity,
+	uTRANcellID				CellIdentity,
+	iE-Extensions			ProtocolExtensionContainer { {UTRANCellID-ExtIEs} } OPTIONAL
+}
+
+UTRANCellID-ExtIEs HNBAP-PROTOCOL-EXTENSION ::= {
+	...
+}
+							
+
+
+UE-Identity	::=	CHOICE {
+	iMSI		IMSI,
+	tMSILAI		TMSILAI,
+	pTMSIRAI	PTMSIRAI,
+	iMEI		IMEI,
+	eSN			ESN,
+	iMSIDS41	IMSIDS41,
+	iMSIESN		IMSIESN,
+	tMSIDS41	TMSIDS41,
+	...
+}
+
+	
+--V
+--W
+--X
+--Y
+--Z
+
+
+END
+
+-- **************************************************************
+--
+-- Common definitions
+--
+-- **************************************************************
+
+HNBAP-CommonDataTypes {
+itu-t (0) identified-organization (4) etsi (0) mobileDomain (0) 
+umts-Access (20) modules (3) hnbap(6) version1 (1) hnbap-CommonDataTypes (3)  }
+
+DEFINITIONS AUTOMATIC TAGS ::= 
+
+BEGIN
+
+-- **************************************************************
+--
+-- Extension constants
+--
+-- **************************************************************
+
+maxPrivateIEs 									INTEGER ::= 65535
+maxProtocolExtensions 							INTEGER ::= 65535
+maxProtocolIEs									INTEGER ::= 65535
+
+-- **************************************************************
+--
+-- Common Data Types
+--
+-- **************************************************************
+Criticality		::= ENUMERATED { reject, ignore, notify }
+
+Presence		::= ENUMERATED { optional, conditional, mandatory }
+
+PrivateIE-ID	::= CHOICE {
+	local				INTEGER (0..65535),
+	global				OBJECT IDENTIFIER
+}
+
+
+ProcedureCode		::= INTEGER (0..255)
+
+
+ProtocolIE-ID		::= INTEGER (0..maxProtocolIEs)
+
+TriggeringMessage	::= ENUMERATED { initiating-message, successful-outcome, unsuccessful-outcome }
+
+END
+
+-- **************************************************************
+--
+-- Constant definitions
+--
+-- **************************************************************
+
+HNBAP-Constants { 
+itu-t (0) identified-organization (4) etsi (0) mobileDomain (0) 
+umts-Access (20) modules (3) hnbap(6) version1 (1) hnbap-Constants (4) } 
+
+DEFINITIONS AUTOMATIC TAGS ::= 
+
+BEGIN
+
+IMPORTS
+	ProcedureCode,
+	ProtocolIE-ID
+FROM HNBAP-CommonDataTypes;
+
+
+-- **************************************************************
+--
+-- Elementary Procedures
+--
+id-HNBRegister						ProcedureCode ::= 1
+id-HNBDe-Register					ProcedureCode ::= 2
+id-UERegister						ProcedureCode ::= 3
+id-UEDe-Register					ProcedureCode ::= 4
+id-ErrorIndication					ProcedureCode ::= 5
+id-privateMessage					ProcedureCode ::= 6
+ 
+
+
+-- **************************************************************
+--
+-- Lists
+--
+-- **************************************************************
+maxNrOfErrors						INTEGER ::= 256
+
+
+-- **************************************************************
+--
+-- IEs
+--
+-- **************************************************************
+
+id-Cause										ProtocolIE-ID ::= 1
+id-CriticalityDiagnostics						ProtocolIE-ID ::= 2
+id-HNB-Identity									ProtocolIE-ID ::= 3
+id-Context-ID									ProtocolIE-ID ::= 4
+id-UE-Identity									ProtocolIE-ID ::= 5
+id-LAC											ProtocolIE-ID ::= 6
+id-RAC											ProtocolIE-ID ::= 7
+id-HNB-Location-Information						ProtocolIE-ID ::= 8
+id-PLMNidentity									ProtocolIE-ID ::= 9
+id-SAC											ProtocolIE-ID ::= 10
+id-CellIdentity									ProtocolIE-ID ::= 11
+id-Registration-Cause							ProtocolIE-ID ::= 12
+id-UE-Capabilities								ProtocolIE-ID ::= 13
+id-RNC-ID										ProtocolIE-ID ::= 14
+id-CSG-ID										ProtocolIE-ID ::= 15
+id-BackoffTimer									ProtocolIE-ID ::= 16
+id-HNB-Internet-Information							 ProtocolIE-ID ::= 17
+
+
+
+END
+
+-- **************************************************************
+--
+-- Container definitions
+--
+-- **************************************************************
+
+HNBAP-Containers {
+itu-t (0) identified-organization (4) etsi (0) mobileDomain (0) 
+umts-Access (20) modules (3) hnbap(6) version1 (1) hnbap-Containers (5) }
+
+DEFINITIONS AUTOMATIC TAGS ::= 
+
+BEGIN
+
+-- **************************************************************
+--
+-- IE parameter types from other modules.
+--
+-- **************************************************************
+
+IMPORTS
+	Criticality,
+	Presence,
+	PrivateIE-ID,
+	ProtocolIE-ID,
+	maxPrivateIEs,
+	maxProtocolExtensions,
+	maxProtocolIEs
+FROM HNBAP-CommonDataTypes;
+
+-- **************************************************************
+--
+-- Class Definition for Protocol IEs
+--
+-- **************************************************************
+
+HNBAP-PROTOCOL-IES ::= CLASS {
+	&id					ProtocolIE-ID 		UNIQUE,
+	&criticality		Criticality,
+	&Value,
+	&presence			Presence
+}
+WITH SYNTAX {
+	ID					&id
+	CRITICALITY			&criticality
+	TYPE				&Value
+	PRESENCE			&presence
+}
+
+-- **************************************************************
+--
+-- Class Definition for Protocol Extensions
+--
+-- **************************************************************
+
+HNBAP-PROTOCOL-EXTENSION ::= CLASS {
+	&id					ProtocolIE-ID UNIQUE,
+	&criticality		Criticality,
+	&Extension,
+	&presence			Presence
+}
+WITH SYNTAX {
+	ID					&id
+	CRITICALITY			&criticality
+	EXTENSION			&Extension
+	PRESENCE			&presence
+}
+
+-- **************************************************************
+--
+-- Class Definition for Private IEs
+--
+-- **************************************************************
+
+HNBAP-PRIVATE-IES ::= CLASS {
+	&id					PrivateIE-ID,
+	&criticality		Criticality,
+	&Value,
+	&presence			Presence
+}
+WITH SYNTAX {
+	ID					&id
+	CRITICALITY			&criticality
+	TYPE				&Value
+	PRESENCE			&presence
+}
+
+-- **************************************************************
+--
+-- Container for Protocol IEs
+--
+-- **************************************************************
+
+ProtocolIE-Container {HNBAP-PROTOCOL-IES : IEsSetParam} ::= 
+	SEQUENCE (SIZE (0..maxProtocolIEs)) OF
+		ProtocolIE-Field {{IEsSetParam}}
+
+ProtocolIE-Single-Container {HNBAP-PROTOCOL-IES : IEsSetParam} ::= 
+	ProtocolIE-Field {{IEsSetParam}}
+
+ProtocolIE-Field {HNBAP-PROTOCOL-IES : IEsSetParam} ::= SEQUENCE {
+	id					HNBAP-PROTOCOL-IES.&id				({IEsSetParam}),
+	criticality			HNBAP-PROTOCOL-IES.&criticality		({IEsSetParam}{@id}),
+	value				HNBAP-PROTOCOL-IES.&Value			({IEsSetParam}{@id})
+}
+
+-- **************************************************************
+--
+-- Container Lists for Protocol IE Containers
+--
+-- **************************************************************
+
+ProtocolIE-ContainerList {INTEGER : lowerBound, INTEGER : upperBound, HNBAP-PROTOCOL-IES : IEsSetParam} ::=
+	SEQUENCE (SIZE (lowerBound..upperBound)) OF
+		ProtocolIE-Container {{IEsSetParam}}
+
+-- **************************************************************
+--
+-- Container for Protocol Extensions
+--
+-- **************************************************************
+
+ProtocolExtensionContainer {HNBAP-PROTOCOL-EXTENSION : ExtensionSetParam} ::= 
+	SEQUENCE (SIZE (1..maxProtocolExtensions)) OF
+		ProtocolExtensionField {{ExtensionSetParam}}
+
+ProtocolExtensionField {HNBAP-PROTOCOL-EXTENSION : ExtensionSetParam} ::= SEQUENCE {
+	id					HNBAP-PROTOCOL-EXTENSION.&id				({ExtensionSetParam}),
+	criticality			HNBAP-PROTOCOL-EXTENSION.&criticality		({ExtensionSetParam}{@id}),
+	extensionValue		HNBAP-PROTOCOL-EXTENSION.&Extension			({ExtensionSetParam}{@id})
+}
+
+-- **************************************************************
+--
+-- Container for Private IEs
+--
+-- **************************************************************
+
+PrivateIE-Container {HNBAP-PRIVATE-IES : IEsSetParam } ::= 
+	SEQUENCE (SIZE (1.. maxPrivateIEs)) OF
+		PrivateIE-Field {{IEsSetParam}}
+
+PrivateIE-Field {HNBAP-PRIVATE-IES : IEsSetParam} ::= SEQUENCE {
+	id					HNBAP-PRIVATE-IES.&id					({IEsSetParam}),
+	criticality			HNBAP-PRIVATE-IES.&criticality			({IEsSetParam}{@id}),
+	value				HNBAP-PRIVATE-IES.&Value				({IEsSetParam}{@id})
+}
+
+END
+

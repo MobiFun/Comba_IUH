@@ -1,0 +1,27 @@
+
+       ___
+     /_\_/_\    PRISMA Engineering S.r.l.
+    |\ /_\ /|   Telecom testing solutions
+    | |   | |   Via Petrocchi, 4 - 20127 Milano (Italy)
+    |/|___|\|   Tel. +39 02 26113507 - Fax +39 02 26113597
+     \|/_\|/    info@prisma-eng.com - http://www.prisma-eng.com
+
+
+
+/*+---------------+*/
+/*+ OM PRIMITIVEs +*/
+/*+---------------+*/
+typedef VOID OM_START;
+
+typedef VOID OM_START_ACK;
+
+typedef VOID OM_STOP;
+
+typedef {
+UINT TstmIndex 
+} OM_MSC_START_IND;
+
+typedef VOID OM_HEARTBEAT_REQ;
+
+typedef VOID OM_HEARTBEAT_ACK;
+

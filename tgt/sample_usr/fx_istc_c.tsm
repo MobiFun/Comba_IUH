@@ -1,0 +1,624 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/tstmUtils/sampleUsr/trunk/fx_istc.tsm $
+#
+# $Author: umbertob $
+# $Modified: carlom $
+#
+# Description: User Script - Isup Incoming Call 
+#
+#
+# $Rev: 3699 $
+#
+# $Date: 2005-04-27 17:40:58 +0200 (Wed, 27 Apr 2005) $
+# $Modification Date: 2005-12-20 11:50:58 +0200 (Tue, 20 Dec 2005) $
+##############################################################
+
+proc Init { args } {
+	
+	# Declare and Initialize Global Variables
+	global _HandleRxSignalProc _self _isuppid glKeyTag glPidRef
+    global glFxId glCommonDb glUserDb glQueueId glFirstFx glNumOfFx glTUpdStat
+ 
+    # Includes
+	include "common/utils/generalUtils.tsm"
+	include "common/utils/Ss7SaalUtils.tsm"
+	include "common/utils/countersUtils.tsm"
+
+	# Create Ss7 Db
+	set dbpath [lindex $args 0]
+	set ss7db [DbGetName $dbpath] 
+
+	# Create Common Db
+	set dbpath [lindex $args 1]
+	set glCommonDb [DbGetName $dbpath] 
+		
+	# Initialize Indexes
+	set glFxId 0
+	set glFirstFx [lindex $args 2]
+	set glNumOfFx [lindex $args 3]
+
+	# Create Fixed Queue 
+	set end [expr {$glFirstFx + [expr {$glNumOfFx - 1}]}]
+	set glQueueId [fx_create_que 2 $glFirstFx $end]
+
+	# Create Internal Database
+	set glUserDb User_istc_db
+	append glUserDb $_self
+	CreateDataBase $glUserDb
+
+#@@@carlo begin
+if 0 {
+
+	# Declare Counters List
+	set cntList [list TOTAL_NUMBER_OF_CALLS \
+                      TOTAL_NUMBER_OF_FAILED_CALLS \
+                      TOTAL_CALL_FAILURE_RATE \
+                      OVERALL_BHCA \
+                      NUMBER_OF_BUSY_CALLS]
+	InitCounters $cntList
+     }
+#@@@carlo end
+
+	# Declare Counters List
+	set cntList [list TOTAL_NUMBER_OF_CALLS \
+			  TOTAL_NUMBER_OF_ACTIVE_CALLS \
+                          TOTAL_NUMBER_OF_SUCCEEDED_CALLS \
+                          TOTAL_NUMBER_OF_FAILED_CALLS \
+                          TOTAL_CALL_FAILURE_RATE \
+                          OVERALL_BHCA \
+                          NUMBER_OF_BUSY_CALLS]
+
+	InitCounters $cntList
+     
+
+
+	# Create a Timer (s) to update statistics
+	set tUpdStatVal 60
+	set glTUpdStat [tmrnew T_UPD_STAT [expr {1000 * $tUpdStatVal}]]
+
+	InitBhcaHandler $tUpdStatVal
+
+	# Handle Multi-Instance
+	set _HandleRxSignalProc HandleRxSignalProc
+
+	# Find Spc List
+	if { [regexp {^Pstn_} $glCommonDb match] } {
+		for { set index $glFirstFx } { $index <= $end } { incr index } {
+			set spc [DbGet $glCommonDb $index Opc]
+			if { $index == $glFirstFx } {
+				set currSpc $spc
+				set spcList [list $spc]
+			} elseif { $currSpc != $spc } {
+				set currSpc $spc
+				lappend spcList $spc
+			}
+		}
+		set glKeyTag "Opc"
+	} elseif { [regexp {^Msc_} $glCommonDb match] } {
+		foreach index [DbGetIndexList $ss7db] {
+			if { $index == 1 } {
+				set spcList [list [DbGet $ss7db $index Dpc]]
+			} else {
+				lappend spcList [DbGet $ss7db $index Dpc]
+			}
+		}
+		set glKeyTag "Dpc"
+	} else {
+		logscr "Unknown DataBase name ($glCommonDb)"
+		logscr "Name must begin with either \"Pstn_\" or \"Msc_\""
+		return
+	}
+
+	# Create Cic Lists
+	set glPidRef [expr {16384 * $_self}]
+	foreach spc $spcList {
+		set uid [expr {$spc + $glPidRef}]
+		set index [DbGetIdx $ss7db $glKeyTag $spc]	
+		if { ![string is integer -strict $index] } {
+			abort "Error: Subscriber belongs to non created SPC"
+		}
+		set firstLastList [GetCicFirstLast $ss7db $index InCicRange]	
+		foreach { first last } $firstLastList {
+			for { set cic $first } { $cic <= $last } { incr cic } {
+				cicCreate $uid $cic
+				set cicSpc $cic
+				append cicSpc ":"
+				append cicSpc $spc
+				lappend cicList $cicSpc
+			}
+		}
+	}
+
+	# Send Pid to ISUP
+	new		ISUP_SET_USER_PID s
+	wr      s UserPid $_self
+	wr      s ListOfCics $cicList
+	send 	s $_isuppid
+	LogOutputMsg $s
+	
+	# Enable Log
+	dump_on
+
+	# Start Statistics Timer
+	tmrstart $glTUpdStat
+
+	nextstate Null
+}
+
+############################################################
+# Multi Instance Handling
+############################################################
+
+proc HandleRxSignalProc { } {
+
+	# Declare Global Variables
+	global _sig  
+
+	set primName [lindex $_sig 0]
+
+	switch -exact -- $primName {
+		"START"          	{ ByPass }
+		"DELETE"        	{ ByPass }
+		"T_UPD_STAT"	    { ByPass }
+		"T_WAIT"        	{ if { [DefaultTmrHnd] == "-1" } { skipMsg } }
+		"T_DISC"        	{ if { [DefaultTmrHnd] == "-1" } { skipMsg } }
+		default         	{ DefaultHnd }
+	}
+}
+
+proc ByPass { } {
+
+}
+
+proc DefaultHnd { } {
+
+	# Global Variables
+	global _sig glFxId glUserDb
+
+	# Get Index
+	set fxid [rd _sig Id]
+
+	# Check Index and Get Instance 
+	if { ![IsVoid $fxid] } {
+		GetInstance $fxid $glUserDb glFxId
+	} else {
+		logscr "Error: Instance is Empty"
+		skipMsg
+	}
+}
+
+proc DefaultTmrHnd { } {
+
+	# Global Variables
+	global glUserDb glFxId 
+
+	GetInstanceFromTimer $glUserDb glFxId
+}
+
+############################################################
+# Scheduler Signals Handling
+############################################################
+
+proc StartHandler { } {
+
+	# Global Variables
+	global _parent glQueueId glFxId glUserDb glFirstFx glNumOfFx
+
+	# Get Instance from Queue
+	set inst [fx_get_que $glQueueId]
+	if { $inst == "-1" } {
+		set res "FAIL $inst"
+		send res $_parent
+		LogOutputMsg $res
+		logscr "Warning: Ms Queue is Empty!"
+		return
+	}
+
+	# Create Entities
+	set end [expr {$glFirstFx + [expr {$glNumOfFx - 1}]}]
+	for { set inst $glFirstFx } { $inst <= $end } { incr inst } { 
+		CreateIstcEntity $inst "WaitForSetupInd"
+	}
+}
+
+proc DeleteHandler { } {
+
+	# Global Variables
+	global _parent glQueueId
+
+	fx_clear_que $glQueueId
+
+	set res "DELETED"
+	send res $_parent
+	LogOutputMsg $res
+}
+
+############################################################
+# Data Base Handling
+############################################################
+
+proc CreateDataBase { dbname } {
+
+	# Global Variables
+
+	lappend idxList [list Idx          Index Read/Write]
+	lappend idxList [list State        Normal Read/Write]
+	lappend idxList [list Result       Normal Read/Write]
+	lappend idxList [list Cic          Normal Read/Write]
+	lappend idxList [list T_WAITid     Key Read/Write]
+	lappend idxList [list T_DISCid     Key Read/Write]
+
+	DbCreate $dbname $idxList
+}
+
+proc CreateIstcEntity { inst initst } {
+
+	# Global Variables
+	global glUserDb glCommonDb
+
+	DbCreateDefEntry $glUserDb $inst
+
+	set tWaitid [tmrnew T_WAIT 1000]
+	DbSet $glUserDb $inst T_WAITid $tWaitid
+
+	set tDiscid [tmrnew T_DISC [DbGet $glCommonDb $inst DiscTimer]]
+	DbSet $glUserDb $inst T_DISCid $tDiscid
+
+	DbSet $glUserDb $inst State $initst
+}
+
+proc RemoveIstcEntity { inst } {
+
+	# Global Variables
+	global glUserDb
+
+	# Free Timers
+	tmrfree [DbGet $glUserDb $inst T_WAITid]
+	tmrfree [DbGet $glUserDb $inst T_DISCid]
+
+	DbRemEntry $glUserDb $inst
+}
+
+############################################################
+# Procedures
+############################################################
+
+proc SetupInd { } {
+
+	# Declare and Initialize Global Variables
+	global _sig _isuppid glFxId glCommonDb glUserDb glKeyTag glPidRef
+
+	LogInputMsg $_sig
+
+	# Perform Checks
+
+	# Get Parameters
+	set cic [rd _sig Cic]
+	set spc [DbGet $glCommonDb $glFxId $glKeyTag]
+	set uid [expr {$glPidRef + $spc}]
+	set cicVal [lindex [split $cic :] 0]
+	set res [cicUse $uid $cicVal] 
+	switch -exact -- $res {
+		"0"     { DbSet $glUserDb $glFxId Cic $cic }
+		"-1"	{ logscr "Invalid Queue"; return }
+		"-2" 	{ logscr "Cic is unavailable"; return }
+		"-3"	{ logscr "Invalid Cic"; return }
+		"-4" 	{ logscr "Cic is not created"; return }
+		"-5"	{ logscr "Cic is busy"; return }
+		"-6" 	{ logscr "Cic is blocked"; return }
+		default { logscr "Cic usage failure ($res)"; return }
+	}
+
+	# Build ACM 
+	new		ACM acm
+	# BACKWARD CALL IND 2 bytes
+	# End-to-End Method (bits 7-6), Called Party's Category (bits 5-4)	
+	# Called Party's Status (bits 3-2), Charge (1-0)
+	# SCCP Method (bits 7-6), Echo Control Device (bit 5)
+	# ISDN Access (bit 4), Holding (bit 3)
+    # ISDN User Part (bit 2), End/End Info (bit 1)
+	# Interworking (bit 0)
+	# Ex.: 00 01 01 10
+    #      00 1 1 0 1 0 0
+	wr		acm backward_call_ind 1634	
+
+	# Alert Request
+	new		ALERT_REQ s
+	wr		s Id $glFxId	
+	wr		s Cic $cic
+	wr		s Pdu1 $acm
+	send    s $_isuppid
+	LogOutputMsg $s
+
+	# Counters
+	IncreaseCounter TOTAL_NUMBER_OF_CALLS
+        IncreaseCounter NUMBER_OF_BUSY_CALLS
+	IncreaseBhcaCallCounter
+
+	tmrstart [DbGet $glUserDb $glFxId T_WAITid]
+
+	nextstate SetupIndReceived
+}
+
+proc SendSetupRes { } {
+	
+	# Declare and Initialize Global Variables
+	global _sig _isuppid glFxId glUserDb
+
+	LogInputMsg $_sig
+
+	# Get Parameters
+	set cic [DbGet $glUserDb $glFxId Cic]
+
+	# Build ANM 
+	new		ANM anm
+
+	# Setup Response
+	new		SETUP_RES s
+	wr      s Id $glFxId
+	wr		s Cic $cic
+	wr		s Pdu1 $anm
+	send    s $_isuppid
+	LogOutputMsg $s
+
+	DbSet $glUserDb $glFxId Result "PASS"
+
+	tmrstart [DbGet $glUserDb $glFxId T_DISCid]
+
+#@@@carlo begin
+        IncreaseCounter TOTAL_NUMBER_OF_ACTIVE_CALLS
+#@@@carlo end 
+
+	nextstate Active
+}
+
+proc DisconnectHnd { } {
+
+	# Declare and Initialize Global Variables
+	global glFxId
+
+	Disconnect $glFxId
+}
+
+proc Disconnect { inst } {
+
+	# Declare and Initialize Global Variables
+	global _isuppid glUserDb glFxId
+
+	# Get Parameters
+	set cic [DbGet $glUserDb $glFxId Cic]
+
+	# Build REL
+	new		REL rel
+	# CAUSE 2 bytes
+	# Extension (bit 7), Coding Standard (bits 6-5)
+    # Spare (bit 4), Location (bits 3-2-1-0)	
+	# Extension (bit 7), Cause Value (6-5-4-3-2-1-0)
+	wr		rel cause_ind 8090
+
+	new 	RELEASE_REQ s
+	wr      s Id $inst
+	wr      s Cic $cic
+	wr		s Pdu $rel
+	send    s $_isuppid
+	LogOutputMsg $s
+
+	nextstate WaitForReleaseCnf
+}
+
+proc ReleaseCnf { } {
+
+	# Declare and Initialize Global Variables
+	global _sig
+
+	LogInputMsg $_sig
+
+	DecreaseCounter NUMBER_OF_BUSY_CALLS
+#@@@carlo begin
+        DecreaseCounter TOTAL_NUMBER_OF_ACTIVE_CALLS
+        IncreaseCounter TOTAL_NUMBER_OF_SUCCEEDED_CALLS
+#@@@carlo end
+	EndOfTransaction
+}
+
+proc EndOfTransaction { } {
+
+	# Declare and Initialize Global Variables
+	global _parent _sig glFxId glUserDb glKeyTag glCommonDb glPidRef
+
+	# Inform Parent
+	set res [DbGet $glUserDb $glFxId Result]
+	if { ![IsVoid $res] } {
+		set	s [list $res $glFxId]
+		send s $_parent
+		LogOutputMsg $s
+	}
+
+	# Release Cic
+	set uid [expr {$glPidRef + [DbGet $glCommonDb $glFxId $glKeyTag]}]
+	set cic [lindex [split [rd _sig Cic] :] 0]
+	cicRelease $uid $cic
+	
+	# ---
+	# Remove Entity
+	#RemoveIstcEntity $glFxId
+
+	# Free Instance
+	#fx_que_put_back $glFxId
+
+	#nextstate Null
+
+	# --- Restart
+	set res "STARTED $glFxId"
+	send res $_parent
+	LogOutputMsg $res
+
+	nextstate WaitForSetupInd
+}
+
+proc ReleaseInd { } {
+
+	# Declare and Initialize Global Variables
+	global _sig _isuppid glUserDb glUserDb glFxId
+
+	LogInputMsg $_sig
+
+#@@@carlo begin
+if 0 {
+	# Stop Timers
+	tmrstop [DbGet $glUserDb $glFxId T_DISCid]
+
+	# Counters
+	IncreaseCounter TOTAL_NUMBER_OF_FAILED_CALLS
+	DecreaseCounter NUMBER_OF_BUSY_CALLS
+     }
+
+        if {![IsVoid T_DISCid]} {
+                                  # Stop Timers
+                        	  tmrstop [DbGet $glUserDb $glFxId T_DISCid]
+
+	# Counters
+	DecreaseCounter TOTAL_NUMBER_OF_ACTIVE_CALLS
+	IncreaseCounter TOTAL_NUMBER_OF_SUCCEEDED_CALLS
+	DecreaseCounter NUMBER_OF_BUSY_CALLS
+     }  else  {
+	IncreaseCounter TOTAL_NUMBER_OF_FAILED_CALLS
+	DecreaseCounter NUMBER_OF_BUSY_CALLS
+     }
+
+#@@@carlo end
+
+	# Get Parameters
+	set id [rd _sig Id]
+	set cic [rd _sig Cic]
+	set pdu [rd _sig Pdu]
+	set cause [rd pdu cause_ind]
+
+	# Build RLC
+	new		RLC rlc
+	# CAUSE 
+
+	# Release Response	
+	new		RELEASE_RES s
+	wr		s Id $id
+	wr		s Cic $cic
+	wr      s Pdu $rlc
+	send    s $_isuppid
+	LogOutputMsg $s
+
+	EndOfTransaction
+}
+
+proc ResetInd { } {
+
+	# Declare and Initialize Global Variables
+	global _sig _isuppid glUserDb glFxId
+
+	LogInputMsg $_sig
+
+	# Stop Timer
+	if { [DbEntryExists $glUserDb $glFxId] } {
+		set tmrId [DbGet $glUserDb $glFxId T_DISCid]
+		if { ![IsVoid $tmrId] } {
+			tmrstop $tmrId
+		}
+	}
+
+	# Get Parameters
+	set id [rd _sig Id]
+	set cic [rd _sig Cic]
+	set rsc [rd _sig Pdu1]
+	set grs [rd _sig Pdu2]
+
+	if { ![IsVoid $rsc] } {
+		# Build RLC
+		new		RLC rlc
+		# CAUSE 
+		#wr		rlc cause_ind
+
+		# Reset Response
+		new		RESET_RES s
+		wr		s Id $id
+		wr		s Cic $cic
+		wr      s Pdu1 $rlc
+		send    s $_isuppid
+		LogOutputMsg $s
+	}
+
+	if { ![IsVoid $grs] } {
+		set range [rd grs range_and_status]
+		for { set i 0 } { $i < $range } { incr i } {
+			append bitStrStatus 0
+		}
+		set padLen [expr {8 - [expr {$range % 8}]}]
+		for { set i 0 } { $i < $padLen } { incr i } {
+			append bitStrStatus 0
+		}
+
+		append range [btoh $bitStrStatus]
+	
+		# Build GRA
+		new		GRA gra
+		# RANGE AND STATUS
+		wr 		gra range_and_status $range
+
+		# Reset Response
+		new		RESET_RES s
+		wr		s Id $id
+		wr		s Cic $cic
+		wr      s Pdu2 $gra
+		send    s $_isuppid
+		LogOutputMsg $s
+	}
+}
+
+proc UpdateIsupStats { } {
+
+	global glTUpdStat
+
+	ComputeBhca	OVERALL_BHCA
+
+	UpdateRatio TOTAL_CALL_FAILURE_RATE \
+				TOTAL_NUMBER_OF_FAILED_CALLS \
+				TOTAL_NUMBER_OF_CALLS
+
+	tmrstart $glTUpdStat
+}
+
+############################################################
+# FSM
+############################################################
+
+state Null {
+	default 				Any
+}
+
+state WaitForSetupInd {
+	SETUP_IND				SetupInd
+	default 				Any
+}
+ 
+state SetupIndReceived {
+	T_WAIT					SendSetupRes
+	default 				Any
+}
+
+state Active { 
+	T_DISC                  DisconnectHnd
+	RELEASE_IND				ReleaseInd
+	default 				Any
+}
+
+state WaitForReleaseCnf {
+	RELEASE_CNF				ReleaseCnf
+	RELEASE_IND				ReleaseInd
+	default 				Any
+}
+
+state Any {
+	START                   StartHandler
+	DELETE					DeleteHandler
+	T_UPD_STAT			    UpdateIsupStats
+	RESET_IND				ResetInd
+	default 				Unexpected
+}

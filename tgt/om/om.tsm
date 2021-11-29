@@ -1,0 +1,505 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/IuhCsComba_Tm/tags/IuhCsComba_Tm-1.2.0/tgt/om/om.tsm $
+#
+# $Author: roger $
+#
+# Description: SS7 Operations and Maintainance
+#
+# $Rev: 53536 $
+#
+# $Date: 2012-07-27 15:55:02 +0200 (Fri, 27 Jul 2012) $
+##############################################################
+
+include "common/utils/generalUtils.tsm"
+include "common/localutils/dbIuh.tsm"
+
+proc Init { cfgFile } {
+
+    if { ![string compare $cfgFile ""]} {
+        logscr "OM: Invalid configuration file ($cfgFile)"
+        return
+    }
+    uplevel #0 include $cfgFile
+
+	dbIuhCreateFromCsv $::__iuh_db
+    omDbComputeSpcStkId
+
+    register OM
+
+    nextstate stOmIdle
+}
+
+proc dbIuhGet {idx fld} {
+    return [DbGet $::glIuhDb $idx $fld]
+}
+
+proc dbIuhSet {idx fld val} {
+    DbSet $::glIuhDb $idx $fld $val
+}
+
+proc omDbComputeSpcStkId {} {
+    # build the list of ss7v3 srv for slogin
+    # for each eNB compute: ctlSpc and ctlStkId
+    array set ::glSs7v3SpcTbl [list]
+    set lastSpc   0
+    set lastStkId 0
+
+	# Create an Spc for each LSU IP address, that is all Iuh managed by
+	# the same LSU share the same SS7 server instance.
+	foreach iuhIdx [DbGetIndexList $::glIuhDb] {
+	
+		set lsuIp [dbIuhGet $iuhIdx CtlLsuIp]
+		# one stack for login/ppu
+		if { ![info exists ::glSs7v3SpcTbl(spc_${lsuIp})] } {
+			set spc [incr lastSpc]
+			set ::glSs7v3SpcTbl(spc_${lsuIp}) $spc
+		} else {
+			set spc $::glSs7v3SpcTbl(spc_${lsuIp})
+		}
+		dbIuhSet $iuhIdx CtlSpc $spc
+		
+		# generate different stkIds even if stkId could be reused within
+		# different logins
+		set ppu [dbIuhGet $iuhIdx CtlPpu]
+		if { ![info exists ::glSs7v3SpcTbl(stkId_${spc}_${ppu})] } {
+			set stkId [incr lastStkId]
+			set ::glSs7v3SpcTbl(stkId_${spc}_${ppu}) $stkId
+		} else {
+			set stkId $::glSs7v3SpcTbl(stkId_${spc}_${ppu})
+		}
+		dbIuhSet $iuhIdx CtlStkId $stkId
+	}
+	parray ::glSs7v3SpcTbl
+}
+
+proc ss7v3Start { } {
+    global glSs7v3SpcTbl glSs7v3IpList
+
+    set glSs7v3IpList [array names glSs7v3SpcTbl "spc_*"]
+    set glSs7v3IpList [regsub -all "spc_" $glSs7v3IpList ""]
+
+    ss7v3StartUpNext
+}
+
+proc ss7v3StartUpNext {} {
+    global __loginName __net_side __ss7_zot
+    global glSs7v3SpcTbl glSs7v3IpList
+
+    set ip [lindex $glSs7v3IpList 0]
+    set spc $glSs7v3SpcTbl(spc_${ip})
+    log "ss7v3StartUpNext: ip=$ip, spc=$spc"
+
+    new OM_START_UP_CMD s
+    wr s Srv_IpAddr  $ip
+    wr s Srv_TcpPort $::__ss7_port
+    wr s LoginName   "$__loginName@${spc}"
+    wr s Spc         $spc
+    wr s NetSide     $__net_side; # TODO: to be removed
+    wr s LogZot      $__ss7_zot
+
+    send s
+    LogOutputMsg $s
+
+    nextstate stWaitSs7v3StartUpAck
+}
+
+proc ss7v3StartUpAck {} {
+    global _sig glSs7v3IpList
+    set glSs7v3IpList [lreplace $glSs7v3IpList 0 0]
+    log "ss7v3StartUpAck: glSs7v3IpList=$glSs7v3IpList"
+    LogInputMsg $_sig
+    if { [llength $glSs7v3IpList] > 0 } {
+        ss7v3StartUpNext
+    } else {
+        # start creating stacks
+        global glSs7v3SpcTbl glSs7v3StkList
+
+        set glSs7v3StkList [array names glSs7v3SpcTbl "stkId_*"]
+        ss7v3CreateNextStack
+    }
+}
+
+proc ss7v3CreateNextStack {} {
+    global glSs7v3SpcTbl glSs7v3StkList
+
+    set stkInfo [lindex $glSs7v3StkList 0]
+    regexp {stkId_([^_]*)_(.*)} $stkInfo -> spc ppu
+    set stkId $glSs7v3SpcTbl($stkInfo)
+    log "ss7v3CreateNextStack: stkId=$stkId, stkInfo=$stkInfo"
+    ss7v3RouteCreateCmd $spc $ppu $stkId
+    nextstate stWaitSs7v3RouteCreateAck
+}
+
+proc ss7v3RouteCreateCmd { spc ppu stkId } {
+    global __ss7_pool_size
+
+    set poolSz 300
+    if { [info exists __ss7_pool_size] } {
+        set poolSz $__ss7_pool_size
+    }
+    log "ss7v3RouteCreateCmd: spc=$spc, ppu=$ppu, stkId=$stkId"
+
+    new OM_ROUTE_CREATE_EXT_CMD s
+    wr s Spc   $spc
+    wr s StkId $stkId
+    append data [uctoh 8]    ;# StkType
+    append data [uctoh $ppu] ;# Nppu
+    append data [uctoh 1]    ;# MaxLink
+    append data [uctoh 1]    ;# Top
+    append data [uctoh 1]    ;# TopUal
+    append data [uctoh 0]    ;# HslOn
+    append data [uctoh 0]    ;# UsePgv
+    append data [uctoh 0]    ;# Lsf
+    append data [uitoh $poolSz]    ;# PoolSize
+    append data [uitoh 4]    ;# SccpConnections
+    wr s Data $data
+    send s
+
+    LogOutputMsg $s
+}
+
+proc ss7v3RouteCreateAck { } {
+    global _sig glSs7v3SpcTbl glSs7v3StkList
+
+    log "ss7v3RouteCreateAck"
+    LogInputMsg $_sig
+    set stkInfo [lindex $glSs7v3StkList 0]
+    regexp {stkId_([^_]*)_(.*)} $stkInfo -> spc ppu
+    set stkId $glSs7v3SpcTbl($stkInfo)
+
+    SendSctpCfg $spc $stkId
+    nextstate stSs7v3WaitSctpCfgAck
+}
+
+proc SendSctpCfg {spc stkId} {
+    global __sctpCfg
+
+    log "SendSctpCfg: spc=$spc, stkId=$stkId"
+    new OM_SCTP_CFG_CMD s
+    wr s Spc   $spc
+    wr s StkId $stkId
+
+    append data [uitoh $stkId]; # ??? [DbGet $glSctpOmDb 0 Inst]]
+    append data [uitoh $__sctpCfg(listenBackLog)]
+    append data [uitoh $__sctpCfg(rxBufSz)]
+    append data [uitoh $__sctpCfg(inStreams)]
+    append data [uitoh $__sctpCfg(outStreams)]
+    append data [uitoh $__sctpCfg(RxMaxPendDataChunks)]
+    append data [uitoh $__sctpCfg(DisableNagle)]
+    append data [uitoh $__sctpCfg(SO_RCVBUF)]
+    append data [uitoh $__sctpCfg(SO_SNDBUF)]
+    append data [uitoh $__sctpCfg(PATH_RET)]
+    append data [uitoh $__sctpCfg(ASC_RET)]
+    append data [uitoh $__sctpCfg(RTO_INIT)]
+    append data [uitoh $__sctpCfg(RTO_MIN)]
+    append data [uitoh $__sctpCfg(RTO_MAX)]
+
+    wr s Data $data
+    send s
+
+    LogOutputMsg $s
+}
+
+proc SctpCfgAck { } {
+    global _sig glSs7v3StkList
+
+    LogInputMsg $_sig
+    set glSs7v3StkList [lreplace $glSs7v3StkList 0 0]
+    log "SctpCfgAck: glSs7v3StkList=$glSs7v3StkList"
+    if { [llength $glSs7v3StkList] > 0 } {
+        ss7v3CreateNextStack
+    } else {
+        if { [IpUpSupported] } {
+			# TODO: start RTP server and not IuPs
+            StartIuCS
+        } else {
+            log "---- U-Plane disabled ----"
+            SendOmStartAck
+        }
+    }
+}
+
+
+proc StartIuCS { } {
+	global glAoipStarted
+
+	if { ![IpUpSupported] } {
+		log "aoipInit: glAoip=$glAoip, IpUpSupported=[IpUpSupported] , glAoipStarted=$glAoipStarted"
+		SendOmStartAck
+		return
+	}
+
+	global __aoip_port __aoip_zot __loginName
+
+	if { $__aoip_zot } {
+		new AOIP_LOGIN_ZOT_CMD s
+	} else {
+		new AOIP_LOGIN_CMD s
+	}
+	wr s CliName $__loginName
+
+
+		if { ![info exists ::__iucs_ip] || [IsEmpty $::__iucs_ip] || [IsVoid $::__iucs_ip] } {
+			# Generalization to the case with more than one MGW
+			logscr "iucs ip is not configured,quit"
+			exit
+		} else {
+			# __iucs_ip is essential for Comba AP if __up_supported is enabled
+			wr s IpAddr $::__iucs_ip
+			logscr "aoipInit: __iucs_ip=$::__iucs_ip"
+		}
+
+
+	if { [info exists __aoip_port] } {
+		wr s Port $__aoip_port
+	}
+	send s
+	LogOutputMsg $s
+
+	nextstate WaitAoipLoginAck
+
+}
+
+
+#-------------------------------------------------------------
+# Om Start Ack
+#-------------------------------------------------------------
+
+proc SendOmStartAck { } {
+
+    logscr ""
+    logscr "O&M BRING-UP COMPLETE"
+    logscr ""
+
+    new	OM_START_ACK s
+    send s $::_parent
+
+    nextstate stOmIdle
+
+    LogOutputMsg $s
+}
+
+
+
+proc aoipLoginAck { } {
+
+	LogInputSig
+	aoipConfig
+}
+
+proc aoipConfig { } {
+
+	global __aoip_ppu_list
+
+	log "aoipConfig: __aoip_ppu_list=$__aoip_ppu_list"
+
+	new AOIP_CONFIG_CMD s
+	wr s Phy 3
+	wr s Top 1
+	wr s Type 2
+	wr s Ppu $__aoip_ppu_list
+	send s
+	LogOutputMsg $s
+
+	nextstate WaitAoipConfigAck
+}
+proc aoipConfigAck { } {
+
+	LogInputSig
+	aoipSetparm
+}
+
+proc aoipSetparm { } {
+
+	global __aoip_max_rab
+
+	log "aoipSetparm: __aoip_max_rab=$__aoip_max_rab"
+
+	new AOIP_SETPARM_CMD s
+	wr s MaxFid 6
+	wr s MaxRab $__aoip_max_rab
+	
+	send s
+	LogOutputMsg $s
+
+	nextstate WaitAoipSetparmAck
+}
+
+proc aoipSetparmAck { } {
+
+	LogInputSig
+	aoipStart
+}
+
+proc aoipStart { } {
+
+	new AOIP_START_CMD s
+	send s
+	LogOutputMsg $s
+
+	nextstate WaitAoipStartAck
+}
+
+proc aoipStartAck { } {
+
+	aoipSouopen	
+}
+
+proc aoipSouopen { } {
+
+# Carlo TODO: gestire scelta della ppu nel caso di suonatore
+
+	global glFileTypeList
+	global glFileNameList
+	global glFileIdList
+	global glListIndex
+	global glFid
+	
+	set glFileTypeList [list GSM_FR GSM_EFR AMR_FR_122 AMR_FR_590 AMR_HR_590]
+	foreach type $glFileTypeList {
+		global __aoip_file
+		if { [string equal $__aoip_file($type) ""] } {
+			lappend glFileNameList ?
+		} else {
+			lappend glFileNameList $__aoip_file($type)
+		}
+	}
+	
+	log "aoipSouopen: glFileNameList = $glFileNameList"
+
+	set glListIndex 0
+	set glFid 0
+
+	if { ![IsVoid [lindex $glFileNameList $glListIndex]] } {
+	
+		lappend glFileIdList $glFid
+		new AOIP_SOU_OPEN_CMD s
+		wr s Inst 0
+		wr s Fid $glFid
+		wr s FileName [lindex $glFileNameList $glListIndex]
+		send s
+		LogOutputMsg $s
+	
+		incr glFid
+		incr glListIndex
+		nextstate WaitAoipSoutAck
+	} else {
+
+		global glFileIdList
+		lappend glFileIdList ?
+		incr glListIndex
+		aoipSouopenAck
+	}
+}
+
+proc aoipSouopenAck { } {
+
+	global _sig
+	LogInputMsg $_sig
+
+	global glListIndex glFileNameList glFid
+
+	log "aoipSouopenAck: glListIndex=$glListIndex; (llength $glFileNameList)=[llength $glFileNameList]"
+
+	if { $glListIndex == [llength $glFileNameList] } {
+		SendOmStartAck
+		nextstate Active
+		return
+	}
+
+	if { ![IsVoid [lindex $glFileNameList $glListIndex]] } {
+		global glFileIdList
+		lappend glFileIdList $glFid
+	
+		new AOIP_SOU_OPEN_CMD s
+		wr s Inst 0
+		wr s Fid $glFid
+		wr s FileName [lindex $glFileNameList $glListIndex]
+		send s
+		LogOutputMsg $s
+	
+		incr glFid
+		incr glListIndex
+		nextstate WaitAoipSoutAck
+	} else {
+
+		global glFileIdList
+		lappend glFileIdList ?
+		incr glListIndex
+		aoipSouopenAck
+	}
+}
+
+proc AoipGetFid { code } {
+
+	global glFileIdList
+    switch -exact -- $code {
+ 	"GSM_FR"     { return [lindex $glFileIdList 0] }
+	"GSM_EFR"    { return [lindex $glFileIdList 1] }
+	"AMR_FR_122" { return [lindex $glFileIdList 2] }
+	"AMR_FR_590" { return [lindex $glFileIdList 3] }
+	"AMR_HR_590" { return [lindex $glFileIdList 4] }
+	default      { return "?" }
+	}
+}
+
+##############################################################
+# FSM
+##############################################################
+
+state stOmIdle {
+    OM_START                    {
+
+		if {[info exists ::__gw_conn_addr] || [info exists ::__ap_conn_port]} {
+			SendOmStartAck
+			return
+		}
+
+		ss7v3Start
+	}
+    default                     stAny
+}
+
+state stWaitSs7v3StartUpAck {
+    OM_START_UP_ACK             ss7v3StartUpAck
+    default                     stAny
+}
+
+state stWaitSs7v3RouteCreateAck {
+    OM_ROUTE_CREATE_EXT_ACK     ss7v3RouteCreateAck
+    default                     stAny
+}
+
+state stSs7v3WaitSctpCfgAck {
+    OM_SCTP_CFG_ACK             SctpCfgAck
+    default                     stAny
+}
+
+
+
+
+######-----------------IUCS part ----------#
+state WaitAoipLoginAck {
+	AOIP_LOGIN_ACK              aoipLoginAck
+	default 					stAny
+}
+state WaitAoipConfigAck {
+	AOIP_CONFIG_ACK             aoipConfigAck
+	default 					stAny
+}
+state WaitAoipSetparmAck {
+	AOIP_SETPARM_ACK            aoipSetparmAck
+	default 					stAny
+}
+
+state WaitAoipStartAck {
+	AOIP_START_ACK              aoipStartAck
+	default 					stAny
+}
+state WaitAoipSoutAck {
+	AOIP_SOU_OPEN_ACK           aoipSouopenAck
+	default 					stAny
+}
+state stAny {
+    default                     Unexpected
+}

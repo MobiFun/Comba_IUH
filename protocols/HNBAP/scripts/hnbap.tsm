@@ -1,0 +1,480 @@
+############################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/HNBAP/tags/HNBAP-1.3.0/scripts/hnbap.tsm $
+#
+# $Author: roger $
+#
+# Description: HNBAP procedures
+#
+# $Rev: 53537 $
+#
+# $Date: 2012-07-27 15:55:36 +0200 (Fri, 27 Jul 2012) $
+##############################################################
+
+include "common/utils/generalUtils.tsm"
+include "common/utils/L3Utils.tsm"
+include "common/localutils/sctp.tsm"
+include "common/localutils/rm_itf.tsm"
+include "common/localutils/dbIuh.tsm"
+include "protocols/HNBAP/hnbap_db.tsm"
+include "protocols/HNBAP/hnbap_multi_inst.tsm"
+include "protocols/HNBAP/hnbap_utils.tsm"
+
+set glMsCreateBeforeGtpSetup 0; # TMP: solo per poter invertire l'ordine di MS_CREATE + GTP_SETUP
+
+proc Init { args } {
+	global glHnbapStreamId glRuaStreamId glHnbapPayloadID glRUAPayloadID
+	
+    set cfgfile [lindex $args 0]
+	if { ![string compare $cfgfile ""] } {
+        logscr "home nodeb: Invalid configuration file ($cfgfile)"
+        exit
+    }
+    uplevel #0 include $cfgfile
+    
+	global ::glCommonDb
+	SetNetside
+
+	register "HNBAP"
+	register "RUA"
+	set glHnbapStreamId 0
+	set glRuaStreamId   1
+		
+	# to set hnbap/rua protocol payload id
+	if { [info exists __hnbap_payload_id] } {
+		set glHnbapPayloadID $__hnbap_payload_id
+	} else {
+		set glHnbapPayloadID 20 
+	}
+	if { [info exists __rua_payload_id] } {
+		set glRUAPayloadID $__rua_payload_id
+	} else {
+		set glRUAPayloadID 19 
+	}
+	
+	set ::glCommonDb [lindex $args 1]
+	dbHnbapIuhCreate
+	dbHnbapAssocCreate
+	dbHnbapUeCreate
+ 	#LogDb $::gldb_HnbapEnb
+	#LogDb $::gldb_HnbapAssoc
+	#LogDb $::gldb_HnbapUe
+
+	set ::_HandleRxSignalProc HnbapMultiInstanceHdl
+
+	typedef {VOID HNBAP_OM_CFG_ACK}
+
+	set ::glDebugTcpConn 0
+
+	# Open TCP connection with GW simulator. Only for debug.
+	if {[info exists ::__gw_conn_addr]} {
+
+		set ::glDebugTcpConn 1
+
+		new IUH_OPEN_CONNECTION s
+		wr s IpAddr $::__gw_conn_addr
+		wr s Port   $::__gw_conn_port
+		LogOutputMsg $s
+		send s
+	}
+
+	# Listen on GW side to TCP connection with AP simulator. Only for debug.
+	if {[info exists ::__ap_conn_port]} {
+
+		set ::glDebugTcpConn 1
+
+		new IUH_LISTEN_CONNECTION s
+		wr s Port   $::__ap_conn_port
+		LogOutputMsg $s
+		send s
+	}
+
+	HnbapOmCfg
+}
+
+
+##############################################################
+# Config Procedures
+##############################################################
+
+proc SendOmConfigAck { } {
+    new HNBAP_OM_CFG_ACK s
+	send s $::_parent
+	logscr ""
+	logscr "HNBAP BRING-UP COMPLETE"
+	logscr ""
+}
+
+proc hnbapSctpInitializeNext {} {
+    log "hnbapSctpInitializeNext: glHnbapSctpListToSetup={$::glHnbapSctpListToSetup}"
+    if { [llength $::glHnbapSctpListToSetup] > 0 } {
+        set enbIdx [lindex $::glHnbapSctpListToSetup 0]
+        lassign {ip port} [dbEnbGetIpPort $enbIdx CtlLocalIpPort]
+        sctpTxInitialize $ip $port [dbEnbGet $enbIdx CtlSpc] [dbEnbGet $enbIdx CtlStkId]
+        dbHnbapEnbNextState $enbIdx st_Idle
+        return true
+    } else {
+        SendOmConfigAck
+        return false
+    }
+}
+
+proc HnbapOmCfg { } {
+
+    set ::glHnbapSctpListToSetup [getHnbapSctpList]
+
+	if { $::glDebugTcpConn } {
+
+		iuh_dump_on
+
+		set ::glDebSpc		1
+		set ::glDebStkId	1
+		set ::glDebSctpId	1
+		set ::glDebAssId	1
+
+		# for debug I use only first SCTP instance
+        set enbId [lindex $::glHnbapSctpListToSetup 0]
+		log "HnbapOmCfg: enbId=$enbId"
+        dbHnbapEnbGetInst $enbId
+
+		dbHnbapEnbInstSet SctpKey [dbHnbapEnbComposeSctpKey $::glDebSpc $::glDebStkId $::glDebSctpId]        
+
+		# for debug get first element of CtlPeerNetElemList
+		set ne [lindex [dbEnbGet $enbId CtlPeerNetElemList] 0]
+		lassign {neIdx neIpPort} $ne
+        dbHnbapAssocGetInst "${enbId}-${neIdx}"
+        dbHnbapAssocInstSetAssocKey $::glDebSpc $::glDebStkId $::glDebSctpId $::glDebAssId
+
+		SendOmConfigAck
+
+		if { [MsSide] } {
+			txHNB_UEDEREGISTER
+		}
+
+		dbHnbapAssocNextState $::glAssocIdx stAssoc_Connected
+
+		return
+	}
+
+    hnbapSctpInitializeNext
+}
+
+proc getHnbapSctpList {} {
+
+	set res ""; #init
+
+	foreach ne [dbEnbGetIndexList] {
+			lappend res $ne		
+	}
+
+	return $res
+}
+
+
+##############################################################
+# STATE MACHINE Procedures
+##############################################################
+
+proc SctpInitAckHnd { } {
+
+	set spc    [rd ::_sig Spc]
+	set stkId  [rd ::_sig StkId]
+	set sctpId [rd ::_sig SctpId]
+	dbHnbapEnbInstSet SctpKey [dbHnbapEnbComposeSctpKey $spc $stkId $sctpId]        
+	log "sctpInitAckHnd: glHnbapSctpListToSetup={$::glHnbapSctpListToSetup}"
+	set ::glHnbapSctpListToSetup [lreplace $::glHnbapSctpListToSetup 0 0] 
+
+	# NOTE: SCTP_COMMUNICATION_UP_IND might arrive before all sctp
+	# instances have been initialized if the peer is trying to associate
+	if { ![hnbapSctpInitializeNext] } {
+
+		log "SctpInitAckHnd: all SCTP instances are initialized"
+
+		if { [MsSide] } {
+			# I'm simulating AP side of Iuh 
+			# Leon: only one associate between AP <-> GW,it is not neccessary to implement like this
+			foreach enbIdx [getHnbapSctpList] {
+
+				set gwList [dbEnbGet $enbIdx CtlPeerNetElemList]
+				log "SctpInitAckHnd: enbIdx=$enbIdx, gwList={$gwList}"
+
+				if { ![IsVoid $gwList] } {
+
+					foreach gw $gwList {
+
+						set assocIdx "${enbIdx}-[lindex $gw 0]"
+						log "SctpInitAckHnd: assocIdx=$assocIdx"
+						lassign {ip port} [dbHnbapAssocGetPeerIpPort $assocIdx]
+						lassign {spc stkId sctpId} [dbHnbapEnbGetSctpKeyParts $enbIdx]
+						sctpTxAssociate $ip $port $spc $stkId $sctpId
+						tmrstart [dbHnbapAssocGet $assocIdx T_SCTP_ASSOCIATEid]
+					}
+				}
+			}
+		}
+	}
+}
+
+proc assocTryConnect {} {
+	set assocIdx [dbHnbapAssocThis]
+    lassign {enbIdx neIdx} [dbHnbapAssocInstGetEnbIdxMmeIdx]
+	#lassign {enbIdx neIdx} [split $assocIdx -]
+	logscr "assocTryConnect: assocIdx=$assocIdx"
+	lassign {ip port} [dbHnbapAssocGetPeerIpPort $assocIdx]
+	lassign {spc stkId sctpId} [dbHnbapEnbGetSctpKeyParts $enbIdx]
+	sctpTxAssociate $ip $port $spc $stkId $sctpId
+	tmrstart [dbHnbapAssocInstGet T_SCTP_ASSOCIATEid]
+}
+
+##############################################################
+
+proc SctpCommUpIndHnd { } {
+	global glCurrentInstanceDb
+	lassign {spc stkId sctpId assId} [dbHnbapAssocInstGetAssocKeyParts]
+
+	lassign {enbIdx neIdx} [dbHnbapAssocInstGetEnbIdxMmeIdx]
+	logscr ""
+    	logscr "	Iuh (AP side) ---> AP ($enbIdx) connect with GW via SCTP association $assId"
+    	logscr ""
+	# start timer to trigger HNB REGISTER
+	#log "AP Idx got from association = $enbIdx "
+	tmrstart [dbHnbapEnbGet $enbIdx T_HNBREGDelayid]
+	tmrstop [dbHnbapAssocInstGet T_SCTP_ASSOCIATEid]
+    	dbHnbapAssocInstNextState stAssoc_Connected
+	dbHnbapEnbNextState $::glEnbIdx HnbapIdle
+}
+
+proc SctpCommLostIndHnd { } {
+	set enbIdx   [dbHnbapEnbThis]
+	set assocIdx [dbHnbapAssocThis]
+
+	exit "### EXITING: SCTP_COMMUNICATION_LOST_IND for enbIdx=$enbIdx, assocIdx=$assocIdx"
+}
+
+proc SctpShutDownCmplIndHnd { } {
+	set enbIdx   [dbHnbapEnbThis]
+	set assocIdx [dbHnbapAssocThis]
+	
+	logscr "### SctpShutDownCmplIndHnd: enbIdx=$enbIdx, assocIdx=$assocIdx"
+	CRASH
+}
+
+
+##### function of AP ###
+proc HnbRegDelayHnd {} {
+	global _sig
+	LogInputSig
+	
+	SendHnbRegisterReq
+	dbHnbapEnbNextState $::glEnbIdx Hnbap_WaitHnbapRegAcc
+
+}
+
+proc HnbRegAccHnd   {} {
+	global _sig 
+	LogInputSig
+	
+	set hnb_id [dbEnbGet $::glEnbIdx HNBIdentity]
+	logscr " AP ID ($::glEnbIdx) with HNBIdentity ($hnb_id) is registered"
+	dbHnbapEnbNextState $::glEnbIdx HnbapRegistered
+
+}
+
+#########hnb reg rej
+proc HnbRegRejHnd {} {
+	global _sig
+	LogInputSig
+	set rejCause [rd _sig Cause]
+	set hnb_id [dbEnbGet $::glEnbIdx HNBIdentity]
+	set causeInfo [ParseHnbapCause $rejCause]
+	logscr " AP:  AP ID ($::glEnbIdx) with HNBIdentity ($hnb_id) is rejected with \"$causeInfo\""
+	dbHnbapEnbNextState $::glEnbIdx HnbapIdle
+}
+
+proc HnbDeRegisterHnd {} {
+	global _sig 
+	LogInputSig
+	set dereg_Cause [rd _sig Cause]
+	set hnb_id [dbEnbGet $::glEnbIdx HNBIdentity]
+	logscr " AP:  AP ID ($::glEnbIdx) with HNBIdentity ($hnb_id) is de-registered with [ParseHnbapCause $dereg_Cause]" 
+	dbHnbapEnbNextState $::glEnbIdx HnbapIdle	
+}
+
+proc HnbErrorIndHnd {} {
+	global _sig
+	LogInputSig
+	set errCause [rd _sig Cause]
+	set hnb_id [dbEnbGet $::glEnbIdx HNBIdentity]
+	logscr "Warning: AP ID ($::glEnbIdx) with HNBIdentity ($hnb_id) ERROR_IND with [ParseHnbapCause $errCause]"
+}
+
+#### functions of HNBAP UE #####
+proc HnbUeRegReqHnd {} {
+	global _sig 
+	LogInputSig
+	logscr " To trigger UE Reg for Ms($::glHnbapUeIdx)"
+	set pdu [rd _sig Pdu]
+	dbHnbapEnbUeSet $::glHnbapUeIdx SIG $pdu
+	#DbSet $glHnbapUeDb $glIdx SIG $pdu
+	SendHnbUeRegisterReq 
+	tmrstart [dbHnbapEnbUeGet $::glHnbapUeIdx T_HNBUeREGid]
+	dbHnbapEnbUeNextState $::glHnbapUeIdx Ue_WaitUeRegAcc
+	#LogDb $::gldb_HnbapUe	
+	
+}
+
+proc T_HNBUeREGExpired {} {
+	global  _sig glHnbapUeDb  glIdx glCurrentInstanceDb
+	LogInputSig 
+	logscr " UE ($::glHnbapUeIdx) Register failed for timer expiration"
+	dbHnbapEnbUeSet $::glHnbapUeIdx SIG ?
+	dbHnbapEnbUeNextState $::glHnbapUeIdx UeIdle
+}
+
+proc HnbUeRegAccHnd {} {
+	global _sig glHnbapUeDb _bssappid
+	LogInputSig
+	set contextId [rd _sig ContextId]
+	dbHnbapEnbUeSet $::glHnbapUeIdx ContextId $contextId
+	logscr " UE ($::glHnbapUeIdx) is registered with ContextId ($contextId)"
+	set sig [ dbHnbapEnbUeGet $::glHnbapUeIdx SIG]
+	if { ![IsVoid $sig] } {
+		set _sig $sig
+		# RUA is similar with SCCP,but not totally
+		# RUA CONNECT is just one direction,while SCCP need a request confirm
+		#So here to response ACK to BSSAP ,inform BSSAP the context id
+		new RUA_CONNECT_ACK s
+		wr s MsId $::glHnbapUeIdx
+		wr s CnDomain [rd _sig CnDomain]
+		wr s ContextId $contextId
+		wr s ApId [ dbHnbapEnbUeGet $::glHnbapUeIdx ApId ]
+		send s $_bssappid
+		LogOutputMsg $s
+		## to replace msId with assignmented context ID
+		wr _sig ContextId $contextId
+		SendOutRUAMessage
+	} else {
+		logscr "No RUA Connect message to be sent after UE registerted"
+	}
+	tmrstop [dbHnbapEnbUeGet $::glHnbapUeIdx T_HNBUeREGid]
+	dbHnbapEnbUeSet $::glHnbapUeIdx SIG ?
+	dbHnbapEnbUeNextState $::glHnbapUeIdx UeRegistered
+	#LogDb $::gldb_HnbapUe
+}
+
+proc HnbUeRegRejHnd {} {
+	global _sig 
+	LogInputSig
+	set errCause [rd _sig Cause]
+	logscr " UE ($::glHnbapUeIdx) Register is rejected with [ParseHnbapCause $errCause]"
+	dbHnbapEnbUeSet $::glHnbapUeIdx SIG ?
+	tmrstop [dbHnbapEnbUeGet $::glHnbapUeIdx T_HNBUeREGid]
+	dbHnbapEnbUeNextState $::glHnbapUeIdx UeIdle
+}
+
+proc HnbUeDeRegReqHnd {} {
+	global _sig 
+	LogInputSig
+	#set contextId [rd _sig ContextId]
+	set contextId [dbHnbapEnbUeGet $::glHnbapUeIdx ContextId]
+	logscr " To trigger UE DeReg for Ms ($::glHnbapUeIdx)"
+	SendHnbUeDeReg $contextId 1 8 $::glHnbapUeIdx; #NORMAL
+	dbHnbapEnbUeSet $::glHnbapUeIdx ContextId ?
+	dbHnbapEnbUeNextState $::glHnbapUeIdx UeIdle
+	LogDb $::gldb_HnbapUe
+}
+
+proc HnbUeRegReqHndInRegistered {} {
+	global _sig  _bssappid
+	LogInputSig
+	set contextId [dbHnbapEnbUeGet $::glHnbapUeIdx ContextId]
+	log " UE ($::glHnbapUeIdx) is registered with ContextId ($contextId)"
+	set sig [dbHnbapEnbUeGet $::glHnbapUeIdx SIG]
+	if { ![IsVoid $sig] } {
+		set _sig $sig
+		# to inform BSSAP the context id
+		new RUA_CONNECT_ACK s
+		wr s MsId $::glHnbapUeIdx
+		wr s CnDomain 0
+		wr s ContextId $contextId
+		wr s ApId [rd _sig ApId]
+		send s $_bssappid
+		LogOutputMsg $s
+		## to replace msId with assignmented context ID
+		wr _sig ContextId $contextId
+		SendOutRUAMessage
+	} else {
+		logscr "No RUA Connect message to be sent after UE registerted"
+	}
+	dbHnbapEnbUeSet $::glHnbapUeIdx SIG ?
+	dbHnbapEnbUeNextState $::glHnbapUeIdx UeRegistered
+	#LogDb $::gldb_HnbapUe
+}
+
+
+##############################################################
+# STATE MACHINE
+##############################################################
+
+state st_Idle {
+    SCTP_INITIALIZE_ACK				SctpInitAckHnd
+    SCTP_INITIALIZE_NAK				{exit "st_Idle: SCTP_INITIALIZE_NAK"}
+    default							stAny
+}
+
+state stAssoc_down {
+	T_SCTP_ASSOCIATE				assocTryConnect
+	SCTP_COMMUNICATION_UP_IND		SctpCommUpIndHnd
+	default							stAny
+}
+
+state stAssoc_Connected {
+	default							stAny
+}
+
+########state machine for AP ####
+state HnbapIdle 		{
+	T_HNBREGDelay						HnbRegDelayHnd
+	default 							stAny
+}
+
+state Hnbap_WaitHnbapRegAcc		{
+	HNB_REGISTERACC						HnbRegAccHnd
+	HNB_REGISTERREJ						HnbRegRejHnd
+	default 							stAny
+}
+
+state HnbapRegistered			{
+	HNB_DEREGISTER						HnbDeRegisterHnd
+	default 							stAny
+}
+
+
+#######state machine for hnbap ue in home nodeb ###
+state UeIdle   {
+	HNBAP_UE_REG_REQ					HnbUeRegReqHnd							
+	default								stAny
+} 
+
+state Ue_WaitUeRegAcc   {
+	HNB_UEREGISTERACC					HnbUeRegAccHnd
+	HNB_UEREGISTERREJ					HnbUeRegRejHnd
+	T_HNBUeREG						T_HNBUeREGExpired
+	default								stAny
+} 
+
+state UeRegistered  {
+	HNBAP_UE_REG_REQ					HnbUeRegReqHndInRegistered
+	T_UEDeReg						HnbUeDeRegReqHnd
+	HNB_UEDEREGISTER					HnbUeDeRegisterHnd
+	default								stAny
+} 
+
+
+state stAny {
+	SCTP_NETWORK_STATUS_CHANGE_IND		LogInputSig
+	SCTP_COMMUNICATION_LOST_IND			SctpCommLostIndHnd
+	SCTP_SHUTDOWN_COMPLETE_IND			SctpShutDownCmplIndHnd
+	SCTP_DATA_IND						{exit "ABORT-stAny.SCTP_DATA_IND"}
+	default                             {AbortUnexpectedSig "stAny"}
+}
+

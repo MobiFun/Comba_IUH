@@ -1,0 +1,517 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/CC/tags/CC-3.0.4/scripts/cc_multi_inst.tsm $
+#
+# $Author: carlom $
+#
+# Description: CC Mutli Instance Handler
+#
+#
+# $Rev: 54022 $
+#
+# $Date: 2012-09-04 15:50:22 +0200 (Tue, 04 Sep 2012) $
+##############################################################
+
+proc CcMultiInstanceHdl { } {
+
+	switch -exact -- [lindex $::_sig 0] {
+		"MN_CC_NET_SETUP_REQ"   { MnCcNetSetupReqPrep }
+		"MN_CC_MS_SETUP_REQ"	{ MnCcMsSetupReqPrep }
+		"MM_CC_EST_IND"         { MmCcEstIndPrep }
+		"MM_CC_EST_CNF"         { MmCcEstCnfPrep }
+		"MM_CC_DATA_IND"        { MmCcDataIndPrep }
+		"MM_CC_REL_IND"         { MmCcRelIndPrep }
+		"MM_CC_SYNC_IND"        { MmCcSyncPrep }
+		"MM_CC_SYNC_CNF"        { MmCcSyncPrep }
+		"CC_CONFIG"				{ CcConfigPrep }
+		"CC_SET_USER_PID"		{ SetUserPidPrep }
+		"T_301"                 -
+		"T_303"                 -
+		"T_305"                 -
+		"T_306"                 -
+		"T_308"                 -
+		"T_310"                 -
+		"T_313"                 -
+		"T_RES"                 { DefaultTmrPrep }
+		"T_CONGESTIONCONTROL"	{ }
+		"T_DBG_GET_STATS"       { GetStatistics }
+		"MN_CC_MS_INIT_REQ"		{ MnCcMsInitReqPrep }
+		"MN_CC_CN_INIT_REQ"		{ MnCcCnInitReqPrep }
+		"MN_SET_GLOBAL_VAR"		{ MnSetGlobalVar }
+        "MN_USR_SUBSCRIBE_REQ"  { MnUsrSubscribeReqHnd }
+		default 				{ DefaultPrep }
+	}
+
+	global glIdx
+	logv1 "CC: glIdx=$glIdx <--> msid=[IndexToMsId $glIdx]"; #cDEBUG
+
+#	global glCCdb
+#	if {[info exists glCCdb] && [DbExists $glCCdb] && ($glIdx != 0)} {
+#		 DebugLogDbRecord $glCCdb $glIdx}; #debug
+}
+
+##############################################################
+# Statistics
+##############################################################
+
+proc GetStatistics { } {
+
+	log "---------- START OF CC STATISTICS ----------"
+	
+	# Dump Statistics Variable
+	log "[::profiler::print]"
+
+	log "----------  END OF CC STATISTICS  ----------"
+
+	skipMsg
+}
+
+##############################################################
+# Data Base handling
+##############################################################
+
+proc CcConfigPrep { } {
+
+	# Settings
+	set ::glIdx 0
+}
+
+proc SetUserPidPrep { } {
+
+	# Global Variables
+}
+
+proc CreateDataBase { dbname mode} {
+
+	# Set DB Name
+	lappend idxList [list Idx Index Read_Only]
+	lappend idxList [list State Normal Read/Write]
+	lappend idxList [list ExpectedTif Normal Read/Write]
+	lappend idxList [list ResAssigned Normal Read/Write] 
+	lappend idxList [list CallType Normal Read/Write] 
+	lappend idxList [list T_303id Key Read/Write]
+	lappend idxList [list T_305id Key Read/Write]
+	lappend idxList [list T_308id Key Read/Write]
+	lappend idxList [list T_310id Key Read/Write]
+	lappend idxList [list T_313id Key Read/Write]
+	lappend idxList [list T_308count Normal Read/Write]
+	lappend idxList [list T_RESid Key Read/Write]
+	lappend idxList [list PendingTid Key Read/Write]
+	lappend idxList [list PendingResAssTid Key Read/Write]
+	lappend idxList [list DiscCause Normal Read/Write]
+	lappend idxList [list UserPid Normal Read/Write]
+	lappend idxList [list ClirSuppression Normal Read/Write]
+	lappend idxList [list ClirInvocation Normal Read/Write]
+	lappend idxList [list CallWaitingTone Normal Read/Write]
+	lappend idxList [list HoldAuxiliaryState Normal Read/Write]
+
+	if {[string eq CN $mode]} {
+		lappend idxList [list StreamId Normal Read/Write] 
+		lappend idxList [list BearerCap1 Normal Read/Write] 
+		lappend idxList [list CallingNum Normal Read/Write]
+		lappend idxList [list Facility Normal Read/Write]
+		lappend idxList [list RedirBCDnum Normal Read/Write]
+		lappend idxList [list T_301id Key Read/Write]
+		#lappend idxList [list RevLev Normal Read/Write]
+		lappend idxList [list Mcs Normal Read/Write]
+		lappend idxList [list DPhone Normal Read/Write]
+		lappend idxList [list ProfileName Normal Read/Write]
+		lappend idxList [list BearerCap2 Normal Read/Write] 
+	} else {
+		lappend idxList [list SetupType Normal Read/Write]
+		lappend idxList [list CalledPartyNum Normal Read/Write]
+		#lappend idxList [list RevLev Normal Read/Write]
+		lappend idxList [list CallHoldPendingResAssTid Key Read/Write]
+	}
+
+	DbCreate $dbname $idxList
+}
+
+##############################################################
+# Procedures
+##############################################################
+
+proc MmCcEstIndPrep { } {
+
+	# Global Variables
+	global _sig _sigpdu glCCdb
+
+	LogInputPrimMsg $_sig
+
+	# Get Transaction Id
+	set binpdu [rd _sig Pdu]
+	if { [IsVoid $binpdu] } {
+		logscr "WARNING: skipMsg. Unexpected Empty MmCcEstInd"
+		skipMsg
+		return
+	} 
+
+	global glCcPduToSig
+	$glCcPduToSig binpdu
+	set tival [rd _sigpdu TIO]
+
+	# Get Current Index 
+	set msid [rd _sig MsId]
+	set idx [expr {$msid * 8 + $tival}]
+	if { [DbEntryExists $glCCdb $idx] } {
+		logscr "WARNING: skipMsg. Instance $idx already created"
+		skipMsg
+		return
+	}
+	# New Instance
+	if { [CreateNewCcEntity $idx] == "-1" } {
+		skipMsg
+		return
+	} else {
+		# Get Instance
+		GetInstance $idx $glCCdb ::glIdx
+		set _sig $_sigpdu
+	}
+}
+
+proc MmCcEstCnfPrep { } {
+
+	# Global Variables
+	global _sig glCCdb
+
+	# Get Transaction Id
+	set msid [rd _sig MsId]
+	if { [DbKeyExists $glCCdb PendingTid $msid] } {
+		set idx [DbGetIdx $glCCdb PendingTid $msid]
+	} else {
+		logscr "WARNING: skipMsg. No Establishment Request Pending (MsId: $msid)"
+		skipMsg
+		return
+	} 
+
+	# Get Instance
+	GetInstance $idx $glCCdb ::glIdx
+}
+
+proc MmCcDataIndPrep { } {
+
+	# Global Variables
+	global _sig _sigpdu glCCdb
+
+	LogInputPrimMsg $_sig
+
+	# Get Transaction Id
+	set binpdu [rd _sig Pdu]
+	if { [IsVoid $binpdu] } {
+		logscr "WARNING: skipMsg. Unexpected Empty MmCcDataInd"
+		skipMsg
+		return
+	}
+
+	global glCcPduToSig
+	$glCcPduToSig binpdu
+	set tival [rd _sigpdu TIO]
+
+	# Get Current Index 
+	set msid [rd _sig MsId]
+	set idx [expr {$msid * 8 + $tival}]
+	
+	# Get Instance
+	if { [DbEntryExists $glCCdb $idx] } {
+		GetInstance $idx $glCCdb ::glIdx
+	} else {
+		logscr "WARNING: skipMsg. Index $idx not found in Data Base $glCCdb"
+		skipMsg
+		return
+	}
+
+	# Store Pdu in _sig
+	set _sig $_sigpdu
+}
+
+proc MmCcRelIndPrep { } {
+
+	# Global Variables
+	global _sig glCCdb
+		
+	# Get Any Transaction Id
+	set msid [rd _sig MsId]
+	for { set i 0 } { $i < 8 } { incr i } {
+		set tival $i
+		set idx [expr {$msid * 8 + $tival}]
+		if { [DbEntryExists $glCCdb $idx] } {
+			# Get Instance
+			GetInstance $idx $glCCdb ::glIdx
+			return
+		}
+	}
+
+	# No Instance found
+	logscr "WARNING: skipMsg. No Transaction exists for MsId $msid"
+	skipMsg
+	return
+}
+
+proc MmCcSyncPrep { } {
+
+	# Global Variables
+	global _sig glCCdb
+
+	# Get Transaction Id
+	set msid [rd _sig MsId]
+	if { [DbKeyExists $glCCdb PendingResAssTid $msid] } {
+		set idx [DbGetIdx $glCCdb PendingResAssTid $msid]
+	} else {
+		# Further assignment can't be associated to instance
+		#logscr "Resource Assignment Not Pending (MsId: $msid)"
+		skipMsg
+		return
+	}
+
+	# Get Instance
+	GetInstance $idx $glCCdb ::glIdx
+}
+
+proc MnCcNetSetupReqPrep { } {
+
+	global _sig glCCdb glCommonDb
+
+	# Get Parameters
+	set callednum [rd _sig CalledNum]
+
+	set msid [GetIdxFromCalledNum $callednum $glCommonDb]
+
+	log "MnCcNetSetupReqPrep: callednum=$callednum ---> msid=$msid"; #cDEBUG
+
+	# Get Index
+	if { ![string is integer -strict $msid] } {
+			
+		# Carlo add for Iu_Tm 26/06 --- #
+		set foundCalledNum_OwnNum [FindCalledNum_OwnNum $callednum $glCommonDb]
+		set id [lindex $foundCalledNum_OwnNum 1]
+		if { ![IsVoid $id] && ![IsEmpty $id] } {
+			set msid $id
+			
+			log "MnCcNetSetupReqPrep: ATTENZIONE: qs parte limita l'idle nel caso di load-stress test"
+
+			log "MnCcNetSetupReqPrep: Called Number ($callednum) known: msid=$msid"
+		} else {
+		# ----- #
+			logscr "ERROR: skipMsg. Called Number Unknown ($callednum)"
+
+			skipMsg
+			return
+		}
+	}
+
+	set idx [CSGetNextIndexByTi $msid $glCCdb 8]
+
+	if { $idx == "-1" } {
+		logscr "WARNING: skipMsg. Transaction Ids all in use"
+		skipMsg
+		return
+	}
+	if { [DbEntryExists $glCCdb $idx] } {
+		logscr "WARNING: skipMsg. Instance $idx already created"
+		skipMsg
+		return
+	}
+	# New Instance
+	if { [CreateNewCcEntity $idx] == -1 } {
+		skipMsg
+	} else {
+		# Instance
+		GetInstance	$idx $glCCdb ::glIdx
+	}
+}
+
+proc MnCcMsSetupReqPrep { } {
+
+	# Declare Global Variables
+	global _sig glCCdb
+
+	# Get Parameters
+	set msid [rd _sig MsId]
+
+	# Get Index
+	set idx [CSGetNextIndexByTi $msid $glCCdb 8]
+
+	log "MnCcMsSetupReqPrep: idx=$idx --> CreateNewCcEntity $idx"; #cDEBUG
+
+
+	if { $idx == "-1" } {
+		logscr "WARNING: skipMsg. Transaction Ids all in use"
+		skipMsg
+		return
+	}
+	if { [DbEntryExists $glCCdb $idx] } {
+		logscr "WARNING: skipMsg. Instance $idx already created"
+		skipMsg
+		return
+	}
+	# New Instance
+	CreateNewCcEntity $idx
+
+	# Instance
+	GetInstance	$idx $glCCdb ::glIdx
+}
+
+proc MnCcMsInitReqPrep { } {
+
+	# Declare Global Variables
+	global _sig glCCdb
+
+	# Get Parameters
+	set msid [rd _sig MsId]
+
+	# Get Index
+	set idx [CSGetNextIndexByTi $msid $glCCdb 8]
+	if { $idx == "-1" } {
+		logscr "WARNING: skipMsg. Transaction Ids all in use"
+
+		global _src
+
+		new MN_CC_MS_INIT_NAK s
+		wr s MsId $msid
+		send s $_src
+
+		skipMsg
+		return
+	}
+	if { [DbEntryExists $glCCdb $idx] } {
+		logscr "WARNING: skipMsg. Instance $idx already created"
+
+		global _src
+
+		new MN_CC_MS_INIT_NAK s
+		wr s MsId $msid
+		send s $_src
+
+		skipMsg
+		return
+	}
+	# New Instance
+	CreateNewCcEntity $idx
+
+	# Instance
+	GetInstance	$idx $glCCdb ::glIdx
+}
+
+proc MnCcCnInitReqPrep { } {
+
+	# Global Variables
+	global _sig glCCdb
+
+	# Get Current Index 
+	set idx [rd _sig CcIdx]
+	if { [DbEntryExists $glCCdb $idx] } {
+		logscr "WARNING: skipMsg. Instance $idx already created"
+		skipMsg
+		return
+	}
+	# New Instance
+	CreateNewCcEntity $idx
+	
+	# Get Instance
+	GetInstance $idx $glCCdb ::glIdx
+}
+
+proc DefaultPrep { } {
+
+	# Declare Global Variables
+	global _sig glCCdb
+
+	# Get Transaction Id 
+	set tival [rd _sig Tio]
+
+	if { ![string is integer $tival] } {
+		logscr "DefaultPrep: ERROR: invalid value for Tio=$tival"
+		global __slave_db
+		if { [info exists __slave_db] } {
+			set tival 0
+		} else {
+			logscr "DefaultPrep: ERROR: invalid value for Tio=$tival"
+			return
+			skipMsg
+		}
+	}
+	# Get Parameters
+	set msid [rd _sig MsId]
+	set idx [expr {$msid * 8 + $tival}]
+
+	log "DefaultPrep: Tio=$tival"; #cDEBUG
+
+	# Get Instance
+	if { [DbEntryExists $glCCdb $idx] } {
+
+		GetInstance $idx $glCCdb ::glIdx
+
+	} else {
+		logscr "DefaultPrep: WARNING: skipMsg. Index $idx not found in Data Base $glCCdb"
+		skipMsg
+		return
+	}
+}
+
+proc DefaultTmrPrep { } {
+
+	GetInstanceFromTimer $::glCCdb ::glIdx
+}
+
+# CELLNET RESTYLING
+proc MnSetGlobalVar {} {
+
+    global _sig
+
+    log "MnSetGlobalVar"
+
+    set gVar [lindex $_sig 1]
+    set value [lindex $_sig 2]
+
+    # set the variable
+    global $gVar
+    set $gVar $value
+
+    # in case of __SupportUnknownMS set update the userPid
+    if {$gVar == "__SupportUnknownMS"} {
+        global __ExtSupportUnknownMS
+        if { $value > 1 } {
+            set __ExtSupportUnknownMS 1
+            set $gVar 1
+            set value 1
+        } else {
+            set __ExtSupportUnknownMS 0
+        }
+
+        if {$value} {
+            global _src glPidArray
+            set userPid $_src
+			set glPidArray(0) $userPid
+            log "MnSetGlobalVar: updating glPidArray = $userPid"
+		}
+	}
+	skipMsg
+}
+# END
+
+proc MnUsrSubscribeReqHnd {} {
+
+    global _sig glCCdb glPidArray
+
+    set index [lindex $_sig 1]
+    log "MnUsrSubscribeReqHnd: index = $index"
+
+    set userPid $glPidArray(1)
+    log "userPid = $userPid"
+
+    # Set User Pid
+    set glPidArray($index) $userPid
+
+    # Update Data Base
+    set start [expr {$index * 8}]
+    for { set i 0 } { $i < 8 } { incr i } {
+        set el [expr {$i + $start}]
+        if { [DbEntryExists $glCCdb $el] } {
+            log "updated el = $el"
+            DbSet $glCCdb $el UserPid $glPidArray($index)
+        }
+    }
+
+    skipMsg
+}
+
+#EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE#

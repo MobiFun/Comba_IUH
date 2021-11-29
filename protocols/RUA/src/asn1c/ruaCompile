@@ -1,0 +1,1 @@
+asn1c RUA_ASN1/*.txt -per -c -print -o ./C -warnings -config asn1_rua.cfg &> compile.log

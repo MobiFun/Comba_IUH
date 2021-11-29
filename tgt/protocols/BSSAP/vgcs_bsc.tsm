@@ -1,0 +1,581 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/BSSAP_COMBA/tags/BSSAP_COMBA-1.2.0/scripts/vgcs_bsc.tsm $
+#
+# $Author: roger $
+#
+# Description: User Script VGCS Simulator BSS side
+#
+#
+# $Rev: 53313 $
+#
+# $Date: 2012-07-19 15:19:13 +0200 (Thu, 19 Jul 2012) $
+##############################################################
+
+# Modes available: "CompleteFailure" "SetupOk" "ClearRequest"
+# "MSOrigCall" "PartialFailure"
+# set glMode CompleteFailure
+# set glMode PartialFailure
+# set glMode SetupOk
+# set glMode SetupOk
+set glMode SetupOk
+
+# Disconnect test values available: "None" "AssigmentFailure" "SetupAck"
+set glDisconnect None
+
+set glClearCommandTimerId 0
+set glMsCallTimerId 0
+set glRrTalkerIndPdu 0
+proc Init { args } {
+
+	# Declare and Initialize Global Variables
+	global _HandleRxSignalProc _self _parent glLinkDb glIdx 
+	global glNumBts glMode glClearCommandTimerId glMsCallTimerId
+	global glNumAsgReq glGrCallRefDb glMsBeginCallList glMsDb
+	global glCSBSSAPPid
+	# Includes
+	include "common/utils/generalUtils.tsm"
+	include "common/utils/L3Utils.tsm"
+	include "protocols/BSSAP/vgcs_bsc_multi_inst.tsm"
+
+	logscr "BSC Simulator for A interface"
+	logscr "Mode = $glMode"
+
+	# TODO: Only if stand alone
+	#register BSSAP
+
+	# Initialize Indexes
+	set glIdx 0
+
+	# Create Internal Database
+	set glLinkDb vgcs_bsc_db
+	append glLinkDb $_self
+	CreateLinkDataBase $glLinkDb
+	set glGrCallRefDb gr_call_ref_db
+	CreateGroupCallReferenceDataBase $glGrCallRefDb
+	
+# Handle Multi-Instance
+	set _HandleRxSignalProc HandleRxSignalProc
+
+	# Enable Log
+	dump_on
+
+	# Inform Parent - TODO - only if spawned by Scheduler.tsm
+	#set 	s PASSIVE_SCRIPT
+	#send 	s $_parent
+	#LogOutputMsg $s
+	set	glNumBts 0
+	set glNumAsgReq 0
+	CreateBscLinkDb
+
+	if { ![string compare $glMode "TimedFailure"] } {
+		set glClearCommandTimerId [tmrnew T_SENDCLEARCOMMAND 2000]
+	}
+	if { ![string compare $glMode "MSOrigCall"] } {
+		set glMsCallTimerId [tmrnew T_SETUPMSCAL 2000]
+		tmrstart $glMsCallTimerId
+	}
+
+	#Prepare the list that will contain all the MS which wants to start a call
+	set glMsBeginCallList {}
+	set glMsDb [lindex $args 1]
+	set glCSBSSAPPid [lindex $args 0]
+	nextstate Null
+}
+
+proc CreateBscLinkDb { } {
+	global glBscDbName
+	
+	lappend idxList [list GroupCallReference Index]
+	lappend idxList [list TalkerMsId Normal Read/Write]
+	lappend idxList [list SpcStkIdCid Normat Read/Write]
+
+	set glBscDbName "BscSimDbName"
+	DbCreate $glBscDbName $idxList
+}
+
+proc GetOriginator { msId spcStkIdCid origPos } {
+	global glMsBeginCallList
+	log "GetOriginator: glMsBeginCallList = $glMsBeginCallList"
+	upvar 1 $origPos pos
+	set pos 0
+	foreach idx $glMsBeginCallList {
+		set ms [lindex $idx 0]
+		set spc [lindex $idx 1]
+		if { $ms == $msId } {
+
+				log "GetOriginator: ms=$ms spc=$spc pos=$pos"
+				return $msId
+		}		
+		incr pos
+	}
+	return ?
+}
+
+proc ConnectIndHnd { } {
+	
+	# Global Variables
+	global _sig glLinkDb glIdx
+
+	# Spc / StkId / Cid
+	set spcStkidCid [rd _sig Spc]
+	append spcStkidCid "-"
+	append spcStkidCid [rd _sig StkId]
+	append spcStkidCid "-"
+	append spcStkidCid [rd _sig Cid]
+
+	# New Instance
+	DbCreateDefEntry $glLinkDb $spcStkidCid
+	DbSet $glLinkDb $spcStkidCid State Null
+
+	# Get Instance
+	GetInstance $spcStkidCid $glLinkDb glIdx
+}
+
+proc DefaultHnd { } {
+	
+	# Global Variables
+	global _sig glLinkDb glIdx
+
+	# Spc / StkId / Cid
+	set spcStkidCid [rd _sig Spc]
+	append spcStkidCid "-"
+	append spcStkidCid [rd _sig StkId]
+	append spcStkidCid "-"
+	append spcStkidCid [rd _sig Cid]
+
+	# Get Instance
+	GetInstance $spcStkidCid $glLinkDb glIdx
+}
+
+############################################################
+# Data Base Handling
+############################################################
+
+proc CreateLinkDataBase { dbname } {
+
+	# Global Variables
+	global glCommonDb
+
+	lappend idxList [list Idx	 		Index  Read/Write]
+	lappend idxList [list State	 		Normal  Read/Write]
+	lappend idxList [list GroupCallRef	Normal	Read/Write]
+
+	DbCreate $dbname $idxList
+}
+
+proc CreateGroupCallReferenceDataBase { dbname } {
+	
+	lappend idxList [list IdxGrCallRef		Index	Read/Write]
+	lappend idxList [list OriginatorMsId 	Normal	Read/Write]
+	lappend idxList [list MainLink			Normal	Read/Write]
+	lappend idxList [list TalkerMsId		Normal	Read/Write]
+	lappend idxList [list ListenersList		Normal	Read/Write]
+
+	DbCreate $dbname $idxList
+}
+
+proc RemoveVgcsEntry { idx } {
+
+	# Global Variables
+	global glLinkDb
+
+	DbRemEntry $glLinkDb $idx
+}
+
+############################################################
+# Procedures
+############################################################
+
+proc SendSccpConnectRes { { bssapSig "?" } } {
+
+	# Global Variables
+	global glIdx
+
+	# Get Spc/Stkid/Cid
+	set spc [lindex [split $glIdx -] 0]
+	set stkid [lindex [split $glIdx -] 1]
+	set cid [lindex [split $glIdx -] 2]
+
+	# Class
+	# Only protocol class 0 (basic connectionless) 
+	# and protocol class 2 (basic connection-oriented)
+	# are used
+	set class 02; 
+
+	new SCCP_N_CONNECT_RES s
+
+	# Spc
+	wr s Spc $spc
+
+	# StkId
+	wr s StkId $stkid
+
+	# Cid
+	wr s Cid $cid
+
+	# Class
+	wr s Class $class 
+
+	# Pdu
+	if { [string compare $bssapSig "?"] } {
+		wr s Data [bssapSigToPdu bssapSig]
+	}
+
+	send s
+	LogOutputMsg $s
+}
+
+proc SendSccpNDisconnectReq { bssapSig args } {
+
+	# Global Variables
+	global glIdx
+
+	if { [llength $args] > 0 } {
+		set spcStkIdCid [lindex $args 0]
+	} else {
+		set spcStkIdCid $glIdx
+	}
+
+	# Get Spc/Stkid/Cid
+	set spc [lindex [split $spcStkIdCid -] 0]
+	set stkid [lindex [split $spcStkIdCid -] 1]
+	set cid [lindex [split $spcStkIdCid -] 2]
+
+	new SCCP_N_DISCONNECT_REQ s
+
+	# Spc/StkId/Cid
+	wr s Spc $spc
+	wr s StkId $stkid
+	wr s Cid $cid
+	# Pdu
+	wr s Data [bssapSigToPdu bssapSig]
+
+	send s
+	LogOutputMsg $s
+}
+
+proc SendSccpDataReq { bssapSig args } {
+
+	# Global Variables
+	global glIdx
+
+	if { [llength $args] > 0 } {
+		set spcStkIdCid [lindex $args 0]
+	} else {
+		set spcStkIdCid $glIdx
+	}
+
+	# Get Spc/Stkid/Cid
+	set spc [lindex [split $spcStkIdCid -] 0]
+	set stkid [lindex [split $spcStkIdCid -] 1]
+	set cid [lindex [split $spcStkIdCid -] 2]
+
+	new SCCP_N_DATA_REQ s
+
+	# Spc
+	wr s Spc $spc
+
+	# StkId
+	wr s StkId $stkid
+
+	# Cid
+	wr s Cid $cid
+
+	# Pdu
+	wr s Data [bssapSigToPdu bssapSig]
+
+	send s
+	LogOutputMsg $s
+}
+
+proc DataInd { } {
+
+	# Global Variables
+	global _sig _state _sigpdu
+
+	LogInputMsg $_sig
+
+	# decoding BSSAP pdu
+	set bssapPdu [rd _sig Data]
+	if { [string compare $bssapPdu "?"] } {
+		bssapPduToSig bssapPdu
+		set _sig $_sigpdu
+		eval $_state
+	}
+}
+
+proc ConnectInd { } {
+
+	# Global Variables
+	global _sig _state _sigpdu glGrCallRefDb glMode
+
+	LogInputMsg $_sig
+	# Send Response
+	SendSccpConnectRes
+
+	# decoding BSSAP pdu
+	set bssapPdu [rd _sig Data]
+	if { [string compare $bssapPdu "?"] } {
+		bssapPduToSig bssapPdu
+		set sigName [lindex $_sigpdu 0]
+		if { ![string compare $sigName "VGCS_VBS_SETUP"] } {
+			set grCallRef [rd _sigpdu group_call_ref]
+			if { ![DbEntryExists $glGrCallRefDb $grCallRef] } {
+				global glSccpControlLink
+				logscr "Saving link"
+				set spc [rd _sig Spc]
+				set stkid [rd _sig StkId]
+				set cid [rd _sig Cid]
+				#Store the control link
+				set glSccpControlLink $spc
+				append glSccpControlLink "-" $stkid "-" $cid
+				#Store the link in the Group call ref Db
+				set grCallRef [GetGroupCallRefPurePdu $grCallRef]
+				DbCreateEntry $glGrCallRefDb [list $grCallRef ? $glSccpControlLink ? ?]
+				logscr "############ DB ##############"
+				LogDb $glGrCallRefDb
+			} else {
+				logscr "######### ERROR: The required group call is already in place!"
+				logscr "group call ref id = $grCallRef"
+				exit
+			}
+		} elseif { ![string compare $sigName "VGCS_VBS_SETUP_REFUSE"] } {
+			
+		}
+		set _sig $_sigpdu
+		eval $_state
+}
+
+	nextstate Active
+}
+
+proc DisconnectInd { } {
+
+	# Global Variables
+	global _sig glIdx
+
+	LogInputMsg $_sig
+
+	RemoveVgcsEntry $glIdx
+}
+
+proc VgcsSetup { } {
+
+	# Global Variables
+	global _sig glDisconnect glMode glIdx
+
+	LogInputMsg $_sig
+
+	if { ![string compare $glMode "SetupRefuse"] } {
+		new		VGCS_VBS_SETUP_REFUSE s
+		wr s cause 20
+		SendSccpDataReq $s
+	} else {
+		new 	VGCS_VBS_SETUP_ACK s
+		if { [string compare $glDisconnect "SetupAck"] } {
+			SendSccpDataReq $s
+		} else {
+			SendSccpNDisconnectReq $s
+		}
+	}
+}
+
+proc PrepareFailSignal { } {
+	new VGCS_VBS_ASG_FAIL sig
+	
+	return $sig
+}
+
+proc PrepareSucceedSignal { } {
+	new VGCS_VBS_ASG_RES sig 
+
+	wr 		sig ch_type 00
+	wr      sig cell_idfr 00
+	wr		sig chsn_ch 00
+	wr		sig circ_idty_code 00
+	wr		sig circ_pool 00
+
+	return $sig
+}
+
+proc VgcsAssignRequest { } {
+
+	# Global Variables
+	global _sig glMode glNumBts glClearCommandTimerId
+	global glNumAsgReq glDisconnect
+
+	LogInputMsg $_sig
+
+	if { ![string compare $glMode "CompleteFailure"] } {
+		set s [PrepareFailSignal]
+	} elseif { ![string compare $glMode "SetupOk"] } {
+		set s [PrepareSucceedSignal]
+		incr glNumBts
+	} elseif { ![string compare $glMode "ClearRequest"] } {
+		#tmrstart $glClearCommandTimerId
+		new CLR_REQ s
+		logscr "Sending clear command"
+	} elseif { ![string compare $glMode "MSOrigCall"] } {
+		set s [PrepareSucceedSignal]
+		incr glNumBts
+	} elseif { ![string compare $glMode "PartialFailure"] } {
+		if { $glNumAsgReq != 1 } {
+			set s [PrepareFailSignal]
+		} else {
+			set s [PrepareSucceedSignal]
+			incr glNumBts
+		}
+		incr glNumAsgReq
+		logscr "Bts failed (BtsNum=$glNumBts)"
+	} elseif { ![string compare $glMode "TimedFailure"] } {
+		set s [PrepareSucceedSignal]
+		tmrstart $glClearCommandTimerId
+	} else {
+		logscr "!Unknown Mode!"
+		exit
+	}
+	logscr "signal = $s"
+	if { [string compare $glDisconnect "AssignmentFailure"] } {
+		SendSccpDataReq $s
+	} else {
+		SendSccpNDisconnectReq $s
+	}
+	logscr "Current number of Bts links = $glNumBts"
+	SendNotificationsToMs
+}
+
+proc SendNotificationsToMs { } {
+	global _mmpid 
+
+	new RR_NOTIFICATION_IND s
+	wr s MsId 2
+	wr s GroupCallRef 0178945f00
+	wr s Priority 1
+
+	send s 13
+}
+
+proc ClearCmd { } {
+
+	# Global Variables
+	global _sig
+
+	LogInputMsg $_sig
+
+	new		CLR_CMPLT s	
+	SendSccpDataReq $s
+}
+proc SendClearCommand { } {
+	global glClearCommandTimerId _src
+	if { $_src == $glClearCommandTimerId } {
+		logscr "Sending the buggy Clear Command"
+		new CLR_REQ s
+		
+		SendSccpDataReq $s		
+	}
+}
+
+proc MsSetupCall { } {
+	logscr "Initiating Ms call"
+	new BSSAP_AP_EST_IND s
+	SendSccpDataReq $s
+}
+
+proc SendOnVGCSDedicatedLink { sig } {
+	logscr "Sending on VGCS dedicated link: $sig"
+	#set sig [list $sig]
+	new UL_RELSE_IND s
+	wr s cause 0e
+	
+	SendSccpDataReq $sig
+	#SendSccpDataReq s
+
+}
+
+proc SendUplinkRequest { hexpdu msId } {
+	global glSccpControlLink glIdx glRrTalkerIndPdu
+	
+	set glIdx $glSccpControlLink
+	logscr "glSccpControlLink = $glSccpControlLink"
+
+	new UL_REQ s
+
+	set glRrTalkerIndPdu $hexpdu
+	
+	SendSccpDataReq $s
+}
+
+proc RecvUlReqAck { } {
+	global glRrTalkerIndPdu glIdx glGrCallRefDb glMsDb
+	LogInputSig
+	logscr "RecvUlReqAck: glIdx = $glIdx"
+	set grCallRef [GetGroupCallRefBySpcStkIdCid $glIdx]
+	if { [IsVoid $grCallRef] } {
+		logscr "######### ERROR: The group call reference is undefined for this link"
+		exit
+	}
+	set newTalker [DbGet $glGrCallRefDb $grCallRef TalkerMsId]
+	logscr "RecvUlReqAck: newTalker = $newTalker"
+	new UL_REQ_CNF s
+	#Building of the RR Talker indication msg
+	new RR_TALK_IND t
+	wr t mobile_station_clsmrk [DbGet $glMsDb $newTalker ClassMark2]
+	wr t mobile_id [DbGet $glMsDb $newTalker IMSI]
+	wr s l3_info [rrSigToPdu t]
+
+	SendSccpDataReq $s
+}
+
+proc SendOnVgcsMainLink { } {
+	global glIdx _sig glLinkDb glGrCallRefDb
+	LogDb $glLinkDb
+	LogDb $glGrCallRefDb
+	set sig [rd _sig SignalToSend]
+	set grCallRef [rd _sig GroupCallReference]
+	set grCallRef [GetGroupCallRefPurePdu $grCallRef]
+	set spcStkIdCid [DbGet $glGrCallRefDb $grCallRef MainLink]
+	logscr "SendOnVgcsMainLink: spcStkIdCid = $spcStkIdCid"
+	SendSccpDataReq $sig $spcStkIdCid 
+
+}
+
+# Get the pdu with only the group call reference binary number
+
+proc GetGroupCallRefPurePdu { pdu } {
+	set binpdu [string range $pdu 0 6]
+	logscr "GetGroupCallRefPurePdu: binpdu : $binpdu pdu : $pdu"
+	set binpdu 0x$binpdu
+	set binpdu [expr $binpdu & 0xFFFFFFE]
+	set binpdu [uitoh $binpdu B]
+	logscr "GetGroupCallRefPurePdu: binpdu : $binpdu"
+	return $binpdu
+}
+
+############################################################
+# FSM
+############################################################
+
+state Null {
+	T_SETUPMSCAL				MsSetupCall
+	SCCP_N_CONNECT_IND          ConnectInd
+	VGCS_VBS_SETUP				VgcsSetup
+	VGCS_VBS_SETUP_REFUSE		VgcsSetupRefuse
+	VGCS_VBS_ASG_REQ			VgcsAssignRequest
+	CLR_CMD						ClearCmd
+	default 					Any
+}
+
+state Active {
+	T_SENDCLEARCOMMAND				SendClearCommand
+	SCCP_N_DISCONNECT_IND       	DisconnectInd
+	SCCP_N_DATA_IND             	DataInd
+	CLR_CMD							ClearCmd
+	UL_RELSE_CMD					LogInputSig
+	UL_REQ_ACK						RecvUlReqAck
+	BSSAP_CTL_SEND_ON_VGCS_LINK		SendOnVgcsMainLink
+	default 					Any
+}
+
+state Any {
+	default 					Unexpected
+}

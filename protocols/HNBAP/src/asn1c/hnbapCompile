@@ -1,0 +1,1 @@
+asn1c HNBAP_ASN1/*.txt -per -c -print -o ./C -warnings -config asn1_hnbap.cfg &> compile.log

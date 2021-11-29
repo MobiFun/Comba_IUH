@@ -1,0 +1,1220 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/SS/tags/SS-0.3.6/scripts/ss_cn.tsm $
+#
+# $Author: carlom $
+#
+# Description: SS procedures network side 3GPP TS 24.080 V4.0.1 (2002-06)
+#
+#
+# $Rev: 48222 $
+#
+# $Date: 2012-01-25 17:51:17 +0100 (Wed, 25 Jan 2012) $
+##############################################################
+
+##############################################################
+#
+# Init Procedure
+#
+##############################################################
+
+proc Init { args } {
+ 
+	# Declare and Initialize Global Variables
+	global _self _HandleRxSignalProc __net_side glSSdb glCommonDb glInvokeID
+
+    # Includes
+	include "common/utils/generalUtils.tsm"
+	include "common/utils/L3Utils.tsm"
+	include "protocols/SS/ss_utils.tsm"
+	
+	# Uplevel Configuration File
+	set cfgfile [lindex $args 0]
+	uplevel #0 include $cfgfile
+
+	# Create Common Db
+	set glCommonDb [lindex $args 1]
+		
+	# Ss Adapation Layer
+	set al [lindex $args 2]
+	include "$al"
+	
+	# Register Sapi
+	register SS
+
+	SetNetside
+
+	# Handle Multi-Instance
+	set _HandleRxSignalProc SsMultiInstanceHdl
+
+	# Display
+	logscr "SS Core Network Simulation Started"
+
+	# Initialize Parameters
+	set glInvokeID 0
+
+	nextstate WaitForConfig
+}
+
+##############################################################
+#
+# HLR Related Procedures
+#
+##############################################################
+
+proc CreateHLR_Db { dbname } {
+	
+	# Global Variables
+    global glCommonDb glHlrList 
+
+	set glHlrList [list \
+		"CFUstatus" "CFUforwMsNum"	\
+		"CFNRCstatus" "CFNRCforwMsNum"	\
+		"CFBstatus" "CFBforwMsNum"	\
+		"CFNRYstatus" "CFNRYforwMsNum"	\
+		"BAOCstatus" \
+		"BOICstatus" \
+		"BOIC-exHCstatus" \
+		"BAICstatus" \
+		"BAIC-Roamstatus" \
+		"cwstatus" \
+		]
+
+	lappend idxList [list Idx Index Read_Only]
+	lappend idxList [list MsNum Key Read/Write]
+
+	# Call Forwarding Unconditional (=CFU)
+	lappend idxList [list CFUstatus Normal Read/Write]
+	lappend idxList [list CFUforwMsNum Normal Read/Write]
+
+	# Call Forwarding on Not Reachable (=CFNRC)
+	lappend idxList [list CFNRCstatus Normal Read/Write]
+	lappend idxList [list CFNRCforwMsNum Normal Read/Write]
+
+	# Call Forwarding on Busy (=CFB)
+	lappend idxList [list CFBstatus Normal Read/Write]
+	lappend idxList [list CFBforwMsNum Normal Read/Write]
+
+	# Call Forwarding on Not Reply (=CFNRY)
+	lappend idxList [list CFNRYstatus Normal Read/Write]
+	lappend idxList [list CFNRYforwMsNum Normal Read/Write]
+
+	# Barring of All Outgoing Calls (=BAOC)
+	lappend idxList [list BAOCstatus Normal Read/Write]
+
+	# Barring of Outgoing International Calls (BOIC)
+	lappend idxList [list BOICstatus Normal Read/Write]
+
+	# Barring of Outgoing International Calls except those directed to the Home PLMN Country (BOIC-exHC)
+	lappend idxList [list BOIC-exHCstatus Normal Read/Write]
+
+	# Barring of All Incoming Calls (BAIC)
+	lappend idxList [list BAICstatus Normal Read/Write]
+
+	# Barring of All Incoming Calls when roaming outside the Home PLMN Country (BAIC-Roam)
+	lappend idxList [list BAIC-Roamstatus Normal Read/Write]
+
+	# Call Waiting (cw)
+	lappend idxList [list cwstatus Normal Read/Write]
+
+
+	DbCreate $dbname $idxList
+
+	# Create Internal HLR Entities
+	set idxlist [DbGetIndexList $glCommonDb]
+	foreach msid $idxlist {
+		AddHlrEntity $msid
+	}
+}
+
+proc AddHlrEntity { msid } {
+
+	# Global Variables
+    global glHlrDb glCommonDb 
+	
+	DbCreateDefEntry $glHlrDb $msid
+
+	# MsNum
+	DbSet $glHlrDb $msid MsNum [DbGet $glCommonDb $msid OwnNum]
+
+	## Note: SsStatus=0.0.0.0.P.R.A.Q
+
+	# CFUstatus
+	DbSet $glHlrDb $msid "CFUstatus" 08; # P=1,R=0,A=0,Q=0
+	# CFNRCstatus
+	DbSet $glHlrDb $msid "CFNRCstatus" 08; # P=1,R=0,A=0,Q=0
+	# CFBstatus
+	DbSet $glHlrDb $msid "CFBstatus" 08; # P=1,R=0,A=0,Q=0
+	# CFNRYstatus
+	DbSet $glHlrDb $msid "CFNRYstatus" 08; # P=1,R=0,A=0,Q=0
+
+	# Carlo: non inizializzo nel caso dei Barring
+
+	# cwstatus
+	DbSet $glHlrDb $msid "cwstatus" 08; # Carlo: P=1,R=not_applicable,A=0,Q=0 where: P=Provisioning, R=Registration, A=Activation, Q=Query(Interrogation)
+}
+
+proc HlrSet { field val } {
+
+	# Global Variables
+    global glHlrDb glMsNum glIdx
+	
+	# If current instance is global
+	if { $glIdx == 0 } {
+		set msid [DbGetIdx $glHlrDb MsNum $glMsNum]; # MS interrogated
+	} else {
+		set msid [IndexToMsId $glIdx]
+	}
+
+	DbSet $glHlrDb $msid $field $val
+}
+
+proc HlrGet { service field } {
+
+	# Global Variables
+    global glHlrDb glMsNum glIdx
+	
+	# If current instance is global
+	if { $glIdx == 0 } {
+		set msid [DbGetIdx $glHlrDb MsNum $glMsNum]; # MS interrogated
+	} else {
+		set msid [IndexToMsId $glIdx]
+	}
+
+	#log "HlrGet: msid=$msid"; #cDEBUG
+	#LogDb $glHlrDb; #cDEBUG
+
+	return [DbGet $glHlrDb $msid "[set service]$field"]
+}
+
+proc RcvHlrReqInfo { } {
+
+	# Global Variables
+    global _sig glSSdb glIdx glHlrDb glHlrList
+
+	# Get Parameters
+	set msnum [rd _sig MsNum]; # Ms number of MS interrogated 
+
+	# Check if MS exists in HLR
+	if { ![DbKeyExists $glHlrDb MsNum $msnum] } {
+		logscr "MS (num=$msnum) not registered on HLR"
+		SendHlrResInfo $msnum "?"
+		return
+	}
+	
+	# Initialize Services Parameters
+	set services [list]
+
+	#LogDb $glHlrDb; #cDEBUG
+
+	# Get Services Parameters
+	set msidx [DbGetIdx $glHlrDb MsNum $msnum]
+	set hlrRecord [lrange [DbGetRecord $glHlrDb $msidx] 2 end]
+	for { set i 0 } { $i<[llength $glHlrList] } { incr i } {
+		set name [lindex $glHlrList $i] 
+		set value [lindex $hlrRecord $i]
+		lappend services $name $value
+		#log "RcvHlrReqInfo: name=$name value$value"; #cDEBUG
+	}
+
+	# 
+	SendHlrResInfo $msnum $services
+}
+
+proc SendHlrResInfo { msnum services } {
+
+	# Global Variables
+    global glSSdb glIdx glMsId glHlrDb glHlrPidArray
+
+	new SS_HLR_RES_INFO s
+	wr	s MsId $glMsId
+	wr	s MsNum $msnum
+	wr	s Services $services
+
+	send    s $glHlrPidArray($glMsId)
+	LogOutputMsg $s
+}
+
+# to get Facility
+proc RcvHlrReqFac { } {
+
+	# Global Variables
+    global _sig glSSdb glIdx glHlrDb 
+
+	LogDb $glHlrDb; #cDEBUG
+
+	# Get Parameters
+	set msnum [rd _sig MsNum]; # Ms number of MS interrogated 
+	set service [rd _sig Service]
+	set notif [rd _sig SsNotification]
+	set waitingInd [rd _sig CallIsWaiting_Indicator]
+
+	# Check if MS exists in HLR
+	if { ![DbKeyExists $glHlrDb MsNum $msnum] } {
+		logscr "MS (num=$msnum) not registered on HLR"
+		if { $waitingInd == "01" } {
+			SendHlrResFac $msnum "?" $waitingInd
+		} else {
+			SendHlrResFac $msnum "?"
+		}
+		return
+	}
+	
+	# Set Operation (TODO control: we assume "notify" as default)
+	switch -exact -- $service {
+		
+		"AOCI"	-
+		"AOCC"	{ set oper "forwardChargeAdvice" }
+		default { set oper "notifySS" }
+	}
+
+	DbSet $glSSdb $glIdx Service $service
+	DbSet $glSSdb $glIdx Operation $oper
+
+	log "RcvHlrReqFac: waitingInd == $waitingInd; notif=$notif"; #cDEBUG
+	if { $notif != "?" } {
+		log "RcvHlrReqFac: case of notif=$notif"; #cDEBUG
+		SendHlrResFac $msnum $notif
+	} elseif { $waitingInd != "?" } {
+		log "RcvHlrReqFac: case of waitingInd == $waitingInd"; #cDEBUG
+		SendHlrResFac $msnum "?" $waitingInd
+	} else {
+		log "RcvHlrReqFac: ERROR --> both waitingInd=$waitingInd and notif=$notif"; #cDEBUG
+	}
+}
+
+proc SendHlrResFac { msnum { notif "?" } { callwaiting "?" } } {
+
+	# Global Variables
+    global glSSdb glIdx glMsId glHlrDb glHlrPidArray
+
+	new SS_HLR_RES_FAC s
+	wr	s MsId $glMsId
+	wr	s MsNum $msnum
+	set service [DbGet $glSSdb $glIdx Service]
+	wr	s Service $service
+
+	log "SendHlrResFac: glIdx=$glIdx; service=$service; callwaiting=$callwaiting"; #cDEBUG
+	
+	# Get Facility IE (as hex value)
+	if { ![IsVoid $service] } {
+		set facility [EncFacilityIe "invoke" "?" $notif]
+		set binfac [ssFacToPdu $facility]
+		binary scan $binfac "H*" hexfac
+		wr	s Facility $hexfac
+
+	} elseif { ![IsVoid $callwaiting] && $callwaiting == "01" } {
+		set facility [EncFacilityIe "invoke" "?" $notif $callwaiting]
+		set binfac [ssFacToPdu $facility]
+		binary scan $binfac "H*" hexfac
+		wr	s Facility $hexfac
+
+	} else {
+		log "SendHlrResFac: WARNING ---> service=$service and callwaiting=$callwaiting"; #cDEBUG
+	}
+
+	send    s $glHlrPidArray($glMsId)
+	LogOutputMsg $s
+}
+
+##############################################################
+#
+# Mm Connection Procedures
+#
+##############################################################
+
+proc SendMmSsDataReq { msid pdu } {
+
+	# Global Variables
+    global glSSdb glIdx
+ 
+	# MMSS Data Request
+	new		MM_SS_DATA_REQ s
+	wr		s MsId $msid
+	wr      s SeqNum [DbGet $glSSdb $glIdx SendSeqNum]
+	wr      s Pdu [ssSigToPdu pdu]
+	send  s
+	LogOutputPrim $s
+}
+
+proc SendMmSsRelReq { msid } {
+
+	# Global Variables
+	global glIdx
+
+	# MMSS Release Request
+	new		MM_SS_REL_REQ s
+	wr      s MsId $msid
+	wr      s Tio  [expr {$glIdx % 8}]
+	send  s
+	LogOutputMsg $s
+}
+
+proc ReleaseMmConnection { } {
+
+	# Declare and Initialize Global Variables
+	global glSSdb glIdx
+
+	# Stop timers
+	### ???
+
+	SendMmSsRelReq [IndexToMsId $glIdx]
+}
+
+##############################################################
+#
+# Ss Entity Procedures
+#
+##############################################################
+
+proc Config { } {
+
+	# Declare and Initialize Global Variables
+	global _self glSSdb glHlrDb 
+
+	# Create Internal Database
+	set glSSdb SS_cn_db
+	CreateDataBase $glSSdb
+
+	# Create HLR Database
+	set glHlrDb SS_HLR_db
+	CreateHLR_Db $glHlrDb
+
+	# Ss Config Ack
+	new		SS_CONFIG_ACK s
+	
+	send  s
+	LogOutputMsg $s
+
+	logscr ""
+    logscr "SS BRING-UP COMPLETE"
+	logscr ""
+
+	nextstate Null
+}
+
+proc RemoveSsEntity { index } {
+
+	# Global Variables
+	global glSSdb
+
+	# Free Timers
+	# ...
+
+	DbRemEntry $glSSdb $index
+}
+
+proc CreateNewSsEntity { index } {
+
+	# Global Variables
+	global glSSdb glSsPidArray glHlrPidArray 
+
+	set initState Idle
+
+	DbCreateDefEntry $glSSdb $index
+
+	# Send Sequence Number
+	DbSet $glSSdb $index SendSeqNum 0
+
+	# Ss User Pid
+	set arridx [expr {$index / 8}]
+
+	if { 0 } {
+		log "CreateNewSsEntity: index=$index -- arridx=$arridx"; #cDEBUG
+		for { set i 1 } { $i <= 10 } { incr i } {
+			lappend MsList $i
+		}
+
+		foreach id $MsList {
+			if { [info exists glHlrPidArray($id)] } {
+				log "arridx=$id -- HlrPidArray=$glHlrPidArray($id)"; #cDEBUG
+			}	
+		}
+	} ; # END IF 0
+
+	if { [info exists glSsPidArray($arridx)] } {
+		
+		#log "CreateNewSsEntity -- exists glSsPidArray($arridx) -- SsPidArray=$glSsPidArray($arridx) -- arridx=$arridx"; #cDEBUG
+
+		DbSet $glSSdb $index SsUserPid $glSsPidArray($arridx)
+
+	} elseif { [info exists glHlrPidArray($arridx)] } {
+		#log "CreateNewSsEntity -- exists glHlrPidArray($arridx) -- HlrPidArray=$glHlrPidArray($arridx) -- arridx=$arridx"; #cDEBUG
+
+		DbSet $glSSdb $index SsUserPid $glHlrPidArray($arridx)
+	} else {
+	# USSD CELLNET
+        global __SupportUnknownMS
+        if { [info exists __SupportUnknownMS] && $__SupportUnknownMS } {
+            set upid $glSsPidArray(0)
+            log "CreateNewSsEntity: upid = $upid"
+            DbSet $glSSdb $index SsUserPid $upid
+			# CELLNET-438
+			global glHlrDb
+			if { ![DbEntryExists $glHlrDb $arridx] } {
+				AddHlrEntity $arridx
+			}
+			# END
+        } else {
+        	# CELLNET RESTYLING:
+        	global __CellNet
+        	if { [info exists __CellNet] && $__CellNet } {
+				set upid $glSsPidArray(0)
+				log "CreateNewSsEntity: visitor not supported upid = $upid"
+				DbSet $glSSdb $index SsUserPid $upid
+				# CELLNET-438
+				global glHlrDb
+				if { ![DbEntryExists $glHlrDb $arridx] } {
+					AddHlrEntity $arridx
+				}
+				# END
+			}
+		}
+    }
+	# END
+
+	# Set State
+	DbSet $glSSdb $index State $initState
+
+	#LogDb $glSSdb; #cDEBUG
+
+	# Timer T_UNBLOCK
+    set tid [tmrnew T_UNBLOCK 30000]
+    DbSet $glSSdb $index T_UNBLOCKid $tid
+
+	# Timer T_RELEASE
+    set tid [tmrnew T_RELEASE 500]
+    DbSet $glSSdb $index T_RELEASEid $tid
+}
+
+proc SetSsUserPid { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glSSdb glSsPidArray 
+
+	set userPid [lindex $_sig 1]
+	set listMs [lindex $_sig 2]
+
+	#LogDb $glSSdb; #cDEBUG
+
+	# Configure Parameters for every DB Index
+	foreach index $listMs {
+ 
+		# Set User Pid
+		set glSsPidArray($index) $userPid
+	
+		# Update Data Base
+		set start [expr {$index * 8}]
+		for { set i 0 } { $i < 8 } { incr i } {
+			set el [expr {$i + $start}]
+			if { [DbEntryExists $glSSdb $el] } {
+				DbSet $glSSdb $el SsSetUserPid $glSsPidArray($index)
+
+				#log "SetSsUserPid: userPid=$userPid, listMs=$listMs, index=$index, glSsPidArray(index)=$glSsPidArray($index), start=$start, el=$el, SsSetUserPid_DB=[DbGet $glSSdb $el SsSetUserPid]"; #cDEBUG
+			}
+		}
+	}
+
+    global __SupportUnknownMS
+    if { [info exists __SupportUnknownMS] && $__SupportUnknownMS } {
+        set glSsPidArray(0) $userPid
+    }
+
+}
+
+proc SetHlrUserPid { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glHlrDb glHlrPidArray
+
+	set userPid [lindex $_sig 1]
+	set listMs [lindex $_sig 2]
+
+	# Configure Parameters for every DB Index
+	foreach index $listMs {
+ 
+		# Set User Pid
+		set glHlrPidArray($index) $userPid
+	}
+}
+
+proc SsParamReset { } {
+
+	# Global Variables
+	global glIdx glSSdb
+
+	# Send Sequence Number
+	DbSet $glSSdb $glIdx SendSeqNum 0
+}
+
+##############################################################
+#
+# Timers Handling Procedures
+#
+##############################################################
+
+##############################################################
+#
+# Ss Entity Procedures
+#
+##############################################################
+
+##############################################################
+#
+# TODO
+#
+##############################################################
+
+proc StoreRegisterParams { operation par } {
+
+	# Declare and Initialize Global Variables
+	global _sig glSSdb glIdx
+
+	DbSet $glSSdb $glIdx Operation $operation
+	# Get service string
+	if {$operation != "processUnstructuredSS" && $operation != "unstructuredSS"} {
+		set service [GetMapSsService [rd par ss_Code]]
+		DbSet $glSSdb $glIdx Service $service
+	}
+
+	switch -exact -- $operation {
+		"registerSS"	{ 
+			set status "0c"; # P=1,R=1,A=0,Q=0
+			HlrSet "[set service]status" $status
+
+			switch -exact -- $service {
+				"CFU" 	-
+				"CFB" 	-
+				"CFNRY" -
+				"CFNRC" { set fwNum [rd par forwardedToNumber] 
+						  HlrSet "[set service]forwMsNum" $fwNum }
+				"ForwardCheckSsInd" { logscr "service $service actually not supported" }
+				default { }
+			}
+		}
+		"eraseSS"	{ 
+			set status "08"; # P=1,R=0,A=0,Q=0
+			HlrSet "[set service]status" $status
+			switch -exact -- $service {
+				"CFU" 	-
+				"CFB" 	-
+				"CFNRY" -
+				"CFNRC" { HlrSet "[set service]forwMsNum" "?" }
+				default { }
+			}
+		}
+		"activateSS"	{ 
+			set status "0e"; # P=1,R=1,A=1,Q=0
+			HlrSet "[set service]status" $status
+		}
+		"deactivateSS"	{ 
+			set status "0c"; # P=1,R=1,A=0,Q=0
+			HlrSet "[set service]status" $status
+		}
+		"interrogateSS"	{ }
+		"processUnstructuredSS" {
+			set ussdCodSch [lindex $par 1]
+			if {$ussdCodSch != "0f"} {
+				logscr "Unsupported ussd coding scheme"
+				return
+			}
+			set ussdStr [lindex $par 2]
+			set ussdLen [string length $ussdStr]
+			set numOct [expr {$ussdLen /2}]
+			set numSect [expr {$numOct*8 / 7}]
+			set numSect [uctoh $numSect]
+			set ussdStr8bit [smsDecode ${numSect}${ussdStr}]	
+			set res $ussdStr8bit
+			logscr "USSD MSG RECEIVED: $res"
+			DbSet $glSSdb $glIdx UssdDataCodSch $ussdCodSch
+			DbSet $glSSdb $glIdx UssdStr $res
+		}
+		default 	{ abort "StoreRegisterParams: SS OperationCode unknown ($code)" }
+	}
+}
+
+##############################################################
+#
+# Specific Procedures
+#
+##############################################################
+
+proc RcvRegister { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glSSdb glIdx glHlrDb
+
+	LogInputMsg $_sig
+
+	# Check Send Sequence Number
+	set sndseqnum [rd _sig Sn]
+	set revlev [DbGet $glSSdb $glIdx RevLev]
+	if { [CheckSendSeqNum $glIdx $sndseqnum $glSSdb $revlev] != "1" } {
+		logscr "Unexpected Send Sequence Number ($sndseqnum)"
+		return
+	}
+
+	# Check Transaction Id Direction
+	set tif [rd _sig TIFlag]
+	if { $tif == "0" } {
+		DbSet $glSSdb $glIdx ExpectedTif $tif
+	} else {
+		logscr "Unexpected Trans Id Flag ($tif)"	
+		return
+	}	
+
+	# Store LinkedID (incoming invokeID value)
+	set linkedID [GetInvokeID [rd _sig Facility]]
+	DbSet $glSSdb $glIdx LinkedID $linkedID
+	DbSet $glSSdb $glIdx RegInvokeId $linkedID
+
+	# Store Params (Operation and Service)
+	lassign {operation par} [DecFacilityIe [rd _sig Facility]]
+
+	# CELLNET-361
+	log "RcvRegister: operation = $operation par = $par"
+	if { [IsVoid $operation] && [IsVoid $par] } {
+		DbSet $glSSdb $glIdx Error facilityNotSupported
+		SendReleaseCmpl ? 1 2 
+		# give time to the release cmpl to reach the peer
+		set tmrId [DbGet $glSSdb $glIdx T_RELEASEid]
+		if {![IsVoid $tmrId]} {
+			tmrstart $tmrId
+			nextstate Dedicated
+		} else {
+			abort "RcvRegister: error timer for release not configured"
+		}
+		return
+	}
+	# END
+
+	StoreRegisterParams $operation $par
+
+	set dst [DbGet $glSSdb $glIdx SsUserPid]
+
+	log "RcvRegister: glIdx=$glIdx; MsId=[IndexToMsId $glIdx] --> dst=$dst"; #cDEBUG
+
+	if { ![IsVoid $dst] } {
+		# Inform Higher Layers
+		new		MN_SS_BEGIN_IND s
+		wr      s MsId [IndexToMsId $glIdx]
+		wr		s Tio [expr {$glIdx % 8}]
+		wr		s Operation $operation
+		wr 		s UssdDataCodSch [DbGet $glSSdb $glIdx UssdDataCodSch]
+		wr		s UssdStr [DbGet $glSSdb $glIdx UssdStr]
+		send    s $dst
+		LogOutputMsg $s	
+	}
+
+	nextstate Dedicated
+}
+
+proc EndOfTransaction { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glIdx glSSdb
+
+	LogInputMsg $_sig
+
+	# Check Cause
+	set cause [rd _sig Cause]
+
+	# PATCH USSD 
+    global __CellNet
+   	if { ![info exists __CellNet] || $__CellNet == 0 } {
+		if { ![IsVoid $cause] && [WrongCcCause $cause] } {
+			logscr "Unexpected Cause ($cause)"
+        	return
+		}
+	} else {
+		log "cause = $cause"
+	}
+
+	set facOpt 1
+	set tiFlag 1
+	set op [rd _sig Operation]
+	# PATCH REL CMPL
+	DbSet $glSSdb $glIdx Operation $op
+	log " PATCH: op = $op"
+	# END
+	if {[IsVoid $op] } {
+		set tiFlag 0
+		set facOpt 0
+	} elseif {$op == "unstructuredSS" || $op == "processUnstructuredSS"} {
+		if {$op == "unstructuredSS"} {
+			set tiFlag 0
+		} 
+		# UssdDataCodSch
+    	set ussdDataCodSch [rd _sig UssdDataCodSch]
+		DbSet $glSSdb $glIdx UssdDataCodSch $ussdDataCodSch
+		# UssdString
+		set ussdStr [rd _sig UssdStr]
+		if {[IsVoid $ussdStr] && [IsVoid $ussdDataCodSch]} {
+			set facOpt 0
+		} else {	
+			# TODO: da capire, deve farlo il compilatore ASN1????
+			set 7bitStr [smsEncode $ussdStr] 
+			set 7bitStr [string range $7bitStr 2 end]
+			DbSet $glSSdb $glIdx UssdStr $7bitStr
+		}
+	} else {
+		log "service not supported"
+		# CELLNET-438
+		global __CellNet
+   		if { [info exists __CellNet] && $__CellNet } {
+			set facOpt 2
+			DbSet $glSSdb $glIdx Error facilityNotSupported
+		}
+		# END
+	}
+
+	# Send Release Complete
+	SendReleaseCmpl $cause $tiFlag $facOpt
+
+	# PATCH USSD 
+   	if { ![info exists __CellNet] || $__CellNet == 0 } {
+		# Release MM Connection 
+		ReleaseMmConnection
+	
+		# Remove SS Entity
+		RemoveSsEntity $glIdx
+
+		nextstate Idle
+	} else {
+		# give time to the release cmpl to reach the peer
+		set tmrId [DbGet $glSSdb $glIdx T_RELEASEid]
+		if {![IsVoid $tmrId]} {
+			tmrstart $tmrId
+		} else {
+			log "EndOfTransaction: error timer for release not configured"
+		}
+	}
+	# END
+}
+
+proc EndOfTransactionByMs { } {
+
+	# Declare and Initialize Global Variables
+	global _sig glIdx glSSdb
+
+	LogInputMsg $_sig
+
+	# Check Cause
+	set cause [rd _sig Cause]
+
+	# PATCH USSD 
+    global __CellNet
+   	if { ![info exists __CellNet] || $__CellNet == 0 } {
+		if { ![IsVoid $cause] && [WrongCcCause $cause] } {
+			logscr "Unexpected Cause ($cause)"
+        	return
+		}
+	} else {
+		log "cause = $cause"
+	}
+
+	# Release MM Connection 
+	ReleaseMmConnection
+	
+	set dst [DbGet $glSSdb $glIdx SsUserPid]
+
+	#TODO
+	if { ![IsVoid $dst] } {
+		# Inform Higher Layers
+		new		MN_SS_END_IND s
+		wr      s MsId [IndexToMsId $glIdx]
+		wr		s Tio [expr {$glIdx % 8}]
+		#wr		s Operation $operation
+		send    s $dst
+		LogOutputMsg $s	
+	}
+
+	# Remove SS Entity
+	RemoveSsEntity $glIdx
+
+	nextstate Idle
+}
+
+
+proc SendReleaseCmpl { cause {tiFlag 1} {facOpt 1} } {
+
+	# Declare and Initialize Global Variables
+	global glSSdb glIdx
+
+	# Get Parameters
+	set tid [expr {$glIdx % 8}]
+	set revlev [DbGet $glSSdb $glIdx RevLev]
+
+	new 	RELEASE_CMPL s
+	#wr		s TIFlag 1; # The msg is sent to the side that originates the TI
+	wr		s TIFlag $tiFlag
+	wr      s TIO $tid
+	#wr      s Sn [SendSequenceNumber $glIdx $glSSdb $revlev]
+	# 24.080 3.4 bit7 and bit 8 in case of msg sent by the network
+	# muste be zero
+	wr      s Sn 0 
+	wr 		s Cause $cause
+
+	log "SendReleaseCmpl: facOpt = $facOpt"
+	if {$facOpt} {
+		set linkedID [DbGet $glSSdb $glIdx LinkedID]
+		set regID [DbGet $glSSdb $glIdx RegInvokeId]
+		DbSet $glSSdb $glIdx LinkedID $regID
+		log "PATCH: regID = $regID"
+		# CELLNET-361	 
+		#wr 		s Facility [EncFacilityIe "return_result" $linkedID "?"]
+		if {$facOpt == 1} {	
+			wr 		s Facility [EncFacilityIe "return_result" $linkedID "?"]
+		} elseif {$facOpt == 2} {
+			wr 		s Facility [EncFacilityIe "return_error" $linkedID "?"]
+		}
+		# END
+	}
+
+	# Send to Lower Layer
+	SendMmSsDataReq [IndexToMsId $glIdx] $s
+	LogOutputMsg $s
+}
+
+proc EstablishMmConnection { } {
+
+    # Declare and Initialize Global Variables
+    global _sig glSSdb glIdx
+
+    LogInputMsg $_sig
+
+    # Set MsId and PendingTid
+    set msid [IndexToMsId $glIdx]
+	if { [DbKeyExists $glSSdb PendingTid $msid] } {
+		logscr "Duplicated PendingTid"
+		return
+	}
+    DbSet $glSSdb $glIdx PendingTid $msid
+
+    # Store SS Register Parameters
+	set op [rd _sig Operation]
+    DbSet $glSSdb $glIdx Operation $op 
+	if {$op == "unstructuredSS" || $op == "unstructuredSSnotify"} {
+		# UssdDataCodSch
+    	DbSet $glSSdb $glIdx UssdDataCodSch [rd _sig UssdDataCodSch]
+		# UssdString
+		set ussdStr [rd _sig UssdStr]
+		log "8bitSt: $ussdStr"
+		set 7bitStr [smsEncode $ussdStr]
+		log "7bitStr: $7bitStr"
+		set 7bitStr [string range $7bitStr 2 end]
+		DbSet $glSSdb $glIdx UssdStr $7bitStr
+		log "7bitStr: $7bitStr"
+	}
+	# TODO: other SS
+
+    # Send to Lower Layer
+    SendMmSsEstReq $msid
+
+	tmrstart [DbGet $glSSdb $glIdx T_UNBLOCKid]
+    nextstate ConnPending
+}
+
+proc SendMmSsEstReq { msid } {
+
+    # Global Variables
+    global glIdx
+
+    # Set SS Type Number (Table 10.5.91/3GPP TS 24.008)
+    set typenum 8
+
+    # MMSS Establish Request
+    new     MM_SS_EST_REQ s
+    wr      s MsId $msid
+    wr      s Tio [expr {$glIdx % 8}]
+    wr      s CmServType $typenum
+    send  s
+    LogOutputMsg $s
+}
+
+proc MmConnectionEstablished { } {
+
+    # Declare and Initialize Global Variables
+    global _sig glSSdb glIdx glCommonDb
+
+    LogInputMsg $_sig
+
+	tmrstop [DbGet $glSSdb $glIdx T_UNBLOCKid]
+
+    # Get Parameters
+    set sndseqnum [rd _sig SeqNum]
+    set revlev [rd _sig RevLev]
+    DbSet $glSSdb $glIdx SendSeqNum $sndseqnum
+    DbSet $glSSdb $glIdx RevLev $revlev
+    DbSet $glSSdb $glIdx ExpectedTif 1
+    DbSet $glSSdb $glIdx PendingTid "?"
+
+    SendRegister
+	tmrstart [DbGet $glSSdb $glIdx T_UNBLOCKid]
+
+    nextstate Dedicated
+}
+
+proc SendRegister { } {
+
+    # Declare and Initialize Global Variables
+    global glSSdb glIdx
+
+    # Get Parameters
+    set tid [expr {$glIdx % 8}]
+    set revlev [DbGet $glSSdb $glIdx RevLev]
+
+    new     REGISTER s
+    wr      s TIFlag 0; # The msg is sent from the side that originates the TI
+    wr      s TIO $tid
+    wr      s Sn 0
+    wr      s Facility [EncFacilityIe "invoke" "?" "?"]
+
+    # Send to Lower Layer
+    SendMmSsDataReq [IndexToMsId $glIdx] $s
+    LogOutputMsg $s
+}
+
+proc RcvFacility {} {
+
+	# Declare and Initialize Global Variables
+	global _sig glSSdb glIdx 
+
+	LogInputMsg $_sig
+
+	set tmrId [DbGet $glSSdb $glIdx T_UNBLOCKid]
+	if {![IsVoid $tmrId]} {
+		tmrstop $tmrId 
+	}
+
+	# Check Send Sequence Number
+	set sndseqnum [rd _sig Sn]
+	set revlev [DbGet $glSSdb $glIdx RevLev]
+	if { [CheckSendSeqNum $glIdx $sndseqnum $glSSdb $revlev] != "1" } {
+		logscr "Unexpected Send Sequence Number ($sndseqnum)"
+		return
+	}
+
+	# Check Transaction Id Direction
+    set tif [rd _sig TIFlag]
+    if { $tif != [DbGet $glSSdb $glIdx ExpectedTif] } {
+        logscr "Unexpected Transaction Id Flag ($tif)"
+        return
+    }
+
+	logscr "FACILITY RECEIVED"
+	lassign {operation par} [DecFacilityIe [rd _sig Facility]]
+	logscr "operation = $operation"
+	logscr "par = $par"
+	if { [IsVoid $operation] && [IsVoid $par] } {
+		log "RECEIVED VOID OPERATION AND PAR"
+		#TODO
+		set dst [DbGet $glSSdb $glIdx SsUserPid]
+		if { ![IsVoid $dst] } {
+			# Inform Higher Layers
+			new		MN_SS_FACILITY_IND s
+			wr      s MsId [IndexToMsId $glIdx]
+			wr		s Tio [expr {$glIdx % 8}]
+			wr		s TIFlag $tif
+			wr		s Operation $operation
+			send    s $dst
+			LogOutputMsg $s	
+		}
+	}
+	if {$operation == "unstructuredSS" && [lindex $par 0] == "USSD_RES"} {
+		# Store LinkedID (incoming invokeID value)
+		set linkedID [GetInvokeID [rd _sig Facility]]
+		DbSet $glSSdb $glIdx LinkedID $linkedID
+
+		logscr "USSD RES received"
+		set ussdCodSch [lindex $par 1]
+		if {$ussdCodSch != "0f"} {
+			logscr "Unsupported ussd coding scheme"
+			return
+		}
+		set ussdStr [lindex $par 2]
+		log "ricevuto dalla libreria ASN1 ussdStr = $ussdStr"
+		set ussdLen [string length $ussdStr]
+		set numOct [expr {$ussdLen /2}]
+		set numSect [expr {$numOct*8 / 7}]
+		set numSect [uctoh $numSect]
+		log "passo alla smsDecode: ${numSect}${ussdStr}"
+		set ussdStr8bit [smsDecode ${numSect}${ussdStr}]	
+		logscr "dopo la decodifica di Bellizzi ussdStr8bit = $ussdStr8bit"
+		#set res [htoa $ussdStr]
+		set res $ussdStr8bit
+		logscr "USSD MSG RECEIVED: $res"
+
+		#TODO
+		set dst [DbGet $glSSdb $glIdx SsUserPid]
+		if { ![IsVoid $dst] } {
+			# Inform Higher Layers
+			new		MN_SS_FACILITY_IND s
+			wr      s MsId [IndexToMsId $glIdx]
+			wr		s Tio [expr {$glIdx % 8}]
+			wr		s TIFlag $tif
+			wr		s Operation $operation
+			wr		s UssdDataCodSch $ussdCodSch
+			wr		s UssdStr $res
+			send    s $dst
+			LogOutputMsg $s	
+		}
+	}
+
+	nextstate Dedicated
+}
+
+proc SendAnotherFac {} {
+
+    # Declare and Initialize Global Variables
+    global _sig glSSdb glIdx
+
+    LogInputMsg $_sig
+
+    # Store SS Register Parameters
+	set op [rd _sig Operation]
+	set tiflag [rd _sig TIFlag]
+    DbSet $glSSdb $glIdx Operation $op 
+	if {$op == "unstructuredSS"} {
+		# UssdDataCodSch
+    	DbSet $glSSdb $glIdx UssdDataCodSch [rd _sig UssdDataCodSch]
+		# UssdString
+		set ussdStr [rd _sig UssdStr]
+		log "8bitSt: $ussdStr"
+		set 7bitStr [smsEncode $ussdStr]
+		log "7bitStr: $7bitStr"
+		set 7bitStr [string range $7bitStr 2 end]
+		DbSet $glSSdb $glIdx UssdStr $7bitStr
+		log "7bitStr: $7bitStr"
+	}
+	# TODO: other SS
+
+    # Send to Lower Layer
+    SendFacility $tiflag
+
+	set tmrId [DbGet $glSSdb $glIdx T_UNBLOCKid]
+	if {![IsVoid $tmrId]} {
+		tmrstart $tmrId 
+	}
+}
+
+proc SendFacility { tiFlag } {
+
+	# Declare and Initialize Global Variables
+	global glSSdb glIdx
+
+	# Get Parameters
+	set tid [expr {$glIdx % 8}]
+	set revlev [DbGet $glSSdb $glIdx RevLev]
+
+	new 	FACILITY s
+	#wr		s TIFlag 0; # The msg is sent from the side that originates the TI
+	wr 		s TIFlag $tiFlag
+	wr      s TIO $tid
+	#wr      s Sn [SendSequenceNumber $glIdx $glSSdb $revlev]
+	# 24.080 3.4 bit7 and bit 8 in case of msg sent by the network
+	# muste be zero
+	wr      s Sn 0 
+	
+	set linkedID [DbGet $glSSdb $glIdx LinkedID]
+	set regID [DbGet $glSSdb $glIdx RegInvokeId]
+	log "SendFacility: regID = $regID linkedID = $linkedID"
+    #wr      s Facility [EncFacilityIe "invoke" "?" "?"]
+    wr      s Facility [EncFacilityIe "invoke" $regID "?"]
+
+	# Send to Lower Layer
+	SendMmSsDataReq [IndexToMsId $glIdx] $s
+	LogOutputMsg $s
+
+}
+
+
+proc UnblockTrans  { cause } {
+
+	# Declare and Initialize Global Variables
+	global _sig glIdx glSSdb
+
+	if { $cause == 10 } {
+    	# Release MM Connection
+    	ReleaseMmConnection
+	}
+
+    set dst [DbGet $glSSdb $glIdx SsUserPid]
+
+    if { ![IsVoid $dst] } {
+        # Inform Higher Layers
+        new     MN_SS_ERROR_IND s
+        wr      s MsId [IndexToMsId $glIdx]
+        wr      s Tio [expr {$glIdx % 8}]
+        wr      s Cause $cause 
+        send    s $dst
+        LogOutputMsg $s
+    }
+
+	if { $cause == 10 } {
+    	# Remove SS Entity
+    	RemoveSsEntity $glIdx
+		set glIdx 0
+	}
+}
+
+proc ReleaseNow {} {
+
+	global _sig glIdx glSSdb
+
+    # Release MM Connection 
+    ReleaseMmConnection
+  
+    # Remove SS Entity
+    RemoveSsEntity $glIdx
+
+    nextstate Idle
+}
+
+
+
+##############################################################
+#
+# FSM
+#
+##############################################################
+
+state WaitForConfig {
+	SS_CONFIG					Config
+	default	 					Unexpected
+}
+
+state Null {
+	SS_HLR_REQ_INFO				RcvHlrReqInfo
+	SS_HLR_REQ_FAC				RcvHlrReqFac
+	default 					Any
+}
+
+state Idle {
+	MN_SS_BEGIN_REQ				EstablishMmConnection
+	REGISTER					RcvRegister
+	default 					Any
+}
+
+state ConnPending {
+    MM_SS_EST_CNF               MmConnectionEstablished
+	T_UNBLOCK					{ UnblockTrans	10 }
+    default                     Any
+}
+
+state Dedicated {
+	MN_SS_END_REQ				EndOfTransaction
+	RELEASE_CMPL				EndOfTransactionByMs
+	FACILITY					RcvFacility
+	MN_SS_FACILITY_REQ			SendAnotherFac
+	T_UNBLOCK					{ UnblockTrans	20 }
+	T_RELEASE					ReleaseNow
+	default 					Any
+}
+
+state Any {
+	SS_SET_USER_PID     		SetSsUserPid
+	HLR_SET_USER_PID     		SetHlrUserPid
+	default						Unexpected
+}
+
+##############################################################

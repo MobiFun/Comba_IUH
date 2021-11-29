@@ -1,0 +1,845 @@
+
+       ___
+     /_\_/_\    PRISMA Engineering S.r.l.
+    |\ /_\ /|   Telecom testing solutions
+    | |   | |   Via Petrocchi, 4 - 20127 Milano (Italy)
+    |/|___|\|   Tel. +39 02 26113507 - Fax +39 02 26113597
+     \|/_\|/    info@prisma-eng.com - http://www.prisma-eng.com
+
+
+
+/*+---------------+*/
+/*+ CC PRIMITIVEs +*/
+/*+---------------+*/
+/*+ O&M +*/
+typedef VOID CC_CONFIG;
+
+typedef VOID CC_CONFIG_ACK;
+
+typedef {
+UINT UserPid
+LIST_OF UINT ListMs
+UINT FirstMS
+UINT NumMS
+STRING ProfileName 
+} CC_SET_USER_PID;
+
+/*+ MN_CC +*/
+typedef {
+UINT MsId
+HEXSTR Type
+HEXSTR CalledNum
+HEXSTR CallType
+UCHAR ClirSuppression
+UCHAR ClirInvocation 
+} MN_CC_MS_SETUP_REQ;
+
+typedef {
+UINT MsId
+HEXSTR CalledNum
+HEXSTR CallType
+HEXSTR CallingNum
+HEXSTR Facility
+HEXSTR RedirBCDnum
+UCHAR CallWaitingTone
+UINT TstmIndex
+UINT AFlexTMSIRealloc 
+} MN_CC_NET_SETUP_REQ;
+
+typedef {
+UINT MsId
+UINT Tio
+HEXSTR Signal
+UCHAR BearerCapRepeatInd
+HEXSTR BearerCap1
+HEXSTR BearerCap2
+} MN_CC_MS_SETUP_IND;
+
+typedef {
+UINT MsId
+UINT Tio
+HEXSTR CallType
+HEXSTR CalledNum
+} MN_CC_NET_SETUP_IND;
+
+typedef {
+UINT MsId
+UINT Tio
+HEXSTR UserUser 
+} MN_CC_MS_SETUP_RSP;
+
+typedef {
+UINT MsId
+UINT Tio
+UINT MsIdDst
+HEXSTR CalledNum
+HEXSTR Facility
+HEXSTR UserUser 
+} MN_CC_NET_SETUP_RSP;
+
+typedef {
+UINT MsId
+UINT Tio
+HEXSTR UserUser 	
+} MN_CC_MS_SETUP_CNF;
+
+typedef {
+UINT MsId
+UINT Tio
+HEXSTR UserUser 	
+} MN_CC_NET_SETUP_CNF;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_MS_SETUP_CMPLTE_REQ;
+
+typedef {
+UINT MsId
+UINT Tio
+UINT MsIdDst
+} MN_CC_NET_SETUP_CMPLTE_REQ;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_MS_SETUP_CMPLTE_IND;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_NET_SETUP_CMPLTE_IND;
+
+typedef {
+UINT MsId
+UINT Tio
+HEXSTR Cause
+} MN_CC_MS_REJ_REQ;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_NET_REJ_REQ;
+
+typedef {
+UINT MsId
+UINT Tio
+HEXSTR Cause
+} MN_CC_MS_REJ_IND;
+
+typedef {
+UINT MsId
+UINT Tio
+HEXSTR Cause
+} MN_CC_NET_REJ_IND;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_MS_ALERT_REQ;
+
+typedef {
+UINT MsId
+UINT Tio
+UCHAR CallIsWaiting
+} MN_CC_NET_ALERT_REQ;
+
+typedef {
+UINT MsId
+UINT Tio
+UCHAR CallIsWaiting
+} MN_CC_MS_ALERT_IND;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_NET_ALERT_IND;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_MS_NOTIFY_REQ;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_NET_NOTIFY_REQ;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_MS_NOTIFY_IND;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_NET_NOTIFY_IND;
+
+typedef {
+UINT MsId
+UINT Tio
+HEXSTR Cause
+} MN_CC_MS_REL_REQ;
+
+typedef {
+UINT MsId
+UINT Tio
+HEXSTR Cause
+} MN_CC_NET_REL_REQ;
+
+typedef {
+UINT MsId
+UINT Tio
+HEXSTR Cause
+} MN_CC_MS_REL_IND;
+
+typedef {
+UINT MsId
+UINT Tio
+HEXSTR Cause
+} MN_CC_NET_REL_IND;
+
+typedef {
+UINT MsId
+UINT Tio
+HEXSTR Cause
+} MN_CC_MS_REL_CNF;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_NET_REL_CNF;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_MS_FACILITY_REQ;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_NET_FACILITY_REQ;
+
+typedef {
+UINT MsId
+UINT Tio
+HEXSTR Facility
+} MN_CC_MS_FACILITY_IND;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_NET_FACILITY_IND;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_MS_MODIFY_REQ;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_NET_MODIFY_REQ;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_MS_MODIFY_IND;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_NET_MODIFY_IND;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_MS_MODIFY_CNF;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_NET_MODIFY_CNF;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_MS_MODIFY_RSP;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_NET_MODIFY_RSP;
+
+typedef {
+UINT MsId
+UINT Tio
+HEXSTR Cause
+} MN_CC_MS_DISC_REQ;
+
+typedef {
+UINT MsId
+UINT Tio
+HEXSTR Cause
+HEXSTR Facility 
+} MN_CC_NET_DISC_REQ;
+
+typedef {
+UINT MsId
+UINT Tio
+HEXSTR Cause
+} MN_CC_MS_DISC_IND;
+
+typedef {
+UINT MsId
+UINT Tio
+HEXSTR Cause
+} MN_CC_NET_DISC_IND;
+
+typedef {
+UINT MsId
+UINT Tio
+HEXSTR Cause
+} MN_CC_MS_SYNC_IND;
+
+typedef {
+UINT MsId
+UINT Tio
+HEXSTR Cause
+} MN_CC_NET_SYNC_IND;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_PROGRESS_REQ;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_PROGRESS_IND;
+
+typedef {
+UINT MsId
+UINT Tio
+UINT AFlexTMSIRalloc 
+} MN_CC_CALL_PROC_REQ;
+
+typedef {
+UINT MsId
+UINT Tio 
+} MN_CC_CALL_PROC_IND;
+
+typedef {
+UINT MsId
+UINT Tio
+HEXSTR Cause
+HEXSTR Bcap1 
+} MN_CC_CALL_CONF_REQ;
+
+typedef {
+UINT MsId
+UINT Tio
+HEXSTR Cause 
+} MN_CC_CALL_CONF_IND;
+
+typedef {
+UINT MsId
+UINT Tio
+} MN_CC_MS_SETUP_ACK;
+
+typedef {
+HEXSTR CalledNum
+UINT Tio
+} MN_CC_NET_SETUP_ACK;
+
+typedef {
+UINT MsId
+UINT Tio
+HEXSTR Cause
+} MN_CC_ERROR_IND;
+
+typedef {
+UINT MsId
+STRING State
+UCHAR ExpectedTif
+STRING SetupType
+HEXSTR CalledPartyNum
+HEXSTR CallType
+UCHAR ResAssigned
+} MN_CC_MS_INIT_REQ;
+
+typedef {
+UINT MsId
+UINT CcIdx
+UCHAR Tio
+} MN_CC_MS_INIT_ACK;
+
+typedef {
+UINT CcIdx
+STRING State
+UCHAR ExpectedTif
+UCHAR ResAssigned
+STRING CallType
+HEXSTR StreamId
+HEXSTR BearerCap1
+} MN_CC_CN_INIT_REQ;
+
+typedef {
+UINT MsId
+} MN_CC_CN_INIT_ACK;
+
+typedef {
+UINT MsId
+UCHAR Tio
+} HOLD_INVOC_REQ;
+
+typedef {
+UINT MsId
+UCHAR Tio
+} HOLD_INVOC_IND;
+
+typedef {
+UINT MsId
+UCHAR Tio
+UINT RemoteMsId
+} HOLD_ACCEPT_CNF;
+
+typedef {
+UINT MsId
+UCHAR Tio
+} HOLD_ACCEPT_RSP;
+
+typedef {
+UINT MsId
+UCHAR Tio
+HEXSTR Cause
+} HOLD_REJECT_CNF;
+
+typedef {
+UINT MsId
+UCHAR Tio
+HEXSTR Cause
+} HOLD_REJECT_RSP;
+
+typedef {
+UINT MsId
+UCHAR Tio
+} RETRIEVE_INVOC_REQ;
+
+typedef {
+UINT MsId
+UCHAR Tio
+} RETRIEVE_INVOC_IND;
+
+typedef {
+UINT MsId
+UCHAR Tio
+} RETRIEVE_ACCEPT_CNF;
+
+typedef {
+UINT MsId
+UCHAR Tio
+} RETRIEVE_ACCEPT_RSP;
+
+typedef {
+UINT MsId
+UCHAR Tio
+HEXSTR Cause
+} RETRIEVE_REJECT_CNF;
+
+typedef {
+UINT MsId
+UCHAR Tio
+HEXSTR Cause
+} RETRIEVE_REJECT_RSP;
+
+/*+---------+*/
+/*+ CC PDUs +*/
+/*+---------+*/
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR Facility
+HEXSTR ProgrInd
+HEXSTR UserUser
+} CC_NET_ALERTING;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR Facility
+HEXSTR UserUser
+HEXSTR SSVer
+} CC_MS_ALERTING;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR RepeatInd
+HEXSTR BearerCap1
+HEXSTR BearerCap2
+HEXSTR Cause
+HEXSTR CCCap
+HEXSTR StreamId
+} CC_CALL_CONFIRMED;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR RepeatInd
+HEXSTR BearerCap1
+HEXSTR BearerCap2
+HEXSTR  Facility
+HEXSTR ProgrInd
+HEXSTR PrioGranted
+HEXSTR NetCCCap
+} CC_CALL_PROCEEDING;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR CongestionLevel
+HEXSTR Cause
+} CC_CONGESTION_CTRL;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR Facility
+HEXSTR ProgrInd
+HEXSTR ConnectedNum
+HEXSTR ConnectedSubAddr
+HEXSTR UserUser
+} CC_NET_CONNECT;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR  Facility
+HEXSTR ConnectedSubAddr
+HEXSTR UserUser
+HEXSTR SSVer
+HEXSTR StreamId
+} CC_MS_CONNECT;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+} CC_CONNECT_ACK;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR Cause
+HEXSTR  Facility
+HEXSTR ProgrInd
+HEXSTR UserUser
+HEXSTR  AllowedActions
+} CC_NET_DISCONNECT;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR Cause
+HEXSTR Facility
+HEXSTR UserUser
+HEXSTR SSVer
+} CC_MS_DISCONNECT;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR BearerCap
+HEXSTR StreamId
+} CC_EMERGENCY_SETUP;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR Facility
+} CC_NET_FACILITY;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR Facility
+HEXSTR SSVer
+} CC_MS_FACILITY;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+} CC_HOLD;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+} CC_HOLD_ACK;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR Cause
+} CC_HOLD_REJ;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR BearerCap
+HEXSTR LLComp
+HEXSTR HLComp
+HEXSTR RevCallSetupDir
+HEXSTR ImmediateModInd
+} CC_MODIFY;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR BearerCap
+HEXSTR LLComp
+HEXSTR HLComp
+HEXSTR RevCallSetupDir
+} CC_MODIFY_COMP;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR BearerCap
+HEXSTR Cause
+HEXSTR LLComp
+HEXSTR HLComp
+} CC_MODIFY_REJ;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR NotificationInd
+} CC_NOTIFY;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR ProgrInd
+HEXSTR UserUser
+} CC_PROGRESS;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR BCRepeatInd
+HEXSTR BearerCap1
+HEXSTR BearerCap2
+HEXSTR FacilSimpRecAlign
+HEXSTR CallingPartySubAddr
+HEXSTR CalledPartyBCDNum
+HEXSTR CalledPartySubAddr
+HEXSTR LLCRepeatInd
+HEXSTR LLComp1
+HEXSTR LLComp2
+HEXSTR HLCRepeatInd
+HEXSTR HLComp1
+HEXSTR HLComp2
+HEXSTR UserUser
+HEXSTR SSVer
+HEXSTR CLIRSuppr
+HEXSTR CLIRInvo
+HEXSTR CCCap
+HEXSTR FacilAdvRecAlign
+HEXSTR FacilRecAlign
+HEXSTR StreamId
+} CC_MS_SETUP;
+
+/*+CC_ESTABLISH contains the fields of CC_MS_SETUP*/
+typedef CC_MS_SETUP CC_ESTABLISH;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR RepeatInd
+HEXSTR BearerCap1
+HEXSTR BearerCap2
+HEXSTR Cause
+} CC_ESTABLISH_CONF;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR Cause
+HEXSTR SecondCause
+HEXSTR Facility
+HEXSTR UserUser	
+} CC_NET_RELEASE;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR Cause
+HEXSTR SecondCause
+HEXSTR Facility
+HEXSTR UserUser
+HEXSTR SSVer
+} CC_MS_RELEASE;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR RecallType
+HEXSTR Facility
+} CC_RECALL;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR Cause
+HEXSTR Facility
+HEXSTR UserUser
+} CC_NET_RELEASE_COMP;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR Cause
+HEXSTR Facility
+HEXSTR UserUser
+HEXSTR SSVer
+} CC_MS_RELEASE_COMP;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+} CC_RETRIEVE;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+} CC_RETRIEVE_ACK;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR Cause
+} CC_RETRIEVE_REJ;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR BCRepeatInd
+HEXSTR BearerCap1
+HEXSTR BearerCap2
+HEXSTR Facility
+HEXSTR ProgrInd
+HEXSTR Signal
+HEXSTR CallingPartyBCDNum
+HEXSTR CallingPartySubAddr
+HEXSTR CalledPartyBCDNum
+HEXSTR CalledPartySubAddr
+HEXSTR RedirPartyBCDNum
+HEXSTR RedirPartySubAddr
+HEXSTR LLCRepeatInd
+HEXSTR LLComp1
+HEXSTR LLComp2
+HEXSTR HLCRepeatInd
+HEXSTR HLComp1
+HEXSTR HLComp2
+HEXSTR UserUser
+HEXSTR Priority
+HEXSTR Alert
+HEXSTR NetCCCap
+HEXSTR CauseNoCLI
+} CC_NET_SETUP;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR CCCap
+} CC_START_CC;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR KeypadFacility
+} CC_START_DTMF;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR KeypadFacility
+} CC_START_DTMF_ACK;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR Cause
+} CC_START_DTMF_REJ;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR Cause
+HEXSTR CallState
+HEXSTR AuxiliaryStates
+} CC_STATUS;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+} CC_STATUS_ENQ;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+} CC_STOP_DTMF;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+} CC_STOP_DTMF_ACK;
+
+typedef {
+UCHAR Sn
+BIT TIFlag
+UCHAR TIO
+HEXSTR UserUser
+HEXSTR MoreData
+} CC_USER_INFO;
+

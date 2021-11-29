@@ -1,0 +1,770 @@
+# ---------------------------------------------------------------------
+#
+#                           Make--
+#                         ---------
+#       una collezione di macro utili per sviluppare makefiles
+#
+#  -------------------------------------------------------------------
+#   QUESTO MODULO E' COMPATIBILE CON make  VERSIONE 3.81 o successive
+# ---------------------------------------------------------------------
+# $URL: http://memo.prisma/svn/fw/utils/1.2.0/Make-- $
+#
+# $Date: 2012-05-14 12:48:53 +0200 (Mon, 14 May 2012) $
+#  $Rev: 1355 $
+# ---------------------------------------------------------------------
+
+
+__make_ver := 1.8.5  # 2012-05-14
+
+
+# -------+-------------------------------------------------------------
+# 1.8.5  | Aggiunta la variabile __make_libtype, che vale '-static'
+#		 | per l'ambiente a 32 bit, ed e' vuota per x86_64
+# -------+-------------------------------------------------------------
+# 1.8.4  | Eliminata l'opzione -m32 (lavora anche a 64 bit)
+# -------+-------------------------------------------------------------
+# 1.8.3  | Aggiunta l'opzione -Winline
+# -------+-------------------------------------------------------------
+# 1.8.2  | Il file nome.o, generato quando si produce nome. o nome.lst,
+#        | viene cancellato automaticamente
+# -------+-------------------------------------------------------------
+# 1.8.1  | Il target speciale per il file assembler puo' essere sia
+#		 | nome.s sia nome.as
+# -------+-------------------------------------------------------------
+# 1.8.0  | Aggiunte (ma solo come commento) le opzioni per gcc-4.6.1
+# -------+-------------------------------------------------------------
+
+# -------+-------------------------------------------------------------
+# 1.7.4  | Il target speciale per il file assembler diventa 'nome.s'
+#        | (era nome.as). Aggiunto il target speciale 'nome.'
+# -------+-------------------------------------------------------------
+# 1.7.3  | L'opzione -Wno-unused-result e' associata alla versione 4.5
+#        | (era alla 4.4)
+# -------+-------------------------------------------------------------
+# 1.7.2  | Quando si genera un .lst, l'opzione -o/dev/null NON viene
+#        | piu' generata per neutrino (perche' l'assembler di nto va
+#        | in errore); resta il .o da cancellare.
+# -------+-------------------------------------------------------------
+# 1.7.1  | L'opzione -Wno-array-bounds era erroneamente associata a
+#        | gcc-4.5, mentre e' di gcc-4.3
+# -------+-------------------------------------------------------------
+# 1.7.0  | Aggiunta la variabile __make_syslibs, che riporta le
+#        | librerie di sistema in funzione del sistema operativo
+#        | (es.: per linux vale -lrt, per nto vale -lsocket).
+#        | Va aggiunta in fondo alla riga del linker.
+# -------+-------------------------------------------------------------
+
+# -------+-------------------------------------------------------------
+# 1.6.0  | Aggiunte le macro __makeEx e __makeEx_
+# -------+-------------------------------------------------------------
+
+# -------+-------------------------------------------------------------
+# 1.5.3  | Aggiunta l'opzione -Wno-array-bounds (da 4.5)
+# -------+-------------------------------------------------------------
+# 1.5.2  | Aggiunto export di CFLAGS.
+#        | Aggiunta gestione di file con estensione .cpp
+# -------+-------------------------------------------------------------
+# 1.5.1  | L'opzione -Wno-unused-result era erroneamente associata a
+#        | gcc-4.3, mentre e' di gcc-4.4
+# -------+-------------------------------------------------------------
+# 1.5.0  | Esportata la variabile READLINK che si mappa su
+#        | readlink (linux) o fullpath (nto)
+# -------+-------------------------------------------------------------
+
+# -------+-------------------------------------------------------------
+# 1.4.1  | Le opzioni del compilatore sono suddivise in due priorita'
+#        | pre e post, in modo che non si annullino a vicenda:
+#        |
+#        |      - pre   sono le opzioni che operano in blocco, o a
+#        |              livello globale (es.: -O3 -Wall -Wextra);
+#        |
+#        |      - post  sono quelle che operano in modo piu' selettivo
+#        |              (ad esempio: -Wno-unused-parameter)
+# -------+-------------------------------------------------------------
+# 1.4.0  | Nuove opzioni:
+#        |      -W (solo 3.x) --> -Wextra (4.0)
+#        |
+#        |      -Wmissing-field-initializers (4.0)
+#        |      -fdiagnostics-show-option (4.1)
+#        |      -fexcess-precision=fast (4.5)
+# -------+-------------------------------------------------------------
+
+# -------+-------------------------------------------------------------
+# 1.3.3  | La variabile __make_VER diventa __make_ver (minuscola, come
+#        | le altre variabili).
+#        | Le variabili esportate sono ripulite dagli spazi inutili.
+# -------+-------------------------------------------------------------
+# 1.3.2  | I target speciali (.s, .lst etc) vengono ricreati sempre.
+#        | __make_ccver vale 300 per gcc < 4.0 e 400..499 per gcc-4.0 ..
+#        | .. gcc-4.99.
+# -------+-------------------------------------------------------------
+# 1.3.1  | Tolta la macro __make_rtlib perche' non serve a niente.
+# -------+-------------------------------------------------------------
+# 1.3.0  | Aggiunte la variabile __make_rtlib e la macro __makeMain().
+# -------+-------------------------------------------------------------
+
+# -------+-------------------------------------------------------------
+# 1.2.1  | Le opzioni di verbosita' (-q, --no-print-directory etc) non
+#        | interferiscono piu' col makefile utente.
+# -------+-------------------------------------------------------------
+# 1.2.0  | Aggiunte le opzioni standard per gcc fino a versione 4.5.
+# -------+-------------------------------------------------------------
+
+# -------+-------------------------------------------------------------
+# 1.1.0  | Quando serve sono ricostruiti anche i .d.
+# -------+-------------------------------------------------------------
+
+# -------+-------------------------------------------------------------
+# 1.0.4  | Tolto un baco nella gestione delle dipendenze.
+# -------+-------------------------------------------------------------
+# 1.0.3  | Il make non si bloccava per errori nell'esecuzione
+#        | dei comandi. Adesso si blocca.
+# -------+-------------------------------------------------------------
+# 1.0.2  | I .o dopo essere archiviati sono eliminati con rm -f.
+# -------+-------------------------------------------------------------
+# 1.0.1  | Ai parametri delle macro __makeXxx() vengono tolti gli spazi
+#        | iniziali e finali.
+#        | In fondo alle chiamate del compilatore viene aggiunta CFLAGS.
+# -------+--------------------------------------------------------------
+
+
+#
+# L'ultima vince
+#
+__make_verbosity :=
+__make_verbosity := --no-print-directory
+__make_verbosity := -s
+
+
+
+#######################################################################
+#                           Make--
+#######################################################################
+#
+# L'inclusione di questo modulo nel makefile causa la definizione
+# delle seguenti macro e variabili
+#
+#      Macro definite:
+#
+#           __makeLib()
+#           __makeInst()
+#           __makeExec()
+#           __makeEx()
+#           __makeEx_()
+#           __makeDeps()
+#           __makeTgt()
+#           __makeMain()
+#
+#
+#      Variabili definite:
+#
+#           __make_ver      la versione di questo modulo
+#
+#           __make_os       'linux' o 'nto'
+#           __make_linux    'linux' o null
+#           __make_nto      'nto' o null
+#
+#           __make_ccver    versione del compilatore (300 o 4xx)
+#
+#           __make_ccopt    opzioni di compilazione a seconda della
+#           __make_cppopt   versione del compilatore C e C++
+#
+#           __make_syslibs  librerie runtime dipendenti da OS
+#
+#			__make_libtype	vale '-static' per ambiente a 32 bit; e'
+#							vuota per 64 bit.
+#
+#           __make...       variabili per uso interno
+#
+#           CC              per linux rimane quella stabilita da
+#                           make; per nto e' impostata a 'gcc'.
+#
+#           READLINK        per linux vale 'readlink';
+#                           per nto vale 'fullpath'.
+#
+#
+# A ogni riga di comando per chiamare il compilatore $(CC) generata
+# dalle macro viene aggiunta, per ultima, la variabile $(CFLAGS),
+# che puo' essere impostata dal makefile utente prima dell'invocazione
+# della macro stessa.
+#
+#######################################################################
+
+
+#
+#  Per creare una libreria
+# ---------------------------------------------------------------------
+#  $(call __makeLib,libpath,srclist,inclist,depdir,delete)
+#
+#
+#     <libpath>     nome completo della libreria da costruire.
+#                   Se non esiste gia', la cartella finale viene creata.
+#
+#     <srclist>     lista dei file sorgenti, con nome completo ed
+#                   estensione.
+#                   I caratteri jolly sono  espansi.
+#                   Es.: ../src/code/*.c ../src/samp/*.cc def/file.c
+#
+#     <inclist>     lista delle cartelle da includere in compilazione.
+#                   Se nella lista e' presente un nome uguale a + (il
+#                   nome composto dall'unico carattere piu'), questo
+#                   viene sostituito dalla lista delle cartelle ricavate
+#                   da <srclist>.
+#                   In ogni caso, la lista risultante e' ordinata
+#                   alfabeticamente e i doppioni vengono rimossi.
+#                   Questa lista puo' essere vuota.
+#
+#     <depdir>      nome della cartella dove conservare le dipendenze
+#                   (che sono generate automaticamente quando serve),
+#                   e in cui mettere gli oggetti temporanei della
+#                   compilazione.
+#                   Questa cartella e' opzionale, e viene creata se e'
+#                   specificata e non esiste gia'.
+#
+#     <delete>      e' un parametro opzionale; se e' specificato (il suo
+#                   valore non ha importanza), viene impostata la
+#                   clausola .DELETE_ON_ERROR: del make.
+#
+
+
+#
+#  Per installare una serie di file
+# -------------------------------------------------------------------
+#  $(call __makeInst,instdir,filelist)
+#
+#
+#     <instdir>     nome completo della cartella (che viene creata se
+#                   necessario) dove installare i file.
+#
+#     <filelist>    lista dei file o cartelle da copiare, con nome
+#                   completo ed estensione.
+#                   I caratteri jolly sono espansi.
+#                   I file sono copiati solo se piu' recenti di quelli
+#					nella directory di destinazione.
+#
+
+
+
+#
+#  Per eseguire un comando su un insieme di file esistenti
+# -------------------------------------------------------------------
+#  $(call __makeExec,command,filelist)
+#
+#
+#     <command>     comando da eseguire se la lista risultante dopo
+#                   l'estensione di <filelist> non e' vuota.
+#
+#     <filelist>    lista dei file da passare come argomento a <command>.
+#                   I caratteri jolly sono espansi.
+#
+#
+#  Viene fatto l'echo del comando solo se questo e' eseguito; puo'
+#  essere usato, ad esempio, per cancellare (clean) una serie di file.
+#
+
+
+#
+#  Per eseguire un comando con echo
+# -------------------------------------------------------------------
+#  $(call __makeEx,command)
+#  $(call __makeEx_,command)
+#
+#
+#     <command>     comando da eseguire.
+#
+#
+#  __makeEx   fa l'echo del comando cosi' com'e'.
+#  __makeEx_  fa l'echo del comando preceduto e seguito da una riga vuota.
+#
+
+
+
+#
+#  Per costruire le dipendenze su una serie di file sorgenti
+# -------------------------------------------------------------------
+#  $(call __makeDeps,srclist,inclist,depdir)
+#
+#
+#     <srclist>,
+#     <inclist>,
+#     <depdir>      come per __makeLib.
+#
+#
+#  Questa macro puo' essere chiamata a piacimento dell'utente, ma non
+#  serve per costruire una libreria tramite __makeLib.
+#
+
+
+#
+#  Per generare dei target speciali
+# -------------------------------------------------------------------
+#  $(call __makeTgt,tgtname,srclist,inclist)
+#
+#
+#     <tgtname>     nome.estensione dove nome e' in <srclist>:
+#
+#                     nome.s    per ottenere un file assembly,
+#                     nome.as   equivalente a nome.s,
+#                     nome.lst  per ottenere un listing assembler completo,
+#                     nome.o    per ottenere un file oggetto;
+#                     nome.     vedi sotto (1)
+#
+#                   (1) Solo nome. (senza estensione) causa una compi-
+#						lazione senza produrre alcun output (utile per
+#						vedere gli errori).
+#
+#     <srclist>,
+#     <inclist>     come per __makeLib.
+#
+
+
+#
+#  Per generare un eseguibile esclusivamente da moduli di libreria
+# -------------------------------------------------------------------
+#  $(call __makeMain,funcname)
+#
+#
+#     <funcname>    nome della funzione che sostituisce main()
+#                   Deve avere lo stesso prototipo del main:
+#                       int funcname(int argc, char **argv)
+#
+#  Generalmente un eseguibile e' prodotto da un file oggetto e da una o
+#  piu' librerie; si puo', pero', creare un eseguibile partendo solo da
+#  librerie mettendo tutti i moduli main insieme agli altri moduli og-
+#  getto.
+#  In questo caso bisogna avere l'accortezza di nominare in modo univoco
+#  le funzioni main() di ogni modulo (per non avere duplicazioni in
+#  libreria), e di istruire il linker su quale simbolo usare al posto
+#  del nome main standard.
+#
+#  Cio' si ottiene aggiungendo le seguenti opzioni sulla riga di comando
+#  di ld: -u funcname --defsym main=funcname
+#
+#  La macro __makeMain(funcname) restituisce la stringa da usare sulla
+#  riga di comando di gcc: -Wl,-ufuncname,--defsym,main=funcname
+#
+#  Quindi il comando tipico per costruire un eseguibile e':
+#
+#   $(CC) -o exename usrlib... $(call __makeMain,funcname) $(__make_syslibs)
+#
+
+
+
+.SUFFIXES:
+
+
+ifeq ($(__make_phase),)
+######################################################### Prima inclusione
+# Prima inclusione, a fronte del primo 'include' al
+# livello piu' alto
+#########################################################
+
+export __make_phase := ZERO
+export __make_ver   := $(shell echo $(__make_ver))
+
+export __make_os      __make_linux  __make_nto
+export __make_ccver   __make_ccopt  __make_cppopt
+export __make_syslibs __make_libtype
+
+export CC  READLINK  CFLAGS
+
+
+#
+# Determina il typo di OS (linux or nto)
+#
+__make_os      := $(or $(shell echo $$OSTYPE),$(shell echo $$SYSNAME))
+__make_os      := $(or $(__make_os),nto)
+
+__make_linux   := $(and $(filter linux%,$(__make_os)),linux)
+__make_nto     := $(and $(filter nto%,$(__make_os)),nto)
+__make_os      := $(or $(__make_linux),$(__make_nto))
+
+
+#
+# Determina il tipo di librerie: -static oppure niente per x86_64
+#
+__make_libtype := $(and $(filter-out x86_64,$(shell echo $$HOSTTYPE)),\
+				  		-static)
+
+
+#
+# Imposta le variabili che dipendono dal tipo di OS
+#
+#   CC          e' quella predefinita per linux, o 'gcc' per nto
+#   READLINK    e' readlink (linux) o fullpath (nto)
+#
+
+CC       := $(shell echo $(or $(and $(__make_nto),gcc),$(CC)))
+READLINK := $(or $(and $(__make_nto),fullpath),readlink)
+
+
+#
+# Determina la versione e le opzioni standard del compilatore
+#
+__make_ccver := $(shell echo $(shell $(CC) -dumpversion 2>/dev/null | \
+                sed -n 's/ //g; s/\([0-9]\+\.[0-9]\+\)\..*$$/\1/; \
+                        s/^[1-3]\..*$$/3.0/; \
+                        s/\.\([0-9]\)$$/.0\1/; \
+                        s/\.//p'))
+
+#
+# Determina le librerie a seconda del sistema operativo
+#
+__make_syslibs_linux := -lrt
+__make_syslibs_nto   := -lsocket
+
+__make_syslibs       := $(__make_syslibs_$(__make_os))
+
+
+###################### Opzioni a seconda della versione di C
+
+__make_300_pre  := -W
+__make_300_post :=
+
+__make_400_pre  := -Wextra
+__make_400_pre  += -Winline
+__make_400_post := -Wno-pointer-sign
+__make_400_post += -Wno-missing-field-initializers
+
+__make_401_pre  := $(__make_400_pre)
+__make_401_post := $(__make_400_post)
+__make_401_post += -fdiagnostics-show-option
+
+__make_402_pre  := $(__make_401_pre)
+__make_402_post := $(__make_401_post)
+
+__make_403_pre  := $(__make_402_pre)
+__make_403_post := $(__make_402_post)
+__make_403_post += -Wno-array-bounds
+
+__make_404_pre  := $(__make_403_pre)
+__make_404_post := $(__make_403_post)
+
+__make_405_pre  := $(__make_404_pre)
+__make_405_post := $(__make_404_post)
+__make_405_post += -Wno-unused-result
+__make_405_post += -fexcess-precision=fast
+
+__make_406_pre  := $(__make_405_pre)
+__make_406_post := $(__make_405_post)
+# __make_406_post += -Wno-unused-but-set-variable
+
+__make_407_pre  := $(__make_406_pre)
+__make_407_post := $(__make_406_post)
+__make_408_pre  := $(__make_407_pre)
+__make_408_post := $(__make_407_post)
+__make_409_pre  := $(__make_408_pre)
+__make_409_post := $(__make_408_post)
+
+###################### Opzioni finali del compilatore C
+
+__make_base_pre  :=
+__make_base_pre  += -O3
+__make_base_pre  += -Wall
+__make_base_pre  += -Werror
+__make_base_pre  += -Wstrict-aliasing
+__make_base_pre  += -fstrict-aliasing
+__make_base_pre  += -fomit-frame-pointer
+
+__make_base_post := -Wno-unused-parameter
+
+
+__make_pre  := $(__make_base_pre)  $(__make_$(__make_ccver)_pre)
+__make_post := $(__make_base_post) $(__make_$(__make_ccver)_post)
+
+__make_ccopt := $(shell echo $(__make_pre) $(__make_post))
+
+
+###################### Opzioni a seconda della versione di C++
+
+__make_cpp300_pre  := $(__make_300_pre)
+__make_cpp300_post :=
+
+__make_cpp400_pre  := -Wextra
+__make_cpp400_post := -Wno-missing-field-initializers
+
+__make_cpp401_pre  := $(__make_cpp400_pre)
+__make_cpp401_post := $(__make_cpp400_post) -fdiagnostics-show-option
+
+__make_cpp402_pre  := $(__make_cpp401_pre)
+__make_cpp402_post := $(__make_cpp401_post)
+
+__make_cpp403_pre  := $(__make_cpp402_pre)
+__make_cpp403_post := $(__make_cpp402_post)
+
+__make_cpp404_pre  := $(__make_cpp403_pre)
+__make_cpp404_post := $(__make_cpp403_post)
+
+__make_cpp405_pre  := $(__make_cpp404_pre)
+__make_cpp405_post := $(__make_cpp404_post) -fexcess-precision=fast
+
+__make_cpp406_pre  := $(__make_cpp405_pre)
+__make_cpp406_post := $(__make_cpp405_post)
+
+__make_cpp407_pre  := $(__make_cpp406_pre)
+__make_cpp407_post := $(__make_cpp406_post)
+__make_cpp408_pre  := $(__make_cpp407_pre)
+__make_cpp408_post := $(__make_cpp407_post)
+__make_cpp409_pre  := $(__make_cpp408_pre)
+__make_cpp409_post := $(__make_cpp408_post)
+
+###################### Opzioni finali del compilatore C++
+
+__make_cpppre  := $(__make_base_pre)  $(__make_cpp$(__make_ccver)_pre)
+__make_cpppost := $(__make_base_post) $(__make_cpp$(__make_ccver)_post)
+
+__make_cppopt  := $(shell echo $(__make_cpppre) $(__make_cpppost))
+
+
+######################################################### Prima inclusione
+endif
+
+
+
+ifeq ($(__make_phase),ZERO)
+######################################################### Fase ZERO
+# Inclusione a fronte del primo 'include' e di quelli
+# successivi
+#########################################################
+
+export __make := $(MAKE) -f$(lastword $(MAKEFILE_LIST))
+       __make += -r $(strip $(__make_verbosity))
+
+
+__makeLib = @ libpath='$(strip $(1))' \
+              srclist='$(strip $(2))' \
+              inclist='$(strip $(3))' \
+               depdir='$(strip $(4))' \
+               delete='$(strip $(5))' \
+        __make_phase=LIB $(__make) $(strip $(1))
+
+
+__makeInst = @ instdir='$(strip $(1))' \
+              filelist='$(strip $(2))' \
+        __make_phase=INST $(__make) __make@@INST@@__
+
+
+__makeExec = @ command='$(strip $(1))' \
+              filelist='$(strip $(2))' \
+        __make_phase=EXEC $(__make) __make@@EXEC@@__
+
+__makeEx   = @ command='$(strip $(1))' \
+        __make_phase=EXEC $(__make) __make@@EX@@__
+
+__makeEx_  = @ command='$(strip $(1))' \
+        __make_phase=EXEC $(__make) __make@@EX_@@__
+
+
+__makeDeps = @ srclist='$(strip $(1))' \
+               inclist='$(strip $(2))' \
+                depdir='$(strip $(3))' \
+                delete=''              \
+        __make_phase=LIB $(__make) __make@@DEPS@@__
+
+
+__makeTgt = @ tgtname='$(strip $(1))' \
+              srclist='$(strip $(2))' \
+              inclist='$(strip $(3))' \
+        __make_phase=TGT $(__make) -B $(strip $(1))
+
+
+__makeMain = -Wl,-u$1,--defsym,main=$1
+
+######################################################### Fase ZERO
+
+
+else ifneq ($(__make_phase),)
+######################################################### Fase di attivita'
+# Fase di attivita' qualunque, a fronte dell'invocazione
+# di una qualsiasi macro
+#########################################################
+
+make  = @__make_phase='$(1)' $(__make) $(2)
+drop  = $(patsubst %/,%,$(1))
+
+exec  = @echo -e "\n"'$1'"\n"; $1
+exec0 = @echo '$1'; $1
+
+
+
+
+ifneq (,$(filter $(__make_phase),LIB TGT))
+######################################################### LIB,TGT
+
+export srclist baselist vlist suff cc cpp
+
+
+vlist    := $(call drop,$(sort $(dir $(srclist))))
+srclist  := $(wildcard $(srclist))
+
+baselist := $(basename $(notdir $(srclist)))
+suff     := $(sort $(suffix $(srclist)))
+
+inclist  := $(inclist) $(and $(filter +,$(inclist)),$(vlist))
+inclist  := $(sort $(filter-out +,$(inclist)))
+inclist  := $(inclist:%=-I%)
+
+cc       := $(CC) $(__make_ccopt)  $(inclist) $(strip $(CFLAGS))
+cpp      := $(CC) $(__make_cppopt) $(inclist) $(strip $(CFLAGS))
+
+
+$(foreach s,$(suff),$(eval vpath %$(s) $(vlist)))
+
+######################################################### LIB,TGT
+endif
+
+
+ifneq (,$(filter $(__make_phase),LIB))
+######################################################### LIB
+
+export libpath libdir depdir deplist
+
+libdir  := $(call drop,$(dir $(libpath)))
+depdir  := $(call drop,$(depdir))
+deplist := $(addprefix $(depdir)/,$(baselist:%=%.d))
+
+$(eval $(and $(delete),.DELETE_ON_ERROR:))
+
+##########################################
+
+.PHONY: __make@@DEPS@@__
+
+__make@@DEPS@@__: $(depdir) $(deplist)
+
+$(depdir):                   ; $(call exec,mkdir -p $@)
+$(libpath): __make@@DEPS@@__ ; $(call make,LIB_1,$@)
+
+######################################################### LIB
+endif
+
+
+
+ifneq (,$(filter $(__make_phase),LIB LIB_1))
+######################################################### LIB, LIB_1
+
+$(depdir)/%.d:  %.c  ; $(depend)
+$(depdir)/%.d:  %.cc ; $(depend)
+$(depdir)/%.d:  %.cpp; $(depend)
+
+
+define depend
+ @echo "    making $@ ..."
+ { $(CC) -MM -Werror $(CFLAGS) $(inclist) $< || rm -f $@; } | $(sed) > $@
+ test -s $@
+endef
+
+sed = sed 's,^[[:blank:]]*$*\.o[[:blank:]:]\+,
+sed +=$(libpath)($*.o) $(depdir)/$*.d : ,g'
+
+######################################################### LIB, LIB_1
+endif
+
+
+
+ifneq (,$(filter $(__make_phase),LIB_1))
+######################################################### LIB_1
+
+objs := $(baselist:%=%.o)
+
+$(foreach s,$(suff),$(eval vpath %$(s) $(vlist)))
+
+
+$(libdir):  ;  $(call exec,mkdir -p $@)
+$(libpath): $(libdir) $(libpath)($(objs))
+
+
+(%.o): %.c   ; $(compile)
+(%.o): %.cc  ; $(ccompile)
+(%.o): %.cpp ; $(ccompile)
+
+define compile
+ $(call exec,$(cc) -o$(depdir)/$% -c $<)
+ $(AR) rc $@ $(depdir)/$%; rm -f $(depdir)/$%
+endef
+
+define ccompile
+ $(call exec,$(cpp) -o$(depdir)/$% -c $<)
+ $(AR) rc $@ $(depdir)/$%; rm -f $(depdir)/$%
+endef
+
+include $(deplist)
+######################################################### LIB_1
+endif
+
+
+ifneq (,$(filter $(__make_phase),TGT))
+######################################################### TGT
+
+_out := $(and $(__make_linux),-o/dev/null)
+_rm   = $(and $(__make_nto), ; rm -f $(basename $@).o)
+_lst  = $(_out) -Wa,--listing-lhs-width=2,-acdls=$@
+
+
+%.:  %.c  ; $(call exec,$(cc) -c $< $(_out)) $(_rm)
+%.:  %.cc ; $(call exec,$(cpp) -c $< $(_out)) $(_rm)
+%.:  %.cpp; $(call exec,$(cpp) -c $< $(_out)) $(_rm)
+
+%.o:  %.c  ; $(call exec,$(cc) -c $<)
+%.o:  %.cc ; $(call exec,$(cpp) -c $<)
+%.o:  %.cpp; $(call exec,$(cpp) -c $<)
+
+%.s:  %.c  ; $(call exec,$(cc) -S $< -o$@)
+%.s:  %.cc ; $(call exec,$(cpp) -S $< -o$@)
+%.s:  %.cpp; $(call exec,$(cpp) -S $< -o$@)
+
+%.as: %.c  ; $(call exec,$(cc) -S $< -o$@)
+%.as: %.cc ; $(call exec,$(cpp) -S $< -o$@)
+%.as: %.cpp; $(call exec,$(cpp) -S $< -o$@)
+
+%.lst: %.c  ; $(call exec,$(cc) $(_lst) -c $<)  $(_rm)
+%.lst: %.cc ; $(call exec,$(cpp) $(_lst) -c $<) $(_rm)
+%.lst: %.cpp; $(call exec,$(cpp) $(_lst) -c $<) $(_rm)
+
+######################################################### TGT
+endif
+
+
+
+ifneq (,$(filter $(__make_phase),INST))
+######################################################### INST
+
+cp := cp $(or $(and $(__make_linux),-fpvuRd),\
+              $(and   $(__make_nto),-fpvnRL))
+
+instdir := $(call drop,$(instdir))
+
+##########################################
+
+.PHONY: __make@@INST@@__  __make@@INST1@@__
+
+__make@@INST@@__:  $(instdir) __make@@INST1@@__
+
+__make@@INST1@@__: ; aa=$$($(cp) $(filelist) $(instdir));\
+                     test "$$aa" && echo -e "\n$$aa\n" || :
+
+$(instdir):        ; $(call exec,mkdir -p $@)
+
+######################################################### INST
+endif
+
+
+
+ifneq (,$(filter $(__make_phase),EXEC))
+######################################################### EXEC
+
+.PHONY: __make@@EXEC@@__
+.PHONY: __make@@XQT@@__ __make@@XQT0@@__
+
+
+__make@@EXEC@@__: filelist := $(wildcard $(filelist))
+__make@@EXEC@@__: ; $(if $(filelist),$(call exec0,$(command) $(filelist)))
+
+__make@@EX@@__:  ; $(call exec0,$(command))
+__make@@EX_@@__: ; $(call exec,$(command))
+
+######################################################### EXEC
+endif
+
+
+######################################################### Fase di attivita'
+endif

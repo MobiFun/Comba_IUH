@@ -1,0 +1,42 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/scheduler/tags/scheduler-1.17.0/schedUtils.tsm $
+#
+# $Author: roger $
+#
+# $Rev: 32150 $
+#
+# $Date: 2010-03-25 17:17:38 +0100 (Thu, 25 Mar 2010) $
+##############################################################
+
+proc ExtractRemoteCommand {} {
+	global _sig
+	#logscr "received signal $_sig"
+	set Data  [rd _sig Data]
+	set Command [tok $Data ,]
+	#logscr "$Command"
+	return $Command
+}
+
+proc BuildRemoteResponse {Response} {
+	set Data  [join $Response ,]
+	return $Data
+}
+
+proc RespondToRemote {Response} {
+		new RMT_CTRL_IND s	
+		wr s Data	[BuildRemoteResponse $Response]
+		#logscr "sending signal $s"
+		send s
+}
+
+proc EventDataToRemote {id Data} {
+		new RMT_DATA_IND s
+        set binId [binary format s $id]
+        append binData $binId $Data
+		wr s Data $binData
+        
+        #binary scan $binData H* hexBinData
+		#logscr "EventDataToRemote: id=$id, dataLen=[string length $Data]"
+        #logscr "hexBinData=($hexBinData)"
+		send s
+}

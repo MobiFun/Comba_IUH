@@ -1,0 +1,24 @@
+--- IuhCsComba_Tm-1.2.0 [2012-12-18]
+
+IMPROVEMENTS:
+	Added BSSAP paging filter in C code.
+	This feature is enabled setting to 1 configuration
+	variable __bssap_flt_paging.
+	At the moment this feature is available only for BSSAP R4.
+
+FIX:
+
+REMARKS:
+
+
+--- IuhCsComba_Tm-1.1.1 [2012-12-05]
+
+IMPROVEMENTS:
+
+FIX:
+	SCTP-20: maximum number of SCTP instances have been increased from 32 to
+	10000.
+
+REMARKS:
+	To exploit maximum number of SCTP instances increase, you have to use
+	SCTP server version 3.0.2b.

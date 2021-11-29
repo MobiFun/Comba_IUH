@@ -1,0 +1,110 @@
+# $URL: http://memo.prisma/svn/tm/fw/trunk/fwtstm/doc/tstmh2WSN $
+# $Rev: 37262 $
+# $Date: 2010-10-25 11:23:12 +0200(lun, 25 ott 2010) $
+# $Author: roger $
+
+### Purpose
+# Script to get WSN signals definitions from a file passed as parameter (file like tstm.h)
+# It looks for #define starting with tstm<XXXX>FMAT_ in a file like tstm.h and
+# writes a textual file with the related WSN definitions.
+# If parameter <Protocol Name> is not empty, pattern used is tstm<Protocol Name>FMAT_
+
+# It DOES manage comments, that is, it skips code inside a comment
+# If the comment starts with /*+, it inserts the comment in generated file.
+# Comments inside a signal definition are put in the generated file.
+
+### Limitations
+# Not known
+
+set ToolName tstmh2WSN
+set Version 1.1.0
+
+puts "$ToolName version $Version"
+
+if {$argc != 4} {
+	puts "USAGE: tclsh $ToolName.tcl <File di header> <File tstm.h> <File .txt> ?Protocol Name?"
+
+	exit
+}
+
+set	TransHeaderHnd [open [lindex $argv 0] r]
+set	TstmH [lindex $argv 1]
+set	TstmHnd [open $TstmH r]
+set TargetHnd [open [lindex $argv 2] w+]
+
+set protname [lindex $argv 3]
+if { $protname == "" } {
+	set fmatname "tstm\[\\w]*FMAT_"
+} else {
+	set fmatname "tstm[set protname]_FMAT_"
+}
+
+# insert header txt
+for {gets $TransHeaderHnd Line} {![eof $TransHeaderHnd]} {gets $TransHeaderHnd Line} {
+    puts $TargetHnd $Line
+}
+
+# parsing of the input file
+for {gets $TstmHnd Line} {![eof $TstmHnd]} {gets $TstmHnd Line} {
+
+  #if there is a comment starting with /*+
+  if {[regexp {/\*\+[^\n]*} $Line CommStr]} {
+	#while in the line there isn't the end of the comment write the line end read one more
+    while { ![regexp {[^\n]*\*/} $CommStr CommStr] && ![eof $TstmHnd]} {
+      puts $TargetHnd $CommStr
+	  gets $TstmHnd CommStr
+    } 
+	#write the last part of the comment
+    puts $TargetHnd $CommStr
+  } elseif {[regexp {/\*[^\n]*} $Line CommStr]} {
+	#skip the comment
+	#while in the line there isn't the end of the comment read one more
+    while { ![regexp {[^\n]*\*/} $CommStr CommStr] && ![eof $TstmHnd]} {
+	  gets $TstmHnd CommStr
+    } 
+  } elseif {[regexp {#define[[:space:]]+[^\n]+} $Line MatchStr]} {
+	#if there is a #define put MatchStr in DefStr
+	set DefStr $MatchStr
+
+	#while DefStr ends with "\\", trim the "\\" end concatenate the following line
+	while { [string index $DefStr end] == "\\" && ![eof $TstmHnd]} {
+      set DefStr [string trimright $DefStr "\\"]
+      append DefStr [gets $TstmHnd]
+	}
+	#now I have the define in a line
+
+	#if the sig format is a STRUCT
+	set pattern [set fmatname](\[\\w]+)\[\[:space:]]+\\"\[\[:space:]]*STRUCT\[\[:space:]]+(\[^\\n]+)
+
+	if {[regexp $pattern $DefStr MatchStr SigType StructDef]} {
+	  #puts $TargetHnd $StructDef; #for debug
+
+      set StructDef [string map {\" ""} $StructDef]; #delete double quotes
+      regsub -all {\}[[:space:]]*\{} $StructDef "\}\{" StructDef; #delete all spaces between struct fields
+	  #now I have all the struct fields in curly braces
+      regsub -all {[[:space:]]*\{[[:space:]]*} $StructDef "\n" StructDef; #replace with a newline all open curly braces with previous and subsequent spaces
+      regsub -all {[[:space:]]*\}} $StructDef "" StructDef; #replace with a newline all close curly braces with previous and subsequent spaces
+      puts $TargetHnd "typedef \{$StructDef"
+	  puts $TargetHnd "\} $SigType;\n"; #close the struct definition
+	}
+
+	#if the sig format is VOID
+	set pattern [set fmatname](\[\\w]+)\[\[:space:]]+\"\[\[:space:]]*VOID\[\[:space:]]*\"
+
+	if {[regexp $pattern $DefStr MatchStr SigType]} {
+      puts $TargetHnd "typedef VOID $SigType;\n"
+	}
+
+	#if the sig format is an already defined format
+	set pattern [set fmatname](\[\\w]+)\[\[:space:]]+[set fmatname](\[\\w]+)
+
+	if {[regexp $pattern $DefStr MatchStr SigType FormatType]} {
+      puts $TargetHnd "typedef $FormatType $SigType;\n"
+	}
+  }
+}
+
+close $TargetHnd
+close $TransHeaderHnd
+close $TstmHnd
+puts "$ToolName: executed successfully"

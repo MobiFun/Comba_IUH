@@ -1,0 +1,62 @@
+#############################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/RUA/tags/RUA-1.3.0/scripts/rua_utils.tsm $
+#
+# $Author: roger $
+#
+# Description: RUA utilities procedures
+#
+# $Rev: 53207 $
+#
+# $Date: 2012-07-17 12:15:04 +0200 (Tue, 17 Jul 2012) $
+##############################################################
+proc CheckSignal { } {
+
+	# Global variables
+	global _sig
+
+	if { [info exists ::__rua_check_signal] && $::__rua_check_signal } {
+		set sigName [lindex $_sig 0]
+		set sigLen [llength $_sig]
+		append refSigLenName "::" "glL_" $sigName
+		if { [set $refSigLenName] != $sigLen } {
+			logscr "RUA - WARNING - Discarding $sigName (Length mismatch: $sigLen-[set $refSigLenName])"
+			return 0
+		}
+	}
+
+	return 1
+}
+
+##############################################################
+# This procedure returns OpcDpc field given Opc and Dpc
+proc GetOpcDpc { opc dpc } {
+
+	append retVal $opc "-" $dpc
+
+	return $retVal
+}
+#######################################################################
+# These procedures return Opc and Dpc given field OpcDpc
+proc GetOpcFromOpcDpc { opcdpc } {
+
+	return [lindex [split $opcdpc "-"] 0]
+}
+proc GetDpcFromOpcDpc { opcdpc } {
+
+	return [lindex [split $opcdpc "-"] 1]
+}
+#######################################################################
+# This procedure returns SS7Db Index given OPC and DPC
+proc GetSS7DbIdxFromOpcDpc { opc dpc } {
+
+	# Global variables
+	global glSS7Db
+
+	set key [GetOpcDpc $opc $dpc]
+	
+	if { [DbKeyExists $glSS7Db OpcDpc $key] } {
+		return [DbGetIdx $glSS7Db OpcDpc $key]
+	} else {
+		return -1
+	}
+}

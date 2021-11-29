@@ -1,0 +1,4732 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/tstmUtils/scriptUtils/tags/scriptUtils-2.51.6/L3Utils.tsm $
+#
+# $Author: carlom $
+#
+# Description: Layer 3 Utilities
+#
+#
+# $Rev: 57279 $
+#
+# $Date: 2012-12-12 17:38:03 +0100 (Wed, 12 Dec 2012) $
+##############################################################
+
+# Ask the reason of the remove of this proc
+# Used in Gb
+proc HexAndZeros { hData nBytes } {
+
+        set len [expr {[string length $hData] / 2}]
+
+        append z $hData [hpad 00 [expr {$nBytes - $len}]]
+
+        return [hocts $z 0 [expr $nBytes - 1]]
+}
+##############
+
+proc IsTmsi { msid } {
+	if { [IsVoid $msid] || [hgetb $msid 0] != 0xf4 } {
+	    return -1
+	} else {
+		return 1
+	}
+}
+
+# si sarebbe potuta usare anche la GetTypeFromMsIdentity per distinguere tra TMSI ed IMSI
+
+proc IsImsi { msid } {
+	
+	if { ![IsVoid $msid] } {
+		if { [hgetb $msid 0] == 0xf9 } {
+			# case of IMSI with old number of digits
+			return 1	
+		} elseif { [hgetb $msid 0] == 0xf1 } {
+			# case of IMSI with even number of digits
+			return 1	
+		} else {
+			# the mobile identity isn't the IMSI
+			return -1
+		}
+	} else {
+		return -1
+	}
+}
+
+
+proc SendSequenceNumber { msid dbname revlev } {
+
+	switch -exact -- $revlev {
+		"00"			{ set bound 2 }
+		"01"     		{ set bound 2 }
+		"10"  			{ set bound 4 }
+		default 		{ logscr "Unhandled Revision Level ($revlev)"; return }
+	}
+
+	set sndseqnum [DbGet $dbname $msid SendSeqNum] 
+	set res $sndseqnum
+	incr sndseqnum
+	if { $sndseqnum == $bound } {
+		set sndseqnum 0
+	}
+	DbSet $dbname $msid SendSeqNum $sndseqnum
+	
+	return $res
+}
+
+proc GsInterfaceActive { } {
+	global __gs_on
+
+	if { [info exists __gs_on] && $__gs_on} {
+		return 1
+	} else {
+		return 0
+	}
+}
+
+proc CheckSendSeqNum { msid sndseqnum dbname revlev } {
+	# Send Sequence number is not available on Gs interface
+	if [GsInterfaceActive] {
+		if { [IsMSOnGsLink $msid] } {
+			return 1
+		}
+	}
+
+	switch -exact -- $revlev {
+		"00"	    	{ set bound 2 }
+		"01"     		{ set bound 2 }
+		"10"  			{ set bound 4 }
+		default 		{ logscr "Unhandled Revision Level ($revlev)"; return }
+	}
+
+	set sn [DbGet $dbname $msid SendSeqNum]
+	
+	#log "CheckSendSeqNum: sn by Db = $sn -- Received_seqnum = $sndseqnum"
+
+	if { $sn == $sndseqnum } {
+		incr sn
+		if { $sn == $bound } {
+			set sn 0
+		}
+		DbSet $dbname $msid SendSeqNum $sn
+
+		return 1
+	} else {
+		logscr "Error: Expected Send Sequence Number is $sn"
+		return 0
+	}
+}
+
+proc GetNibble { byte position } {
+
+	# Returns Least Significant Nibble if position is 1
+	# or Most Significant Nibble if position is 0
+	# in byte format (e.g. 4 is returned as 04)
+	set res 0
+	if { $position == 0 || $position == 1 } {
+		set nib [string index $byte $position]
+		if { $nib != "" } {
+			append res $nib
+			return $res
+		} else {
+			return -1
+		}
+	} else {
+		logscr "GetNibble Error, (position = $position)"
+	}	
+}
+
+#msident_type is the name of a variable that will be set to:
+#"": none of the following
+#tmsi: tmsi
+#ptmsi: ptmsi
+#according to the the ms identity
+proc SetTmsiOrPtmsi { msid dbname {msident_type ?} } {
+	#optimization start
+
+	if { ![IsVoid $msident_type] } {
+		upvar 1 $msident_type mi_type
+		set mi_type ""
+	}
+
+	# discard invalid TMSI/PTMSI 
+	# Note: -12=0xf4ffffff;
+	# Invalid Tmsi is:  f4ffffffff
+	# Invalid Ptmsi is: f4ffffff
+	if { [htoui $msid] == -12 } {
+		if { [string equal $msid "f4ffffffff"] } {
+        	logscr "Invalid Tmsi ($msid)"; return
+		} elseif { [string equal $msid "f4ffffff"] } {
+        	logscr "Invalid Ptmsi ($msid)"; return
+		}
+	}
+
+if {0} {
+	# check if TMSI
+	if { [DbFieldExists $dbname TMSI] } {
+		return [DbGetIdx $dbname TMSI $msid]
+	# check if PTMSI
+	} elseif { [DbFieldExists $dbname PTMSI] } {
+		return [DbGetIdx $dbname PTMSI $msid]
+	} else {
+		return ""
+	} 
+} else {
+    # check if TMSI
+    if { [DbFieldExists $dbname TMSI] } {
+        set retVal [DbGetIdx $dbname TMSI $msid]
+		if {$retVal != ""} {
+			if { ![IsVoid $msident_type] } {
+				set mi_type tmsi
+			}
+			return $retVal
+		}
+    } 
+
+    # check if PTMSI
+	if { [DbFieldExists $dbname PTMSI] } {
+        set retVal [DbGetIdx $dbname PTMSI $msid]
+		if {$retVal != ""} {
+			if { ![IsVoid $msident_type] } {
+				set mi_type ptmsi
+			}
+            return $retVal
+        }
+    } 
+	# otherwise
+    return ""
+}
+	#optimization end
+}
+
+#msident_type is the name of a variable that will be set to:
+#"": none of the following
+#imsi: imsi
+#tmsi: tmsi
+#ptmsi: ptmsi
+#according to the the ms identity
+proc GetIdxFromMsIdentity { msid dblocal dbcommon {msident_type ?} } {
+	#optimization start
+
+	if { ![IsVoid $msident_type] } {
+		upvar 1 $msident_type mi_type
+		set mi_type ""
+	}
+
+	# Check if valid msid
+	if { [IsVoid $msid] } {
+		log "GetIdxFromMsIdentity: msid is void"
+		return "?"
+	}
+
+	# Remove Odd/Even Indicator if present
+    set mstype [expr {[hgetb $msid 0] & 0x07}]
+
+	log "GetIdxFromMsIdentity: ms_identity=$msid --> mstype=$mstype"; #cDEBUG
+
+    if {$mstype == 1} {
+
+		if { ![IsVoid $msident_type] } {
+			set mi_type imsi
+		}
+
+		log "GetIdxFromMsIdentity: MSidentity=$msid"
+
+        set res [DbGetIdx $dbcommon IMSI $msid]
+		if { [IsEmpty $res] || $res == -1 } {
+			log "GetIdxFromMsIdentity: WARNING: the IMSI $msid isn't present in the $dbcommon (res=$res)"; #cDEBUG
+		}
+		return $res
+
+    } elseif {$mstype == 2} {
+
+        return [DbGetIdx $dblocal IMEI $msid]
+
+    } elseif {$mstype == 4} {
+
+		if { ![IsVoid $msident_type] } {
+			return [SetTmsiOrPtmsi $msid $dblocal mi_type]
+		} else {
+			return [SetTmsiOrPtmsi $msid $dblocal]
+		}
+
+    } else {
+        logscr "Unexpected Type ($mstype)"; return
+    }
+
+	#optimization end
+}
+
+proc GetTypeFromMsIdentity { msid } {
+
+	# Check if valid msid
+	if { [IsVoid $msid] } {
+		return "?"
+	}
+
+	#Carlo DEBUG 17/02/2011 ----start#
+	log "GetTypeFromMsIdentity: MS_identity=$msid"
+	log "GetTypeFromMsIdentity: hgetb_MSidentity=[hgetb $msid 0]"
+	log "GetTypeFromMsIdentity: IdType=[expr {[hgetb $msid 0] & 0x07}]"
+	# ----------------------------end#
+
+    # Remove Odd/Even Indicator if present
+    return [expr {[hgetb $msid 0] & 0x07}]
+}
+
+proc GetIdxFromCalledNum { callednum dbname } {
+
+	#LogDb $dbname; #cDEBUG
+	#log "GetIdxFromCalledNum: callednum=$callednum"; #cDEBUG
+
+	return [DbGetIdx $dbname OwnNum $callednum]
+}
+
+proc GetImsiFrom24008Format { imsi_24008format } {
+
+	set mstype [GetNibble [hocts $imsi_24008format 0] 1]
+
+	# Remove Odd/Even Indicator if present
+	set odd [hbits $mstype 4]
+	if { $odd == "1" } {
+		set 		pad 00000
+		set 		tmp [hbits $mstype 5 7]
+		append 		pad $tmp
+		set mstype 	[btoh $pad]
+	}	
+
+	if { $mstype != "01" } {
+		logscr "Error: Imsi Format is not Correct"
+		return -1
+	}
+
+	set res [htouc [GetNibble [hocts $imsi_24008format 0] 0]]
+
+	set idx 1
+	set nextdigit [GetNibble [hocts $imsi_24008format $idx] 1] 
+	set nextplusone [GetNibble [hocts $imsi_24008format $idx] 0]
+
+	while { $nextdigit != "-1" } {
+		if { $nextplusone == "-1" } {
+			logscr "Error: Imsi Format is not Correct"
+			return -1
+		}
+		if { $nextdigit != "0f" && $nextdigit != "0F" } {
+			append res [htouc $nextdigit]
+		} elseif { $odd == "1" } {
+			logscr "Error: Imsi Format is not Correct"
+			return -1
+		}
+		append res [htouc $nextplusone]
+		incr idx
+		set nextdigit [GetNibble [hocts $imsi_24008format $idx] 1] 
+		set nextplusone [GetNibble [hocts $imsi_24008format $idx] 0]
+	}
+
+	return $res
+}
+
+proc GetImeiFrom24008Format { imei_24008format } {
+
+	set mstype [GetNibble [hocts $imei_24008format 0] 1]
+
+	#log "GetImeiFrom24008Format: imei_24008format=$imei_24008format"
+	# Remove Odd/Even Indicator if present
+	set odd [hbits $mstype 4]
+	if { $odd == "1" } {
+		set 		pad 00000
+		set 		tmp [hbits $mstype 5 7]
+		append 		pad $tmp
+		set mstype 	[btoh $pad]
+	}	
+
+	if { $mstype != "02" } {
+		logscr "GetImeiFrom24008Format. Error: Imei format is not correct ($imei_24008format)"
+		return -1
+	}
+
+	set res [htouc [GetNibble [hocts $imei_24008format 0] 0]]
+
+	set idx 1
+	set nextdigit [GetNibble [hocts $imei_24008format $idx] 1] 
+	set nextplusone [GetNibble [hocts $imei_24008format $idx] 0]
+
+	while { $nextdigit != "-1" } {
+		if { $nextplusone == "-1" } {
+    		logscr "GetImeiFrom24008Format. Error 1: Imei format is not correct ($imei_24008format)"
+			return -1
+		}
+		if { $nextdigit != "0f" && $nextdigit != "0F" } {
+			append res [htouc $nextdigit]
+		} elseif { $odd == "1" } {
+    		logscr "GetImeiFrom24008Format. Error 2: Imei format is not correct ($imei_24008format)"
+			return -1
+		}
+		append res [htouc $nextplusone]
+		incr idx
+		set nextdigit [GetNibble [hocts $imei_24008format $idx] 1] 
+		set nextplusone [GetNibble [hocts $imei_24008format $idx] 0]
+	}
+
+	return $res
+}
+
+proc _Get24008FormatFromImsi { imsi } {
+
+	set idx 0
+	set nextdigit [GetNibble [hocts $imsi $idx] 1]
+	set firstdigit [htouc [GetNibble [hocts $imsi $idx] 0]]
+	if { $nextdigit == "-1" } {
+		append firstdigit 9
+		return $firstdigit
+	}
+	set nextplusone [GetNibble [hocts $imsi [expr {$idx + 1}]] 0]
+
+	while { $nextdigit != "-1" } {
+		if { $nextplusone == "-1" } {
+			append res "f"
+			append res [htouc $nextdigit]
+			append firstdigit 1
+			append firstdigit $res
+			return $firstdigit
+		}
+		append res [htouc $nextplusone]
+		append res [htouc $nextdigit]
+		incr idx
+		set nextdigit [GetNibble [hocts $imsi $idx] 1]
+		set nextplusone [GetNibble [hocts $imsi [expr {$idx + 1}]] 0]
+	}
+	append firstdigit 9
+	append firstdigit $res
+	return $firstdigit
+}
+
+proc Get24008FormatFromImei { imei } {
+	return [Get24008FormatFromIdentity $imei "IMEI"]
+}
+
+proc Get24008FormatFromImeisv { imeisv } {
+	return [Get24008FormatFromIdentity $imeisv "IMEISV"]
+}
+
+proc Get24008FormatFromImsi { imsi } {
+	return [Get24008FormatFromIdentity $imsi "IMSI"]
+}
+
+proc Get24008FormatFromTmsi { tmsi } {
+	return [Get24008FormatFromIdentity $tmsi "TMSI"]
+}
+
+proc Get24008FormatFromPTmsi { ptmsi } {
+	return [Get24008FormatFromIdentity $ptmsi "P-TMSI"]
+}
+
+proc Get24008FormatFromMTmsi { mtmsi } {
+	return [Get24008FormatFromIdentity $mtmsi "M-TMSI"]
+}
+
+proc Get24008FormatFromIdentity { identity identityType } {
+
+	if {[IsVoid $identity]} {
+		return "?"
+	}
+
+	switch -exact -- $identityType {
+	"IMSI" { 
+		if { [expr [string length $identity] % 2] } {
+			set mobileIdentity 9
+		} else {
+			set mobileIdentity 1 
+		}
+	}
+	"IMEI" { 
+		set mobileIdentity a 
+	}
+	"IMEISV" { 
+		set mobileIdentity 3 
+	}
+	"TMSI"
+	"P-TMSI"
+	"M-TMSI" {
+		if { $identity > 4294967295 } {
+			return "?"
+		}
+		set mobileIdentity f4 
+		set identidigit [itoh $identity B] 
+
+		return $mobileIdentity$identidigit
+	}
+	default { 
+		logscr "Undefined conversion required to Get24008FormatFromIdentity!" 
+		exit
+		}
+	}
+	set idx 0
+	set nextdigit [GetNibble [hocts $identity $idx] 1]
+	set firstdigit [htouc [GetNibble [hocts $identity $idx] 0]]
+	if { $nextdigit == "-1" } {
+		append firstdigit $mobileIdentity
+		return $firstdigit
+	}
+	set nextplusone [GetNibble [hocts $identity [expr {$idx + 1}]] 0]
+
+	while { $nextdigit != "-1" } {
+		if { $nextplusone == "-1" } {
+			append res "f"
+			append res [htouc $nextdigit]
+			append firstdigit $mobileIdentity
+			append firstdigit $res
+			return $firstdigit
+		}
+		append res [htouc $nextplusone]
+		append res [htouc $nextdigit]
+		incr idx
+		set nextdigit [GetNibble [hocts $identity $idx] 1]
+		set nextplusone [GetNibble [hocts $identity [expr {$idx + 1}]] 0]
+	}
+	append firstdigit $mobileIdentity
+	append firstdigit $res
+	return $firstdigit
+}
+
+proc Get24008FormatFromEmergencyNumber { num emergencyServiceCat } {
+	# See 3GPP 24.008, 10.5.3.13
+	set firstByte [uctoh $emergencyServiceCat]
+	set odd [expr [string length $num] % 2]
+	if { $odd } {
+		append num f
+	}
+	for {set i 0} {$i < [string length $num]} {set i [expr $i +2]} {
+		set buf [string index $num [expr $i + 1]]
+		set num [string replace $num [expr $i + 1] [expr $i + 1] [string index $num $i]]
+		set num [string replace $num $i $i $buf]
+	}
+	append firstByte $num
+	return $firstByte
+}
+
+proc GetHumanEmergencyNumberFrom24008 { num } {
+	# See 3GPP 24.008, 10.5.3.13
+    for {set i 0} {$i < [string length $num]} {set i [expr $i +2]} {
+        set buf [string index $num [expr $i + 1]]
+        set num [string replace $num [expr $i + 1] [expr $i + 1] [string index $num $i]]
+        set num [string replace $num $i $i $buf]
+    }
+    set slen [string length $num]
+    set slen1 [expr $slen -1]
+    if {[string index $num $slen1] == "f"} {
+        set slen [expr $slen -2]
+    }
+	set num [string range $num 0 $slen]
+	
+    return $num
+}
+
+proc Get24008FormatFromNumber { num {numType 0} {numberingPlanIden 1}} {
+	set firstByte [expr $numType | 0x08]
+	set firstByte [expr $firstByte << 4]
+	set firstByte [expr $firstByte | $numberingPlanIden]
+	set odd [expr [string length $num] % 2]
+	if { $odd } {
+		append num f
+	}
+	for {set i 0} {$i < [string length $num]} {set i [expr $i +2]} {
+		set buf [string index $num [expr $i + 1]]
+		set num [string replace $num [expr $i + 1] [expr $i + 1] [string index $num $i]]
+		set num [string replace $num $i $i $buf]
+	}
+	set firstByte [string range [uitoh $firstByte] 0 1]
+	append firstByte $num
+	return $firstByte
+}
+
+proc AsciiConvert { num } {
+
+	for {set i 0} {$i < [string length $num]} {set i [expr $i +1]} {
+
+		append buf 3
+		append buf [string index $num $i]
+	}
+
+	set al [string length $buf]
+    set pad [expr 68 - $al]
+    for {set i 0} {$i <  $pad} {set i [expr $i +1]} {
+        append buf 0
+    }
+
+	return $buf
+	}
+
+
+# TODO: fix this proc.
+proc GetHumanNumberFrom24008 { num } {
+
+    # 810303214365 --> 3030123456
+    # 81    03 03 21 43 65
+    # 24.008 10.5.4.7
+    for {set i 2} {$i < [string length $num]} {set i [expr $i +2]} {
+        set buf [string index $num [expr $i + 1]]
+        set num [string replace $num [expr $i + 1] [expr $i + 1] [string index $num $i]]
+        set num [string replace $num $i $i $buf]
+    }
+    set slen [string length $num]
+    set slen1 [expr $slen -1]
+    if {[string index $num $slen1] == "f"} {
+        set slen [expr $slen -2]
+    }
+    set num [string range $num 2 $slen]
+    return $num
+}
+
+proc GetCompleteHumanInternationalNumberFrom24008 { num } {
+
+	set number [GetHumanInternationalNumberFrom24008 $num]
+
+	if { [CheckInternationalTelephonePrefixes $number] } {
+		return $number
+	} else {
+		set numero 00
+		append numero $number
+		return $numero
+	}
+}
+
+proc GetHumanInternationalNumberFrom24008 { num } {
+
+    for {set i 0} {$i < [string length $num]} {set i [expr $i +2]} {
+        set buf [string index $num [expr $i + 1]]
+        set num [string replace $num [expr $i + 1] [expr $i + 1] [string index $num $i]]
+        set num [string replace $num $i $i $buf]
+    }
+    set slen [string length $num]
+    set slen1 [expr $slen -1]
+    if {[string index $num $slen1] == "f"} {
+        set slen [expr $slen -2]
+    }
+    set num [string range $num 0 $slen]
+    return $num
+}
+
+proc GetHumanImsiFrom24008 { codImsi } {
+
+	# 0910105500003283 --> 001015500002383
+	# 0910105500003283 --> 0 9 10105500003283
+	set firstDigit [string index $codImsi 0]
+	set oddBit [hbits [hocts $codImsi 0] 4]
+	set slen [string length $codImsi]
+	set slen1 [expr $slen -1]
+	set codImsi [string range $codImsi 2 $slen1]
+	set retVal $firstDigit
+	for {set i 0} {$i < $slen} {set i [expr $i +2]} {
+		set buf1 [string index $codImsi $i]
+		set buf2 [string index $codImsi [expr $i + 1]]
+		if {$buf2 != "f"} {
+			append retVal $buf2
+		}
+		if {$buf1 != "f"} {
+			append retVal $buf1
+		}
+	}
+
+	if {$oddBit} {
+		append retVal [string index $codImsi $slen1]
+	}
+	return $retVal
+}
+
+
+proc GetSysInfoLaiFormatFromMccMncLac { mcc mnc lac } {
+	
+	if { [string length $mcc] != 3 } {
+		logscr "ERROR: MCC length different from 3 ([string length $mcc])"
+		exit
+	}
+	set mcc_digit1 [string index $mcc 0]
+	set mcc_digit2 [string index $mcc 1]
+	set mcc_digit3 [string index $mcc 2]
+	
+	if { [string length $mnc] == 2 } {
+		set mnc_digit1 [string index $mnc 0]
+		set mnc_digit2 [string index $mnc 1]
+		set mnc_digit3 f
+	} elseif { [string length $mnc] == 3 } {
+		set mnc_digit1 [string index $mnc 0]
+		set mnc_digit2 [string index $mnc 1]
+		set mnc_digit3 [string index $mnc 2]
+	} else {
+		logscr "ERROR: MNC length different from 2 or 3 ([string length $mnc])"
+		exit
+	}
+
+	set hlac [ustoh $lac]
+	set lac_digit1 [string index $hlac 2]
+	set lac_digit2 [string index $hlac 3]
+	set lac_digit3 [string index $hlac 0]
+	set lac_digit4 [string index $hlac 1]
+	
+	append lai $mcc_digit2
+	append lai $mcc_digit1
+	append lai $mnc_digit3
+	append lai $mcc_digit3
+	append lai $mnc_digit2
+	append lai $mnc_digit1
+	append lai $lac_digit1
+	append lai $lac_digit2
+	append lai $lac_digit3
+	append lai $lac_digit4
+	return $lai
+}
+
+proc GetImsiFromPermanentNasId { permnasid } {
+
+	set idx 0
+	set nextdigit [GetNibble [hocts $permnasid $idx] 0]
+	if { $nextdigit == "0f" || $nextdigit == "0F" } {
+		return [htouc [GetNibble [hocts $permnasid $idx] 1]]
+	}
+	while { $nextdigit != "0f" && $nextdigit != "0F" } {
+		append res [htouc [GetNibble [hocts $permnasid $idx] 1]]
+		append res [htouc $nextdigit]
+		incr idx
+		set nextdigit [GetNibble [hocts $permnasid $idx] 0]
+		if { $nextdigit == "-1" } {
+			return $res
+		}
+	}
+	append res [htouc [GetNibble [hocts $permnasid $idx] 1]]
+	
+	return $res
+}
+
+proc GetPermanentNasIdFromImsi { imsi } {
+		
+	set idx 0
+	set nextdigit [GetNibble [hocts $imsi $idx] 1]
+	if { $nextdigit == "-1" } {
+		return [htouc [GetNibble [hocts $imsi $idx] 0]]
+	} 
+
+	while { $nextdigit != "-1" } {
+		append res [htouc $nextdigit]
+		append res [htouc [GetNibble [hocts $imsi $idx] 0]]
+		incr idx
+		set nextdigit [GetNibble [hocts $imsi $idx] 1]
+	}
+	set last [GetNibble [hocts $imsi $idx] 0]
+	if { $last != "-1" } {
+		append res "f"
+		append res [htouc $last]
+	}
+	return $res
+}
+
+proc CSGetNextIndexByTi { msid dbname maxtio {maxti 8} } {
+
+	set start [expr {$msid * $maxti}]
+	set end [expr {$start + $maxtio}]
+
+	for { set i $start } { $i < $end } { incr i } {
+		if { ![DbEntryExists $dbname $i] } {
+			#log "CSGetNextIndexByTi: maxti=$maxti -- maxtio=$maxtio -- start=$start -- end=$end -- i=$i"; #cDEBUG
+			return $i
+		}
+	}
+
+	return -1
+}
+
+proc PSGetNextIndexByTi { msid dbname maxtio NSAPI {maxti 8} } {
+
+	set start [expr {$msid * $maxti}]
+	set end [expr {$start + $maxtio}]
+
+	for { set i $start } { $i < $end } { incr i } {
+		if { ![DbEntryExists $dbname $i] } {
+			return $i
+		} else {
+			if { $NSAPI == [DbGet $dbname $i NSAPI] } {
+				return -2
+			}
+		}
+	}
+
+	return -1
+}
+
+proc PSGetIndexFromMsidNsapi { msid dbname maxtio NSAPI {maxti 8} } {
+
+	set start [expr {$msid * $maxti}]
+	set end [expr {$start + $maxtio}]
+
+	for { set i $start } { $i < $end } { incr i } {
+		if { [DbEntryExists $dbname $i] } {
+			if { $NSAPI == [DbGet $dbname $i NSAPI] } {
+				return $i
+			}
+		}
+	}
+
+	return -1
+}
+
+# Build Tid for Incoming SMSs
+proc BuildTid { tiflag tio } {
+
+	if { $tiflag == 0 } {
+		set tid [expr  8 + $tio]
+	} else {
+		set tid $tio
+	}
+	return $tid
+}
+
+#see SMC index
+proc GetIdxFromTidMsid { tid msid } {
+
+	set idx [expr {$tid + $msid * 16}]
+	return $idx
+}
+
+#see CC GetNextIndexByTi and SMC GetIdxFromTidMsid
+proc IndexToMsId { index {maxti 8} } {
+
+	return [expr {$index / $maxti}]
+}
+
+proc BearerCap1ToResAss { bcap1 msrate speechver datarate } {
+
+	upvar 1 $msrate rate 
+	upvar 1 $speechver spver 
+	upvar 1 $datarate drate 
+
+    set rate "?"
+    set spver "?"
+    set drate "?"
+
+	if { [IsVoid $bcap1] } {
+		# 3GPP 24.007 p.5.2.2.3.2
+		set rate "08"
+		set spver "01"
+		return 1
+	} else {
+		set b0 [hgetb $bcap1 0]
+	}
+
+    # Test ITC
+	set itc [ expr {$b0 & 0x07} ]
+    if {  $itc == 0x00 || $itc == 0x01 || $itc == 0x02 || $itc == 0x03 } {
+		#switch on chradioreq
+        switch [expr {$b0 & 0x60}] {
+        	32 {set rate "08"}
+			64 {set rate "0b"}
+			96 {set rate "0a"}
+			default {set rate "?"}
+		}
+        # speech version indication
+		# SpeechVersion "speech presence" "extended bcap"
+    	if {  $itc == 0x00 } {
+        	set spver [SpeechVersion [expr {$b0 & 0x80}] [string range $bcap1 2 end]]
+		} elseif { $itc == 0x01 || $itc == 0x02 || $itc == 0x03 } {
+			set drate [GetDataRate $bcap1]
+		}
+
+		return 1
+    } else {
+        return "?"
+    }
+}
+
+proc SpeechVersion { speechpres extbcap } {
+
+	if {$speechpres != 0} {
+        return 01
+	}
+
+	set i 0
+	while {1} {
+		set b [hgetb $extbcap $i]
+		#switch on bcapspeech
+        switch -exact -- [expr {$b & 0x0F}] {
+            0  { set spver 0x01; # Full rate vers. 1 
+			}
+            1  { set spver 0x05; # Half rate vers. 1 
+			}
+            2  { set spver 0x11; # Full rate vers. 2 
+			}
+            4  { set spver 0x21; # Full rate vers. 3 
+			}
+			6  { set spver 0x41; # Full rate vers. 4
+			}
+            5  { set spver 0x25; # Half rate vers. 3 
+			}
+			7  { set spver 0x46; # Half rate vers. 4
+			}
+			11 { set spver 0x45; # Half rate vers. 6
+			}
+			8  { set spver 0x42; # Full rate vers. 5
+			}
+            default { logscr "Unexpected Speech Version ([expr {$b & 0x0F}])"; return }
+        }
+		#test speech presence
+        if { [expr {$b & 0x80}] == 0x00 } {
+           append speechver [uctoh [expr {0x80 + $spver}]]
+        } else {
+           append speechver [uctoh $spver]
+           break;
+        }
+		incr i
+    }
+	log "SpeechVersion: speechver=$speechver"
+    return $speechver
+
+}
+
+# 24.008 speech version is defined in 10.5.4.5 Bearer Capability
+# speech24008: value of bits 4-1 as integer
+# return value as integer
+proc SpeechVerConv24008ToBssap {speech24008} {
+
+	switch $speech24008 {
+		0 {return 0x01; #GSM full rate speech version 1}
+		2 {return 0x11; #GSM full rate speech version 2}
+		4 {return 0x21; #GSM full rate speech version 3}
+		6 {return 0x41; #GSM full rate speech version 4}
+		8 {return 0x42; #GSM full rate speech version 5}
+		1 {return 0x05; #GSM half rate speech version 1}
+		5 {return 0x25; #GSM half rate speech version 3}
+		7 {return 0x46; #GSM half rate speech version 4}
+		11 {return 0x45; #GSM half rate speech version 6}
+
+		default {logscr "SpeechVerConv24008ToBssap: unexpected speech24008=$speech24008"}
+	}
+}
+
+proc GetDataRate { bcap } {
+
+	set octnum 3; # first byte with value (besides tag/length)
+	# reaching octets 6* (see 3GPP 24.008 p. 10.5.4.5)
+	for {set i 0} {$octnum < 6 && $i < 16} {incr i} {
+		set b [hgetb $bcap $i]
+		if { [expr {$b & 0x80}] } {
+			incr octnum
+		}
+	}
+
+	log "GetDataRate: i=$i, octnum=$octnum, oct=[hgetb $bcap $i]"
+	set user_rate [expr [hgetb $bcap [expr $i + 1]] & 0x0F]
+	set conn_el [expr [hgetb $bcap [expr $i + 2]] & 0x60]
+	log "GetDataRate: user_rate=$user_rate, conn_el=$conn_el"
+	 
+	# Check on T/NT connection element
+	if { $conn_el == 0x20 } {
+		logscr "Bearer requested for non-transparent data transfer"	
+		exit
+	}
+
+	switch -exact -- $user_rate { 
+		1  { set datarate 14; # User Rate 0.3 kbits/s; Data Rate 0.6 bit/s
+		}
+		2  { set datarate 13; # User Rate 1.2 kbits/s; Data Rate 1.2 kbit/s
+		}
+		3  { set datarate 12; # User Rate 2.4 kbits/s; Data Rate 2.4 kbit/s
+		}
+		4  { set datarate 11; # User Rate 4.8 kbits/s; Data Rate 4.8 kbit/s
+		}
+		5  { set datarate 10; # User Rate 9.6 kbits/s; Data Rate 9.6 kbit/s
+		}
+		6  { set datarate 18; # User Rate 12 kbits/s; Data Rate 14.4 kbit/s
+		}
+		default { logscr "Unexpected User Rate ($user_rate)"; exit }
+	}
+
+    return $datarate
+}
+
+proc GetPsDataTypeByMaxBitRate { maxBitRateDL maxBitRateUL DWDataType UPDataType } {
+
+	upvar 1 $DWDataType dwDataType_val
+	upvar 1 $UPDataType upDataType_val
+
+	switch -exact -- $maxBitRateDL {
+		"e4"		-
+		"E4"        { set dwDataType_val "Data7200" }
+		"af"        -
+		"AF"        { set dwDataType_val "Data3600" }
+		"93"        { set dwDataType_val "Data1800" }
+		"8A"        - 
+		"8a"        { set dwDataType_val "Data1200" }
+		"68"        { set dwDataType_val "Data384"  }
+		"48"        { set dwDataType_val "Data128"  }
+		"40"        { set dwDataType_val "Data64"   }
+		"20"		{ set dwDataType_val "Data32"	}
+		"10"		{ set dwDataType_val "Data16"	}
+		 "5"		{ set dwDataType_val "Data8"	}
+		default		{ logscr "GetPsDataTypeByMaxBitRate: Unexpected MaxBitRateDL $maxBitRateDL"; set dwDataType_val "Data384" }
+	}
+	log "GetPsDataTypeByMaxBitRate: dwDataType_val=$dwDataType_val"
+
+	switch -exact -- $maxBitRateUL {
+		"e4"		-
+		"E4"        { set upDataType_val "Data7200" }
+		"af"        -
+		"AF"        { set upDataType_val "Data3600" }
+		"93"        { set upDataType_val "Data1800" }
+		"8A"        - 
+		"8a"        { set upDataType_val "Data1200" }
+		"68"        { set upDataType_val "Data384"  }
+		"48"        { set upDataType_val "Data128"  }
+		"40"        { set upDataType_val "Data64"   }
+		"20"        { set upDataType_val "Data32"   }
+		"10"        { set upDataType_val "Data16"   }
+		 "5"        { set upDataType_val "Data8"    }
+		default		{ logscr "GetPsDataTypeByMaxBitRate: Unexpected MaxBitRateUL $maxBitRateUL"; set upDataType_val "Data64" }
+	}
+	log "GetPsDataTypeByMaxBitRate: upDataType_val=$upDataType_val"
+}
+
+proc GetPsMaxBitRateByRabType { DWDataType UPDataType maxBitRateDL maxBitRateUL } {
+
+	upvar 1 $maxBitRateDL dwLinkRate
+	upvar 1	$maxBitRateUL upLinkRate
+
+	switch -exact -- $DWDataType {
+		"Data7200"		{ set dwLinkRate 7168000 }
+		"Data3600"		{ set dwLinkRate 3584000 }
+		"Data1800"		{ set dwLinkRate 1792000 }
+		"Data1200"		{ set dwLinkRate 1152000 }
+		 "Data384"		{ set dwLinkRate 384000  }
+		 "Data128"		{ set dwLinkRate 128000  }
+		  "Data64"		{ set dwLinkRate 64000   }
+		  "Data32"		{ set dwLinkRate 32000   }
+		  "Data16"		{ set dwLinkRate 16000   }
+		   "Data8"		{ set dwLinkRate 8000    }
+		default			{ logscr "GetPsMaxBitRateByRabType: ERROR -- Unexpected DownLink RAB Type ($DWDataType)"; set dwLinkRate 384000 }
+	}
+
+	switch -exact -- $UPDataType {
+		"Data7200"		{ set  upLinkRate 7168000 }
+		"Data3600"		{ set  upLinkRate 3584000 }
+		"Data1800"		{ set  upLinkRate 1792000 }
+		"Data1200"		{ set  upLinkRate 1152000 }
+		 "Data384"		{ set  upLinkRate 384000  }
+		 "Data128"		{ set  upLinkRate 128000  }
+		  "Data64"		{ set  upLinkRate 64000   }
+		  "Data32"		{ set  upLinkRate 32000   }
+		  "Data16"		{ set  upLinkRate 16000   }
+		   "Data8"	    { set  upLinkRate 8000    }
+		default			{ logscr "GetPsMaxBitRateByRabType: ERROR -- Unexpected UpLink RAB Type ($UPDataType)"; set upLinkRate 64000 }
+	}
+	log "GetPsMaxBitRateByRabType: dwLinkRate=$dwLinkRate; upLinkRate=$upLinkRate"
+}
+
+proc CheckCcCause { cause } {
+	#optimization start
+
+	if { [IsVoid $cause] } {
+		return 0
+	}
+
+	if { [string length $cause] < 4 } {
+		return -1
+	}
+
+	if { ![string eq [string range $cause 0 0] "e"] } {
+		return -1
+	}
+
+	#switch on cause value
+	switch -exact -- [string range $cause 2 3] {
+		"81"    { return "Unassigned (Unallocated) Number" }
+		"83"    { return "No Route To Destination" }
+		"86"    { return "Channel Unacceptable" }
+		"88"    { return "Operator Determined Barring" }
+		"90"    { return "Normal Call Clearing" }
+		"91"    { return "User Busy" }
+		"92"    { return "No User Responding" }
+		"93"    { return "User Alerting, No Answer" }
+		"95"    { return "Call Rejected" }
+		"96"    { return "Number Changed" }
+		"99"    { return "Pre-Emption" }
+		"9a"    { return "Non Selected User Clearing" }
+		"9b"    { return "Destination Out Of Order" }
+		"9c"    { return "Invalid Number Format (Incomplete Number)" }
+		"9d"    { return "Facility Rejected" }
+		"9e"    { return "Response To STATUS ENQUIRY" }
+		"9f"    { return "Normal, Unspecified" }
+		"a2"    { return "No Circuit/Channel Available" }
+		"a6"    { return "Network Out Of Order" }
+		"a9"    { return "Temporary Failure" }
+		"aa"    { return "Switching Equipment Congestion" }
+		"ab"    { return "Access Information Discarded" }
+		"ac"	{ return "Requested Circuit/Channel Not Available" }
+		"af"    { return "Resources Unavailable, Unspecified" }
+		"b1"    { return "Quality Of Service Unavailable" }
+		"b2"    { return "Requested Facility Not Subscribed" }
+		"b7"    { return "Incoming Calls Barred with the CUG" }
+		"b9"    { return "Bearer Capability Not Authorized" }
+		"ba"    { return "Bearer Capability Not Presently Available" }
+		"bf"    { return "Service Or Option Not Available, Unspecified" }
+		"c1"    { return "Bearer Service Not Implemented" }
+		"c4"    { return "ACM Equal Or Greater Then ACMmax" }
+		"c5"    { return "Requested Facility Not Implemented" }
+		"c6"    { return "Only Restricted Digital Information Bearer Capability Is Available" }
+		"e0"    { return "Invalid mandatory information" }
+		"e1"    { return "Message Type Non-Existent Or Not Implemented" }
+		"e2"    { return "Message Type Non Compatible With Protocol State" }
+		"e3"    { return "Information Element Non-Existent Or Not Implemented" }
+		"e4"    { return "Conditional IE Error" }
+		"e5"    { return "Message Non Compatible With Protocol State" }
+		"e6"    { return "Recovery On Timer Expiry" }
+		"ef"	{ return "Protocol Error, Unspecified" }
+		"ff"	{ return "Interworking, Unspecified" }
+		"d8"	{ return "Incompatible destination" }
+		default { logscr "Unexpected Cause Val ([string range $cause 2 3])"; return -1 }
+	} 
+
+	#optimization end
+}
+
+#Use this proc instead of CheckCcCause if you want only to check if CC cause has
+#a correct value.
+#This proc is 25% faster.
+proc WrongCcCause { cause args } {
+	if { [string length $cause] < 4 } {
+		return 1
+	}
+
+	if {[expr {[hgetb $cause 0] & 0xF0}] != "0xe0"} {
+		return 1
+	}
+
+	if { [llength $args] > 0 } {
+		upvar 1 [lindex $args 0] goodCause_val
+	}
+
+	set goodCause_val 0
+
+	#switch on cause value. Values are in decimal format
+	switch [hgetb $cause 1] {
+		"129"    { return 0; #"Unassigned (Unallocated) Number" }
+		"131"    { return 0; #"No Route To Destination" }
+		"134"    { return 0; #"Channel Unacceptable" }
+		"136"    { return 0; #"Operator Determined Barring" }
+		"144"    { set goodCause_val 1; return 0; #"Normal Call Clearing" }
+		"145"    { return 0; #"User Busy" }
+		"146"    { return 0; #"No User Responding" }
+		"147"    { return 0; #"User Alerting, No Answer" }
+		"149"    { return 0; #"Call Rejected" }
+		"150"    { return 0; #"Number Changed" }
+		"153"    { return 0; #"Pre-Emption" }
+		"154"    { return 0; #"Non Selected User Clearing" }
+		"155"    { return 0; #"Destination Out Of Order" }
+		"156"    { return 0; #"Invalid Number Format (Incomplete Number)" }
+		"157"    { return 0; #"Facility Rejected" }
+		"158"    { return 0; #"Response To STATUS ENQUIRY" }
+		"159"    { return 0; #"Normal, Unspecified" }
+		"162"    { return 0; #"No Circuit/Channel Available" }
+		"166"    { return 0; #"Network Out Of Order" }
+		"169"    { return 0; #"Temporary Failure" }
+		"170"    { return 0; #"Switching Equipment Congestion" }
+		"171"    { return 0; #"Access Information Discarded" }
+		"172"	 { return 0; #"Requested Circuit/Channel Not Available" }
+		"175"    { return 0; #"Resources Unavailable, Unspecified" }
+		"177"    { return 0; #"Quality Of Service Unavailable" }
+		"178"    { return 0; #"Requested Facility Not Subscribed" }
+		"183"    { return 0; #"Incoming Calls Barred with the CUG" }
+		"185"    { return 0; #"Bearer Capability Not Authorized" }
+		"186"    { return 0; #"Bearer Capability Not Presently Available" }
+		"191"    { return 0; #"Service Or Option Not Available, Unspecified" }
+		"193"    { return 0; #"Bearer Service Not Implemented" }
+		"196"    { return 0; #"ACM Equal Or Greater Then ACMmax" }
+		"197"    { return 0; #"Requested Facility Not Implemented" }
+		"198"    { return 0; #"Only Restricted Digital Information Bearer Capability Is Available" }
+		"216"    { return 0; #"Incompatible destination" }
+		"224"    { return 0; #"Invalid mandatory information" }
+		"225"    { return 0; #"Message Type Non-Existent Or Not Implemented" }
+		"226"    { return 0; #"Message Type Non Compatible With Protocol State" }
+		"227"    { return 0; #"Information Element Non-Existent Or Not Implemented" }
+		"228"    { return 0; #"Conditional IE Error" }
+		"229"    { return 0; #"Message Non Compatible With Protocol State" }
+		"230"    { set goodCause_val 1; return 0; #"Recovery On Timer Expiry" }
+		"239"	 { return 0; #"Protocol Error, Unspecified" }
+		"255"	 { return 0; #"Interworking, Unspecified" }
+
+		default { logscr "Unexpected Cause Val ([string range $cause 2 3])"; return 1 }
+	} 
+}
+
+#cause is an HEXSTR in the format e0xx
+#Check is done on xx
+proc L3Utils_IsNormalCallClearing {cause} {
+    if {[hgetb $cause 1] == 0x90} {return 1} else {return 0}
+}
+
+# It returns 1 (if MS supports VGCS) 
+# or 0 (if MS does not support VGCS)
+proc IsVgcs { idx args } {
+	if { [llength $args] == 0 } {
+		global glCommonDb
+		set db $glCommonDb
+	} else {
+		set db [lindex $args 0]
+	}
+
+	set clsmk2 "0x[DbGet $db $idx ClassMark2]"
+	set vgcs_cap [expr {$clsmk2 & 0x000200}]
+	return [expr {$vgcs_cap >> 9}]
+}
+
+# Retrieve the Desciptive GroupCallReference into a pdu as described
+# in 3GPP 24.008 3.2.2.55
+proc GetDescriptiveGroupCallReferencePdu { groupCallReference callPriority ciphInfo ack } {
+	#Put first the IEI
+	#set pdu 37
+	log "GetDescriptiveGroupCallReferencePdu: groupCallReference = $groupCallReference \
+		callPriority = $callPriority"
+	set grCallRef $groupCallReference
+	set grCallRef [expr $grCallRef * 32]
+	set grCallRef [expr $grCallRef | 16]
+	if { $ack == 1 } {
+		set grCallRef [expr $grCallRef | 8]
+	}
+	if { [IsVoid $callPriority] } {
+		set callPriority 0
+	}
+	set grCallRef [expr $grCallRef | $callPriority]
+	log "GetDescriptiveGroupCallReferencePdu: grCallRef = $grCallRef"
+	set hexGrCallRef [uitoh $grCallRef B]
+	log "GetDescriptiveGroupCallReferencePdu: hexGrCallRef = $hexGrCallRef"
+	set len [string length $hexGrCallRef]
+	if { $len < 8 } {
+		log "GetDescriptiveGroupCallReferencePdu: len = $len"
+		set zeroes [string repeat 0 [expr 8 - $len]]
+		append hexGrCallRef $zeroes
+		log "GetDescriptiveGroupCallReferencePdu: hexGrCallRef = $hexGrCallRef"
+	}
+
+	append pdu $hexGrCallRef
+	append pdu $ciphInfo
+	append pdu 0
+
+	log "GetDescriptiveGroupCallReferencePdu: $pdu"
+	
+	return $pdu
+}
+
+# Retrieve the Talker Flag pdu as described in 3GPP 24.008 3.2.2.54
+
+proc GetTalkerFlagPdu { } {
+	return 35
+}
+
+# Check if Supplementary Service is active
+proc SsServiceIsActive { status } {
+	return [string equal $status "0e"]
+}
+
+
+#################### ---- ##########################################
+#################### ---- ##########################################
+# Procedures useful for SS-Barring
+####################################################################
+
+proc IsNumberFormat24008 { num } {
+
+	set firstnibble [string index $num 0]
+	set twodigit $firstnibble
+	set secondnibble [string index $num 1]
+	append twodigit $secondnibble
+
+	#log "IsNumberFormat24008: num=$num --> firstnibble=$firstnibble; secondnibble=$secondnibble; twodigit=$twodigit"; #cDEBUG
+
+	if { $firstnibble == "8" && $twodigit == "81" } {
+		#log "Telephone Number is in format 24008"
+		return 1
+	} else {
+		return 0
+	}
+}
+
+####################################################################
+proc CheckInternationalTelephonePrefixes { num } {
+
+	set pre_internPrefix [string index $num 0]
+	append pre_internPrefix [string index $num 1]
+
+	#log "first_internPrefix=[string index $num 0]; pre_internPrefix=$pre_internPrefix;"; #cDEBUG
+
+	if { $pre_internPrefix == "00" || [string index $num 0] == "+" } {
+		return 1	
+	} else {
+		return 0
+	}
+}
+
+####################################################################
+proc CheckNumberType { num } {
+
+	#log "CheckNumberType: calledNumber_24008format=$num"; #cDEBUG
+
+	# the first nibble is the 'Type of Number': see 24.008-7.9.0 p.10.5.4.7
+	set nib_typeNumber [string index $num 0]
+	set typeNumber $nib_typeNumber
+	set secondnibble [string index $num 1]
+	append typeNumber $secondnibble
+
+	#log "CheckNumberType: nib_typeNumber=$nib_typeNumber; typeNumber=$typeNumber"; #cDEBUG
+ 
+	if { $nib_typeNumber == "9" && $typeNumber != "90" } {
+		log "====> INTERNATIONAL TYPE OF CALLED NUMBER"
+		return 1
+	} elseif { $nib_typeNumber == "8" && $typeNumber != "80" } {
+		log "====> UNKNOWN TYPE OF CALLED NUMBER"
+		return 0
+	} elseif { $nib_typeNumber == "a" && $typeNumber != "a0" } {
+		log "====> NATIONAL TYPE OF CALLED NUMBER"
+		return 0
+	} else {
+		log "====> OTHERS TYPE OF CALLED NUMBER"
+		return 0
+	}
+}
+
+###################################################################
+proc CheckCalledMccEqualCallingMcc { callingNumber calledNumber } {
+
+	global glCommonDb
+
+	# CALLED
+	if { [DbKeyExists $glCommonDb OwnNum $calledNumber] } {
+		set called_id [DbGetIdx $glCommonDb OwnNum $calledNumber]
+		set called_imsi_24008 [DbGet $glCommonDb $called_id IMSI]
+		set called_imsi [GetImsiFrom24008Format $called_imsi_24008]
+	} else {
+		abort "CheckCalledMccEqualCallingMcc: -WARNING- The called_msisdn=$calledNumber doesn't exist in the glCommonDb=$glCommonDb"
+	}
+
+	set called_mcc [string index $called_imsi 0]
+	append called_mcc [string index $called_imsi 1]
+	append called_mcc [string index $called_imsi 2]
+
+	#log "CheckCalledMccEqualCallingMcc: calledNumber=$calledNumber --> called_imsi=$called_imsi --> called_MCC=$called_mcc"; #cDEBUG
+
+	# CALLING
+	if { [DbKeyExists $glCommonDb OwnNum $callingNumber] } {
+        set calling_id [DbGetIdx $glCommonDb OwnNum $callingNumber]
+        set calling_imsi_24008 [DbGet $glCommonDb $calling_id IMSI]
+        set calling_imsi [GetImsiFrom24008Format $calling_imsi_24008]
+    } else {
+        abort "CheckCalledMccEqualCallingMcc: -WARNING- The calling_msisdn=$callingNumber doesn't exist in the glCommonDb=$glCommonDb"
+    }
+
+    set calling_mcc [string index $calling_imsi 0]
+    append calling_mcc [string index $calling_imsi 1]
+    append calling_mcc [string index $calling_imsi 2]
+
+	#log "CheckCalledMccEqualCallingMcc: callingNumber=$callingNumber --> calling_imsi=$calling_imsi --> calling_MCC=$calling_mcc"; #cDEBUG
+
+	if { $called_mcc != $calling_mcc } {
+		# the called belong to a different country respect to the calling
+		log "called_MCC=$called_mcc is different from the calling_MCC=$calling_mcc"
+		return 1
+	} else {
+		# the called belong to the same Plmn of the calling
+		log "called_MCC=calling_MCC=$calling_mcc"
+		return 0
+	}
+}
+
+####################################################################
+# Returns the number without the international prefix
+# eg: 00393205858500 --> 3205858500
+proc BaseTelephoneNumber { callNumber } {
+
+	set pre_internPrefix [string index $callNumber 0]
+	append pre_internPrefix [string index $callNumber 1]
+	set modifyNumber ""
+	if { [string index $callNumber 0] == "+" } {
+		# ATTENZIONE: vale solo nel caso di prefissi internazionali di 2 cifre (oltre il +)--> in realta esistono quelli con piu cifre!! TODO estensione
+		for {set i 3} {$i < [string length $callNumber]} {set i [expr $i +1]} {
+			# It takes as base ownNumber those without prefix
+			append modifyNumber [string index $callNumber $i]
+		}
+	} elseif { $pre_internPrefix == "00" } {
+		# ATTENZIONE: vale solo nel caso di prefissi internazionali di 2 cifre (oltre il +)--> in realta esistono quelli con piu cifre!! TODO estensione
+		for {set i 4} {$i < [string length $callNumber]} {set i [expr $i +1]} {
+			# It takes as base ownNumber those without prefix
+			append modifyNumber [string index $callNumber $i]
+		}
+	} else {
+		# callNumber is in National Format --> any modifications done
+		set modifyNumber $callNumber
+	}
+	#log "BaseTelephoneNumber: modifyNumber=$modifyNumber"; #cDEBUG
+	return $modifyNumber
+}
+
+####################################################################
+# Returns the number with the international prefix 
+# (3GPP 24008 - 10.5.4.7 Called Party BCD Number)
+# eg: 00393205858500 --> 393205858500
+proc BaseIntlTelephoneNumber { callNumber } {
+
+	set pre_internPrefix [string index $callNumber 0]
+	append pre_internPrefix [string index $callNumber 1]
+	set modifyNumber ""
+	if { [string index $callNumber 0] == "+" } {
+		# ATTENZIONE: vale solo nel caso di prefissi internazionali di 2 cifre (oltre il +)--> in realta esistono quelli con piu cifre!! TODO estensione
+		for {set i 1} {$i < [string length $callNumber]} {set i [expr $i +1]} {
+			# It takes as base ownNumber those without prefix
+			append modifyNumber [string index $callNumber $i]
+		}
+	} elseif { $pre_internPrefix == "00" } {
+		# ATTENZIONE: vale solo nel caso di prefissi internazionali di 2 cifre (oltre il +)--> in realta esistono quelli con piu cifre!! TODO estensione
+		for {set i 2} {$i < [string length $callNumber]} {set i [expr $i +1]} {
+			# It takes as base ownNumber those without prefix
+			append modifyNumber [string index $callNumber $i]
+		}
+	}
+	#log "BaseTelephoneNumber: modifyNumber=$modifyNumber"; #cDEBUG
+	return $modifyNumber
+}
+
+# This one removes only the pre-international prefix
+# (but leaves the prefix itself) 
+proc CompleteTelephoneNumber { callNumber } {
+
+	set pre_internPrefix [string index $callNumber 0]
+	append pre_internPrefix [string index $callNumber 1]
+	set modifyNumber ""
+	if { [string index $callNumber 0] == "+" } {
+		for {set i 1} {$i < [string length $callNumber]} {set i [expr $i +1]} {
+			append modifyNumber [string index $callNumber $i]
+		}
+	} elseif { $pre_internPrefix == "00" } {
+		for {set i 2} {$i < [string length $callNumber]} {set i [expr $i +1]} {
+			append modifyNumber [string index $callNumber $i]
+		}
+	} else {
+		for {set i 0} {$i < [string length $callNumber]} {set i [expr $i +1]} {
+
+			append modifyNumber [string index $callNumber $i]
+		}
+	}
+	#log "CompleteTelephoneNumber: modifyNumber=$modifyNumber"; #cDEBUG
+	return $modifyNumber
+}
+
+####################################################################
+proc CheckRoamingNumberInsideCalledPlmn { calledNumber roamingNumberLai } {
+
+	global glCommonDb
+
+    if { [DbKeyExists $glCommonDb OwnNum $calledNumber] } {
+        set called_id [DbGetIdx $glCommonDb OwnNum $calledNumber]
+        set called_imsi_24008 [DbGet $glCommonDb $called_id IMSI]
+        set called_imsi [GetImsiFrom24008Format $called_imsi_24008]
+    } else {
+        abort "CheckRoamingNumberInsideCalledPlmn: -WARNING- The called_msisdn=$calledNumber doesn't exist in the glCommonDb=$glCommonDb"
+    }
+
+    set called_mcc [string index $called_imsi 0]
+    append called_mcc [string index $called_imsi 1]
+    append called_mcc [string index $called_imsi 2]
+
+	set called_mnc [string index $called_imsi 3]
+	append called_mnc [string index $called_imsi 4]
+
+    log "CheckRoamingNumberInsideCalledPlmn: calledNumber=$calledNumber; called_imsi=$called_imsi; called_imsi_MCC=$called_mcc; called_imsi_MNC=$called_mnc"; #cDEBUG
+
+	set roamingNumber_mcc [GetMccFromFormat24008Lai $roamingNumberLai]; # NOTA: il MCC del roaming number viene acquisito dal sysInfoLAI
+
+	set roamingNumber_mnc [GetMncFromFormat24008Lai $roamingNumberLai]; # NOTA: il MNC del roaming number viene acquisito dal sysInfoLAI
+
+	log "CheckRoamingNumberInsideCalledPlmn: roamingNumberLai=$roamingNumberLai; roamingNumber_mcc=$roamingNumber_mcc; roamingNumber_mnc=$roamingNumber_mnc"; #cDEBUG
+
+	if { $roamingNumber_mcc != $called_mcc} {
+		log "CheckRoamingNumberInsideCalledPlmn: RoamingNumber_PLMN=$roamingNumber_mcc$roamingNumber_mnc is different from HPLMN=$called_mcc$called_mnc"
+		return 0
+	} else {
+		if { $roamingNumber_mnc != $called_mnc} {
+			log "CheckRoamingNumberInsideCalledPlmn: RoamingNumber_PLMN=$roamingNumber_mcc$roamingNumber_mnc isn't equal to HPLMN=$called_mcc$called_mnc"
+			return 0
+		}
+	}
+	
+	return 1 
+}
+
+#################### ---- ##########################################
+proc ComposePlmn { Lai } {
+
+	if { [string length $Lai] != 10 } {
+        logscr "ERROR: LAI length different from 10 ([string length $Lai])"
+        exit
+    }
+
+	set Mcc [GetMccFromFormat24008Lai $Lai]
+	set Mnc [GetMncFromFormat24008Lai $Lai]
+
+	append plmn [string index $Mcc 1]
+	append plmn [string index $Mcc 0]
+	if {[string length $Mnc] == 3} {
+		append plmn [string index $Mnc 2]
+	} else {
+		append plmn "f"
+	}
+	append plmn [string index $Mcc 2]
+	append plmn [string index $Mnc 1]
+	append plmn [string index $Mnc 0]
+	
+	return $plmn
+}
+
+#####################################################################
+proc PurePlmn { {type 0} } {
+
+	if { $type == 0 } {
+		global __MCC __MNC
+		set plmn $__MCC
+		append plmn $__MNC
+	} elseif { $type == 1 } {
+		global __mcc __mnc
+		set plmn $__mcc
+		append plmn $__mnc
+	} elseif { $type == 2 } {
+		global __bssap_plmn
+		set plmn [GetPlmnHumanFormat]
+	} else {
+		logscr "PurePlmn: ERROR --> plmn isn't defined"
+	}
+
+	return $plmn
+}
+
+#####################################################################
+proc GetPlmnHumanFormat { } {
+
+	global __bssap_plmn
+
+	append humanPlmn [string index $__bssap_plmn 1]
+	append humanPlmn [string index $__bssap_plmn 0]
+	append humanPlmn [string index $__bssap_plmn 3]
+	append humanPlmn [string index $__bssap_plmn 5]
+	append humanPlmn [string index $__bssap_plmn 4]
+
+	if {[string index $__bssap_plmn 2] != "f" } {
+		append humanPlmn [string index $__bssap_plmn 2]
+	}
+
+	log "GetPlmnHumanFormat: __bssap_plmn=$__bssap_plmn --> humanPlmn=$humanPlmn"; #cDEBUG
+	
+	return humanPlmn 
+}
+
+#################### ---- ##########################################
+proc GetPlmnFromHumanImsi { imsi } {
+
+	append humanPlmn [string range $imsi 0 4] 
+
+	return $humanPlmn
+}
+
+#################### ---- ##########################################
+proc GetMccFromFormat24008Lai { Lai } {
+
+	if { [string length $Lai] != 10 } {
+        logscr "ERROR: LAI length different from 10 ([string length $Lai])"
+        exit
+    }
+    set mcc [string index $Lai 1]
+    append mcc [string index $Lai 0]
+    append mcc [string index $Lai 3]
+
+    return $mcc
+}
+
+#################### ---- ##########################################
+proc GetMncFromFormat24008Lai { Lai } {
+
+	if { [string length $Lai] != 10 } {
+        logscr "ERROR: LAI length different from 10 ([string length $Lai])"
+        exit
+    }
+
+	set mnc [string index $Lai 5]
+	append mnc [string index $Lai 4]
+      
+    return $mnc
+}
+
+#################### ---- ##########################################
+proc ComparePlmnImsi { plmn MsDb } {
+
+	set idxList [DbGetIndexList $MsDb]
+	
+	set existIMSI [DbFieldExists $MsDb IMSI]
+
+	foreach msIdx $idxList {
+		if { $existIMSI } {
+			set imsi [DbGet $MsDb $msIdx IMSI]
+			set imsiPLMN [string index $imsi 0]
+			append imsiPLMN [string index $imsi 3]
+			append imsiPLMN [string index $imsi 2]
+			append imsiPLMN [string index $imsi 5]
+			append imsiPLMN [string index $imsi 4]
+			#log "ComparePlmnImsi: msIdx=$msIdx; imsi=$imsi; imsiPLMN=$imsiPLMN"; #cDEBUG
+
+			if { $imsiPLMN != $plmn } {
+				lappend listMs $msIdx
+				#log "ComparePlmnImsi: listMs=$listMs"; #cDEBUG
+			} else {
+				set listMs ""
+			}
+		} else {
+			log "ComparePlmnImsi: WARNING: the field IMSI desn't exist in the $MsDb";
+		}
+	}
+	if { $listMs != "" } {
+		# return the list of the mobiles with IMSI not belove to the HPLMN
+		return $listMs	
+	} else {
+		return -1
+	}
+}
+
+#################### ---- ##########################################
+
+# don't convert IMSI, because already in 24.00 format.
+proc MSDbFromHumanReadableTo24008NoImsi { commonDbName } {
+
+	set convIMSI 0
+	set existOwnNum [DbFieldExists $commonDbName OwnNum]
+	set existCalledMsNum [DbFieldExists $commonDbName CalledMsNum]
+	set existSMSCAddr [DbFieldExists $commonDbName SMSCAddr]
+	set existIMEI [DbFieldExists $commonDbName IMEI]
+	set existIMEISV [DbFieldExists $commonDbName IMEISV]
+
+	MSDbFromHumanTo24008Tuned $commonDbName $convIMSI $existOwnNum $existCalledMsNum $existSMSCAddr $existIMEI $existIMEISV
+}
+
+
+#################### ---- ##########################################
+
+proc ConvertMSDbFromHumanReadableTo24008 { commonDbName } {
+
+	set existIMSI [DbFieldExists $commonDbName IMSI]
+	set existOwnNum [DbFieldExists $commonDbName OwnNum]
+	set existCalledMsNum [DbFieldExists $commonDbName CalledMsNum]
+	set existSMSCAddr [DbFieldExists $commonDbName SMSCAddr]
+	set existIMEI [DbFieldExists $commonDbName IMEI]
+	set existIMEISV [DbFieldExists $commonDbName IMEISV]
+
+	MSDbFromHumanTo24008Tuned $commonDbName $existIMSI $existOwnNum $existCalledMsNum $existSMSCAddr $existIMEI $existIMEISV
+}
+
+
+####################################################################
+# Convert fields of DB from human format to 24.008 format.
+# Every field can be converted or not, depending on related parameter convXXX.
+proc MSDbFromHumanTo24008Tuned { dbName convIMSI convOwnNum convCalledMsNum convSMSCAddr convIMEI convIMEISV} {
+	
+    foreach msIdx [DbGetIndexList $dbName] {
+		if { $convIMSI } {
+			set pureIMSI [DbGet $dbName $msIdx IMSI]
+			set codedIMSI [Get24008FormatFromImsi $pureIMSI]
+			#logscr "Pure IMSI = $pureIMSI, 24.008 IMSI = $codedIMSI"
+			DbSet $dbName $msIdx IMSI $codedIMSI
+		}
+		if { $convOwnNum && ![IsVoid [DbGet $dbName $msIdx OwnNum]] && ([DbGet $dbName $msIdx OwnNum] != "")} {
+	        set pureNum [DbGet $dbName $msIdx OwnNum]
+			#log "ConvertMSDbFromHumanReadableTo24008: --OWNER-- msIdx=$msIdx --> ownNum_pureNum=$pureNum"; #cDEBUG
+
+			#Carlo WORKAROUND for IP ACCESS 14/10/2010 -start-
+			if {1} {
+				set codedNum [Get24008FormatFromNumber $pureNum]
+			} else {
+				if { [CheckInternationalTelephonePrefixes $pureNum] } {
+					# OwnNum has international format
+					set typeNumber 1
+					#log "pureNum=$pureNum --> ownNum_typeNumber=$typeNumber"; #cDEBUG
+				
+					set modifyNum [BaseTelephoneNumber $pureNum]
+					#log "--OWNER-- modifyNum=$modifyNum"; #cDEBUG
+					set codedNum [Get24008FormatFromNumber $modifyNum $typeNumber]
+				} else {
+					# OwnNum hasn't international format
+    	    		set codedNum [Get24008FormatFromNumber $pureNum]
+				}
+			}; #end if 1
+			# END WORKAROUND -end-
+
+        	#log "PureNum = $pureNum CodedNum = $codedNum"
+			#log "ConvertMSDbFromHumanReadableTo24008: ownNum_codedNum=$codedNum"; #cDEBUG
+
+        	DbSet $dbName $msIdx OwnNum $codedNum
+		}
+		if { $convCalledMsNum } {
+	        if { [DbFieldExists $dbName CalledMsNum] } {
+    	        set pureNum [DbGet $dbName $msIdx CalledMsNum]
+				#log "ConvertMSDbFromHumanReadableTo24008: --CALLED--  msIdx=$msIdx --> calledNum_pureNum=$pureNum"; #cDEBUG
+
+        	    if { ![IsVoid $pureNum] } {
+					set codedNum [EncodeMsNumber $pureNum]
+					#log "ConvertMSDbFromHumanReadableTo24008: calledNum_codedNum=$codedNum"; #cDEBUG
+
+                	DbSet $dbName $msIdx CalledMsNum $codedNum
+            	}
+			}
+        }
+		if { $convSMSCAddr } {
+	        if { [DbFieldExists $dbName SMSCAddr] } {
+    	        set pureNum [DbGet $dbName $msIdx SMSCAddr]
+				log "ConvertMSDbFromHumanReadableTo24008: SMSCAddr=$pureNum"; #sDEBUG
+
+        	    if { ![IsVoid $pureNum] } {
+				    log "ConvertMSDbFromHumanReadableTo24008: SMSCAddr read from CSV"; #sDEBUG
+					set codedNum [RpAddressNumber $pureNum]
+		    		log "ConvertMSDbFromHumanReadableTo24008: SMSCAddr_24008=$codedNum"; #sDEBUG
+
+                	DbSet $dbName $msIdx SMSCAddr $codedNum
+            	}
+			}
+        }
+		if { $convIMEI } {
+            set pureImei [DbGet $dbName $msIdx IMEI]
+			# BUG CELLNET
+			if {![IsVoid $pureImei]} {
+	            set codedImei [Get24008FormatFromImei $pureImei]
+			} else {
+				set codedImei $pureImei
+			}
+			# END
+            #logscr "Pure IMEI = $pureImei, 24008 IMEI = $codedImei"
+            DbSet $dbName $msIdx IMEI $codedImei
+        }
+		if { $convIMEISV } {
+            set pureImeisv [DbGet $dbName $msIdx IMEISV]
+            set codedImeisv [Get24008FormatFromImeisv $pureImeisv]
+            #logscr "Pure IMEISV = $pureImeisv, 24008 IMEISV = $codedImeisv"
+            DbSet $dbName $msIdx IMEISV $codedImeisv
+        }
+    }
+}
+
+####################################################################
+proc CalledNumberHndl { codedNum db msId} {
+
+	set num [string range $codedNum 2 end]
+	set interPrefix [string index [DbGet $db $msId OwnNum] 0]
+	
+	log "msId=$msId; db=$db; OwnNum=[DbGet $db $msId OwnNum]"
+	log "CalledNumberHndl: codedNum=$codedNum"
+	log "CalledNumberHndl: msId=$msId --> num=$num; interPrefix=$interPrefix"
+
+	if { ![string compare $interPrefix "+"] } {
+		log "OwnNum=[DbGet $db $msId OwnNum] -- > +or00 = $interPrefix"
+		if {[string range [DbGet $db $msId OwnNum] 3 end] == $codedNum} {
+			set decCalledNum +
+			break
+		}
+	} else {
+		set interSecondPrefix [string index [DbGet $db $msId OwnNum] 1]
+		log "OwnNum=[DbGet $db $msId OwnNum] -- > +or00 = $interPrefix$interSecondPrefix"
+		log "OwnNum_2-end=[string range [DbGet $db $msId OwnNum] 2 end]; codedNum=$codedNum"
+	
+		if { ![string compare [string range $codedNum 0 1] 81] } {
+			log "Received Called Number with prefix equal 81"
+			return $codedNum
+		}
+
+		if { ![string compare $interPrefix 8] && ![string compare $interSecondPrefix 1] } {
+			log "---->  own_2=[string range [DbGet $db $msId OwnNum] 2 end]; calledRxNum2=[string range $codedNum 2 end]"
+			log "wait to check if the own_2 is equal to calledRxNum2 --> if yes then OK"
+			if {[string range [DbGet $db $msId OwnNum] 2 end] == [string range $codedNum 2 end]} {
+				log "CalledNumberHndl: case of prefix equal to 81"
+				return $codedNum
+	  		} elseif { [string range [DbGet $db $msId OwnNum] 4 end] == [string range $codedNum 2 end] } {
+				# Carlo: PATCH durante miei test in Alcatel Velizy TestBed 07/08/2012
+				log "CalledNumberHndl: ALCATEL VELIZY TESTBED"
+				log "CalledNumberHndl: coded number returned $codedNum"
+				return $codedNum
+			} else {
+				log "CalledNumberHndl: 25/06/2012 Carlo: management for Iu_Tm"
+				#set len [DbSize $db]
+				set len [string length [DbGet $db $msId OwnNum]]
+				for {set j 2} {$j <= {expr [$len-2]}} {incr j 1} {
+					if { ![string compare [string range [DbGet $db $msId OwnNum] $j $j] "+"] } {
+						log "compare il '+' --> dalla cifra seguente effettuo decodifica"	
+											
+						set decoded_num [string range [DbGet $db $msId OwnNum] 2 $j-1]
+						append decoded_num [GetHumanNumberFrom24008 [string range [DbGet $db $msId OwnNum] $j+1 end]]
+
+						log "decoded_OwnNum=$decoded_num"
+						return $decoded_num
+					} else {
+						log "CalledNumberHndl: ////"
+					} 
+				}
+				# end
+			}
+
+		} elseif { ![string compare $interPrefix 0] && ![string compare $interSecondPrefix 0] } {
+			if {[string range [DbGet $db $msId OwnNum] 4 end] == $codedNum} {
+				log "CalledNumberHndl: case of prefix equal to 00"
+				set decCalledNum 00
+				break
+			} elseif { [string range [DbGet $db $msId OwnNum] 2 end] == [string range $codedNum 2 end]   } {
+				log "case 00"
+				
+			}
+		} elseif { ![string compare $interPrefix 9] && ![string compare $interSecondPrefix 1] } {
+			if {[string range [DbGet $db $msId OwnNum] 2 end] == [string range $codedNum 4 end]} {
+				log "CalledNumberHndl: case of prefix equal to 91"
+				if {![string compare [string index [DbGet $db $msId OwnNum] 2] 9]} {
+					# OwnNum in $db is in International 24008 Format after the '91'
+					set numCall 91
+					append numCall [string range $codedNum 4 end]
+					log "CalledNumberHndl: international format: numCall=$numCall"
+					return $numCall
+				} else {
+					# National Format after the '91'
+					set numCalled 91
+					append numCalled [string range [DbGet $db $msId OwnNum] 2 end] 
+					log "CalledNumberHndl: national format: numCalled=$numCalled"
+					return $numCalled
+				}
+			}
+		} elseif { ![string compare $interPrefix 8] && ![string compare $interSecondPrefix 0] } {
+			if {[string range [DbGet $db $msId OwnNum] 2 end] == [string range $codedNum 4 end]} {
+				log "CalledNumberHndl: case of prefix equal to 80"
+
+			} else {
+				log "CalledNumberHndl: else case of prefix equal to 80 .. TODO management"
+
+			}	
+		} else {
+			if {[string range [DbGet $db $msId OwnNum] 2 end] == $codedNum} {
+				log "CalledNumberHndl: the called number in $db is in national format"
+				break
+			}
+
+			#Carlo aggiunta del 25/06/2012
+			set decCalledNum ?
+		}
+	}
+	
+	# Carlo 25/06/2012
+	#append decCalledNum $num
+
+	if { ![IsVoid $decCalledNum] } {
+		append decCalledNum $num
+	} else {
+		set decCalledNum $num
+	}
+
+	log "CalledNumberHndl: codedNum=$codedNum --> num=$num --> decCalledNum=$decCalledNum"
+	return $decCalledNum
+}
+
+####################################################################
+proc DecodeCalledMsNumber { codedNum db {callingProcName ?} {msId ?} } {
+
+	if { ![IsVoid callingProcName] && $callingProcName == "OwnNumHdl" } {
+		if { ![IsVoid $msId] } {
+			set decodedCalledNum [CalledNumberHndl $codedNum $db $msId]
+		} else {
+			log "DecodeCalledMsNumber: ERROR: msId is void"
+			return ?
+		}
+	} else {
+		foreach msid [lsort -integer -increasing [DbGetIndexList $db]] {
+			log "DecodeCalledMsNumber: msid=$msid codedNum_Received=$codedNum"
+			set decodedCalledNum [CalledNumberHndl $codedNum $db $msid]
+			log "DecodeCalledMsNumber: decodedCalledNum_FoundInMsDb=$decodedCalledNum"
+
+			# Carlo patch 26/06/2012 ---start---
+			set inter2Prefix [string range $codedNum 0 1]	
+			if { ![string compare $inter2Prefix 91] } {
+				if { ![string compare [string range $codedNum 2 3] 93] } {
+					set decoded_codedNum [GetHumanNumberFrom24008 [string range $codedNum 2 end]]
+					log "DecodeCalledMsNumber: decoded_codedNum=$decoded_codedNum"
+					if { $decodedCalledNum == $decoded_codedNum } {
+						log "DecodeCalledMsNumber: FOUND!:  msid=$msid: codedNum=$decoded_codedNum <--> decodedCalledNum=$decodedCalledNum"
+						set decod_CalledNum +39
+						append decod_CalledNum $decodedCalledNum
+						return [list $decod_CalledNum $msid]
+					}
+				}
+			} elseif { ![string compare $inter2Prefix 80] } {
+				log "DecodeCalledMsNumber: Alcatel Velizy test Carlo"
+				set decoded_codedNum [string range $codedNum 2 end]
+				set decodedCalledNum [string range $decodedCalledNum 2 end]
+                log "//// DecodeCalledMsNumber: decoded_codedNum_Received=$decoded_codedNum \\\\"
+				log "waiting to check if decoded_codedNum_Received is = to decodedCalledNum_FoundInMsDb"
+					if { $decodedCalledNum == $decoded_codedNum } {
+						log " ---> DecodeCalledMsNumber: FOUND!:  msid=$msid: codedNum=$decoded_codedNum <--> decodedCalledNum=$decodedCalledNum"
+						log "DecodeCalledMsNumber: return list $decoded_codedNum $msid"
+						return [list $decoded_codedNum $msid]	
+					}
+			} elseif { ![string compare $inter2Prefix 81] } {
+				set decoded_codedNum [string range $codedNum 2 end]
+				set decodedCalledNum [string range $decodedCalledNum 2 end]
+                log "--DecodeCalledMsNumber: decoded_codedNum_Received=$decoded_codedNum--"
+					if { $decodedCalledNum == $decoded_codedNum } {
+						log " ===> DecodeCalledMsNumber: FOUND!:  msid=$msid: codedNum=$decoded_codedNum <--> decodedCalledNum=$decodedCalledNum"
+						log "return list $decoded_codedNum $msid"
+						return [list $decoded_codedNum $msid]	
+					}
+			} else {
+				log "DecodeCalledMsNumber  ......."
+			}
+			# ---end---
+		}
+	}
+	log "DecodeCalledMsNumber: no OwnNum found equal to $codedNum"
+	return ?
+}
+
+####################################################################
+
+proc FindCalledNum_OwnNum { codedNum db } {
+
+	foreach msid [lsort -integer -increasing [DbGetIndexList $db]] {
+    	log "FindCalledNum_OwnNum: msid=$msid"
+    	set decodedCalledNum [CalledNumberHndl $codedNum $db $msid]
+		log "FindCalledNum_OwnNum: decodedOwnNum=$decodedCalledNum"	
+
+		if { [string range $codedNum 0 0] == "+"  } {
+			if { ![string compare [string range $codedNum 1 2] 39] } {
+				set decoded_codedNum [string range $codedNum 3 end]
+				log "FindCalledNum_OwnNum: Decoded_CalledNum=$decoded_codedNum"
+				if { $decodedCalledNum == $decoded_codedNum } {
+					log "FindCalledNum_OwnNum: Found!:  msid=$msid: codedNum=$decoded_codedNum <--> decodedCalledNum=$decodedCalledNum"
+					set decod_CalledNum +39
+					append decod_CalledNum $decodedCalledNum
+					return [list $decod_CalledNum $msid]
+				}
+			}
+		} else {
+			log "FindCalledNum_OwnNum: Carlo 28/08/12 Alcatel Velizy Iu management"
+			log "FindCalledNum_OwnNum: FOUND CalledMsNumber in MsDb --> [lindex $decodedCalledNum 0] <--> msid=$msid"
+			return [list $decodedCalledNum $msid]
+		}
+	}
+}
+
+####################################################################
+proc EncodeMsNumber { pureNum } {
+
+	if { [CheckInternationalTelephonePrefixes $pureNum] } {
+		# international called number
+		set typeNumber 1
+		log "pureNum=$pureNum --> calledNum_typeNumber=$typeNumber"; #cDEBUG
+
+		set modifyNum [BaseIntlTelephoneNumber $pureNum]
+		log "--CALLED-- modifyNum=$modifyNum"; #cDEBUG
+    	set codedNum [Get24008FormatFromNumber $modifyNum $typeNumber]
+	} else {
+		# no international called number
+    	set codedNum [Get24008FormatFromNumber $pureNum]
+	}
+	return $codedNum
+}
+
+proc CalledPartyBcdNumber { pureNum } {
+# implements 3GPP 24.008 - 10.5.4.7 Called Party BCD Number
+#from 2nd octet onwards
+	if { [CheckInternationalTelephonePrefixes $pureNum] } {
+		# international called number
+		set typeNumber 1
+		#log "pureNum=$pureNum --> calledNum_typeNumber=$typeNumber"; #cDEBUG
+
+		set modifyNum [BaseIntlTelephoneNumber $pureNum]
+
+        set cpBcdNumLen [string length $modifyNum] 
+        if { [expr {$cpBcdNumLen %2}] } {
+            append modifyNum f
+        }
+		#log "--CALLED-- modifyNum=$modifyNum"; #cDEBUG
+    	set codedNum [Get24008FormatFromNumber $modifyNum $typeNumber]
+	} else {
+		# no international called number
+        set cpBcdNumLen [string length $pureNum] 
+        if { [expr {$cpBcdNumLen % 2}] } {
+            append pureNum f
+        }
+    	set codedNum [Get24008FormatFromNumber $pureNum]
+	}
+
+    set cpBcdNumLenHx [uctoh $cpBcdNumLen];
+	set cpbdcNum $cpBcdNumLenHx ; # length of Called Party BCD number contents
+	append cpbdcNum $codedNum
+
+	return $cpbdcNum
+}
+
+proc RpAddressNumber { pureNum } {
+# implements 3GPP 24.011 - 8.2.5.1/8.2.5.2 RP Originator/Destination Address
+#from 2nd octet onwards
+	if { [CheckInternationalTelephonePrefixes $pureNum] } {
+		# international called number
+		set typeNumber 1
+		#log "pureNum=$pureNum --> calledNum_typeNumber=$typeNumber"; #cDEBUG
+
+		set modifyNum [BaseIntlTelephoneNumber $pureNum]
+
+        set rpAddOctLen [string length $modifyNum] 
+        if { [expr {$rpAddOctLen %2}] } {
+            append modifyNum f
+        }
+		#log "--CALLED-- modifyNum=$modifyNum"; #cDEBUG
+    	set codedNum [Get24008FormatFromNumber $modifyNum $typeNumber]
+	} else {
+		# no international called number
+        set rpAddOctLen [string length $pureNum] 
+        if { [expr {$rpAddOctLen % 2}] } {
+            append pureNum f
+        }
+    	set codedNum [Get24008FormatFromNumber $pureNum]
+	}
+    set codedNumOctLen [string length $codedNum] 
+    set codedNumLen [expr {$codedNumOctLen / 2}]
+    set codedNumLenHx [uctoh $codedNumLen];
+	set rpAddNum $codedNumLenHx ; # length of RP-Destination Address contents 
+	append rpAddNum $codedNum
+
+	return $rpAddNum
+}
+
+proc DurationToGprsTimer24008 {duration} {
+        #Bits 5 to 1 represent the binary coded timer value.
+        #Bits 6 to 8 defines the timer value unit for the GPRS timer as follows:
+        #Bits
+        #8 7 6
+        #0 0 0  value is incremented in multiples of 2 seconds
+        #0 0 1  value is incremented in multiples of 1 minute
+        #0 1 0  value is incremented in multiples of decihours
+        #1 1 1  value indicates that the timer is deactivated.
+        #Other values shall be interpreted as multiples of 1 minute in this version of the protocol.
+        if { $duration == 0 } {
+                # deactivated
+                return ff
+        } elseif { $duration < 64000 } {
+                # multiples of 2 seconds
+                set retVal 000
+                set dur [expr {$duration/2000}]
+        } elseif { $duration < 1920000 } {
+                # multiples of 1 minute
+                set retVal 001
+                set dur [expr {$duration/60000}]
+        } elseif {$duration >= 600000 && $duration < 19200000} {
+                # multiples of decihours
+                set retVal 010
+                set dur [expr {$duration/360000}]
+        } else {
+                abort "Gprs Timer value (duration=$duration) not allowed (check D3314 in csv database)"
+        }
+        set hdur [uctoh $dur]
+        set bdur [hbits $hdur 3 7]
+        append retVal $bdur
+        set tVal [btoh $retVal]
+        return $tVal
+}
+
+proc GetGprsTimerValue { RawTimerVal } {
+
+    set Unit [hbits $RawTimerVal 0 2]
+    set TimerValue 0x[btoh 000[hbits $RawTimerVal 3 7]]
+    if {$Unit == 111} {
+        #timer disabled
+        return 0
+    } elseif {$Unit == 000} {
+        #value is incremented in multiples of 2 seconds
+        return [expr {$TimerValue * 2000}]
+    } elseif {$Unit == 001} {
+        #value is incremented in multiples of 1 minute
+        return [expr {$TimerValue * 60000}]
+    } elseif {$Unit == 010} {
+        #value is incremented in multiples of decihours
+        return [expr {$TimerValue * 360000}]
+    }
+}
+
+
+proc GetCellID8FromReadable {mcc mnc lac rac} {
+
+	# get digit2 and digit1 of mcc
+	append retVal [string index $mcc 1]
+	append retVal [string index $mcc 0]
+	# if the size of MNC is two append F otherwise digit3 of MNC
+	if {[string length $mnc] == 2} {
+		append retVal "f"
+		# get digit3 of mcc
+		append retVal [string index $mcc 2]
+	} else {
+		append retVal [string index $mnc 2]
+	}
+	# get digit2 and digit1 of mnc
+	append retVal [string index $mnc 1]
+	append retVal [string index $mnc 0]
+	append retVal $lac $rac
+	return $retVal
+}
+
+typedef { STRUCT
+			{ STRING delay_cl }
+			{ STRING reliab_cl }	
+			{ STRING prec_cl }
+			{ STRING peak_thrp }
+			{ STRING mean_thrp }
+			{ STRING del_err_sdu }
+			{ STRING deliv_ord }
+			{ STRING traffic_cl }
+			{ STRING max_size_sdu }
+			{ STRING max_br_up }
+			{ STRING max_br_dw }
+			{ STRING res_ber }
+			{ STRING sdu_err_rat }
+			{ STRING traffic_hp }
+			{ STRING transfer_del }
+			{ STRING guar_br_up }
+			{ STRING guar_br_dl }
+			{ STRING src_stat_descr }
+			{ STRING sign_ind }
+			{ STRING max_br_dw_ext }
+			{ STRING guar_br_dl_ext }
+			{ STRING max_br_up_ext }
+			{ STRING guar_br_up_ext }
+		PDP_QUOS}
+		
+		
+if {0} {		
+delay_cl
+reliab_cl	
+prec_cl
+peak_thrp
+mean_thrp
+del_err_sdu
+deliv_ord
+traffic_cl
+max_size_sdu
+max_br_up
+max_br_dw
+res_ber
+sdu_err_rat
+traffic_hp
+transfer_del
+guar_br_up
+guar_br_dl
+src_stat_descr
+sign_ind
+max_br_dw_ext
+guar_br_dl_ext
+max_br_up_ext
+guar_br_up_ext
+
+}
+
+proc GetQOSfromHumanReadable {db inst {quos ?}} {
+
+	global _is_umts _is_gsm
+
+	if { [info exists _is_umts] && ($_is_umts) } {
+		if { ![string eq $quos ?] } {
+		# the QUOS params are present in the command
+
+			set delay_cl [uctoh [rd quos delay_cl]]
+			set reliab_cl [uctoh [rd quos reliab_cl]]
+			set prec_cl [uctoh [rd quos prec_cl]]
+			set peak_thrp [uctoh [rd quos peak_thrp]]
+			set mean_thrp [uctoh [rd quos mean_thrp]]
+			set del_err_sdu [uctoh [rd quos del_err_sdu]]
+			set deliv_ord [uctoh [rd quos deliv_ord]]
+			set traffic_cl [uctoh [rd quos traffic_cl]]
+			set max_size_sdu [uctoh [rd quos max_size_sdu]]
+			set max_br_up [uctoh [rd quos max_br_up]]
+			set max_br_dw [uctoh [rd quos max_br_dw]]
+			set res_ber [uctoh [rd quos res_ber]]
+			set sdu_err_rat [uctoh [rd quos sdu_err_rat]]
+			set traffic_hp [uctoh [rd quos traffic_hp]]
+			set transfer_del [uctoh [rd quos transfer_del]]
+			set guar_br_up [uctoh [rd quos guar_br_up]]
+			set guar_br_dl [uctoh [rd quos guar_br_dl]]
+			set src_stat_descr [uctoh [rd quos src_stat_descr]]
+			set sign_ind [uctoh [rd quos sign_ind]]
+			set max_br_dw_ext [uctoh [rd quos max_br_dw_ext]]
+			set guar_br_dl_ext [uctoh [rd quos guar_br_dl_ext]]
+			set max_br_up_ext [uctoh [rd quos max_br_up_ext]]
+			set guar_br_up_ext [uctoh [rd quos guar_br_up_ext]]
+
+			log "delay_cl = $delay_cl"
+			log "reliab_cl = $reliab_cl	"
+			log "prec_cl = $prec_cl"
+			log "peak_thrp = $peak_thrp"
+			log "mean_thrp = $mean_thrp"
+			log "del_err_sdu = $del_err_sdu"
+			log "deliv_ord = $deliv_ord"
+			log "traffic_cl = $traffic_cl"
+			log "max_size_sdu = $max_size_sdu"
+			log "max_br_up = $max_br_up"
+			log "max_br_dw = $max_br_dw"
+			log "res_ber = $res_ber"
+			log "sdu_err_rat = $sdu_err_rat"
+			log "traffic_hp = $traffic_hp"
+			log "transfer_del = $transfer_del"
+			log "guar_br_up = $guar_br_up"
+			log "guar_br_dl = $guar_br_dl"
+			log "src_stat_descr = $src_stat_descr"
+			log "sign_ind = $sign_ind"
+			log "max_br_dw_ext = $max_br_dw_ext"
+			log "guar_br_dl_ext = $guar_br_dl_ext"
+			log "max_br_up_ext = $max_br_up_ext"
+			log "guar_br_up_ext = $guar_br_up_ext"
+
+			set delay_cl       [hbits $delay_cl     5 7]
+			set reliab_cl      [hbits $reliab_cl    5 7]
+			set peak_thrp      [hbits $peak_thrp    4 7]
+			set prec_cl        [hbits $prec_cl      5 7]
+			set mean_thrp      [hbits $mean_thrp    3 7]
+			set traffic_cl     [hbits $traffic_cl   5 7]
+			set deliv_ord      [hbits $deliv_ord    6 7]
+			set del_err_sdu    [hbits $del_err_sdu  5 7]
+			set max_size_sdu   [hbits $max_size_sdu 0 7]
+			set max_br_up      [hbits $max_br_up    0 7]
+			set max_br_dw      [hbits $max_br_dw    0 7]
+			set res_ber        [hbits $res_ber      4 7]
+			set sdu_err_rat    [hbits $sdu_err_rat  4 7]
+			set transfer_del   [hbits $transfer_del 2 7]
+			set traffic_hp     [hbits $traffic_hp   6 7]
+			set guar_br_up     [hbits $guar_br_up   0 7]
+			set guar_br_dl     [hbits $guar_br_dl   0 7]
+			set src_stat_descr [hbits $src_stat_descr   4 7]
+			set sign_ind       [hbits $sign_ind   7 7]
+			set max_br_dw_ext  [hbits $max_br_dw_ext   0 7]
+			set guar_br_dl_ext [hbits $guar_br_dl_ext   0 7]
+			set max_br_up_ext  [hbits $max_br_up_ext   0 7]
+			set guar_br_up_ext [hbits $guar_br_up_ext   0 7]
+		
+
+			#00 delay_cl(3) reliab_cl(3) peak_thrp(4) 0 prec_cl(3) 000 mean_thrp(5)
+			append retVal 00 $delay_cl $reliab_cl $peak_thrp 0 $prec_cl 000 $mean_thrp
+
+			#traffic_cl(3) deliv_ord(2) del_err_sdu(3) max_size_sdu(8) max_br_up(8) max_br_dw(8)
+			append retVal $traffic_cl $deliv_ord $del_err_sdu $max_size_sdu $max_br_up $max_br_dw
+
+			#res_ber(4) sdu_err_rat(4) transfer_del(6) traffic_hp(2) guar_br_up(8) guar_br_dl(8)
+			append retVal $res_ber $sdu_err_rat $transfer_del $traffic_hp $guar_br_up $guar_br_dl
+
+			#src_stat_descr(4) sign_ind(1) 000 max_br_dw_ext(8) guar_br_dl_ext(8) max_br_up_ext(8) guar_br_up_ext(8)
+			if {![info exists ::__QUOS_EXTENTIONS_DISABLED] || \
+					[IsVoid $::__QUOS_EXTENTIONS_DISABLED]} {
+				append retVal $src_stat_descr $sign_ind 000 $max_br_dw_ext $guar_br_dl_ext $max_br_up_ext $guar_br_up_ext
+			}
+
+			return [btoh $retVal]
+
+		} elseif {[DbFieldExists $db DELAY_CL]} {
+		#retrieve data from DB
+
+			log "GetQOSfromHumanReadable: data stored in $db for the instance $inst"
+			log "delay_cl=[DbGet $db $inst DELAY_CL]"
+			log "reliab_cl=[DbGet $db $inst RELIAB_CL]"
+			log "peak_thrp=[DbGet $db $inst PEAK_THRP]"
+			log "prec_cl=[DbGet $db $inst PREC_CL]"
+			log "mean_thrp=[DbGet $db $inst MEAN_THRP]"
+			log "traffic_cl=[DbGet $db $inst TRAFFIC_CL]"
+			log "deliv_ord=[DbGet $db $inst DELIV_ORD]"
+			log "deliv_err_sdu=[DbGet $db $inst DEL_ERR_SDU]"
+			log "max_size_sdu=[DbGet $db $inst MAX_SIZE_SDU]"
+			log "**********"
+			log "max_br_up=[DbGet $db $inst MAX_BR_UP]"
+			log "max_br_dw=[DbGet $db $inst MAX_BR_DW]"
+			log "**********"
+			log "res_ber=[DbGet $db $inst RES_BER]"
+			log "sdu_err_rat=[DbGet $db $inst SDU_ERR_RAT]"
+			log "transfer_del=[DbGet $db $inst TRANSFER_DEL]"
+			log "traffic_hp=[DbGet $db $inst TRAFFIC_HP]"
+			log "guar_br_up=[DbGet $db $inst GUAR_BR_UP]"
+			log "guar_br_dl=[DbGet $db $inst GUAR_BR_DL]"
+
+			set delay_cl       [hbits [DbGet $db $inst DELAY_CL]     5 7]
+			set reliab_cl      [hbits [DbGet $db $inst RELIAB_CL]    5 7]
+			set peak_thrp      [hbits [DbGet $db $inst PEAK_THRP]    4 7]
+			set prec_cl        [hbits [DbGet $db $inst PREC_CL]      5 7]
+			set mean_thrp      [hbits [DbGet $db $inst MEAN_THRP]    3 7]
+			set traffic_cl     [hbits [DbGet $db $inst TRAFFIC_CL]   5 7]
+			set deliv_ord      [hbits [DbGet $db $inst DELIV_ORD]    6 7]
+			set deliv_err_sdu  [hbits [DbGet $db $inst DEL_ERR_SDU]  5 7]
+			set max_size_sdu   [hbits [DbGet $db $inst MAX_SIZE_SDU] 0 7]
+			set max_br_up      [hbits [DbGet $db $inst MAX_BR_UP]    0 7]
+			set max_br_dw      [hbits [DbGet $db $inst MAX_BR_DW]    0 7]
+			set res_ber        [hbits [DbGet $db $inst RES_BER]      4 7]
+			set sdu_err_rat    [hbits [DbGet $db $inst SDU_ERR_RAT]  4 7]
+			set transfer_del   [hbits [DbGet $db $inst TRANSFER_DEL] 2 7]
+			set traffic_hp     [hbits [DbGet $db $inst TRAFFIC_HP]   6 7]
+			set guar_br_up     [hbits [DbGet $db $inst GUAR_BR_UP]   0 7]
+			set guar_br_dl     [hbits [DbGet $db $inst GUAR_BR_DL]   0 7]
+
+			log "GetQOSfromHumanReadable: max_br_up=$max_br_up; max_br_dw=$max_br_dw"
+
+			#00 delay_cl(3) reliab_cl(3) peak_thrp(4) 0 prec_cl(3) 000 mean_thrp(5)
+			append retVal 00 $delay_cl $reliab_cl $peak_thrp 0 $prec_cl 000 $mean_thrp
+
+			#traffic_cl(3) deliv_ord(2) deliv_err_sdu(3) max_size_sdu(8) max_br_up(8) max_br_dw(8)
+			append retVal $traffic_cl $deliv_ord $deliv_err_sdu $max_size_sdu $max_br_up $max_br_dw
+
+			#res_ber(4) sdu_err_rat(4) transfer_del(6) traffic_hp(2) guar_br_up(8) guar_br_dl(8)
+			append retVal $res_ber $sdu_err_rat $transfer_del $traffic_hp $guar_br_up $guar_br_dl
+
+			if {![info exists ::__QUOS_EXTENTIONS_DISABLED] || \
+					[IsVoid $::__QUOS_EXTENTIONS_DISABLED]} {
+				if {[DbFieldExists $db SRC_STAT_DESCR] && ![IsVoid [DbGet $db $inst SRC_STAT_DESCR]] } {
+					log "src_stat_descr=[DbGet $db $inst SRC_STAT_DESCR]"
+					log "sign_ind=[DbGet $db $inst SIGN_IND]"
+					set src_stat_descr [hbits [DbGet $db $inst SRC_STAT_DESCR]  4 7]
+					set sign_ind       [hbits [DbGet $db $inst SIGN_IND]   7 7]
+
+					#src_stat_descr(4) sign_ind(1) 000
+					append retVal $src_stat_descr $sign_ind 000
+
+					if {[DbFieldExists $db MAX_BR_DW_EXT] && ![IsVoid [DbGet $db $inst MAX_BR_DW_EXT]] } {
+						log "max_br_dw_ext=[DbGet $db $inst MAX_BR_DW_EXT]"
+						log "guar_br_dl_ext=[DbGet $db $inst GUARD_BR_DL_EXT]"
+						set max_br_dw_ext  [hbits [DbGet $db $inst MAX_BR_DW_EXT]  0 7]
+						set guar_br_dl_ext [hbits [DbGet $db $inst GUARD_BR_DL_EXT]  0 7]
+
+						#max_br_dw_ext(8) guar_br_dl_ext(8)
+						append retVal $max_br_dw_ext $guar_br_dl_ext
+
+						if {[DbFieldExists $db MAX_BR_UP_EXT] && ![IsVoid [DbGet $db $inst MAX_BR_UP_EXT]] } {
+							log "max_br_up_ext=[DbGet $db $inst MAX_BR_UP_EXT]"
+							log "guar_br_up_ext=[DbGet $db $inst GUARD_BR_UP_EXT]"
+							set max_br_up_ext  [hbits [DbGet $db $inst MAX_BR_UP_EXT]  0 7]
+							set guar_br_up_ext [hbits [DbGet $db $inst GUARD_BR_UP_EXT]  0 7]
+
+							#max_br_up_ext(8) guar_br_up_ext(8)
+							append retVal $max_br_up_ext $guar_br_up_ext
+						}
+					}
+				}
+			}
+
+			log "GetQOSfromHumanReadable: returned value dbQos=$retVal"
+
+			return [btoh $retVal]
+		} else {
+			#per l'UMTS occorre indagare su come va composta la QoS
+			#return 00001f0000000000000000
+			#return 00401f6000404000000000
+			return 0000000000000000000000
+		}
+	} elseif { [info exists _is_gsm] && ($_is_gsm) } {
+
+	    #retrieve data from DB
+    	if {[DbFieldExists $db DELAY_CL]} {
+	        set delay_cl       [hbits [DbGet $db $inst DELAY_CL]     5 7]
+    	    set reliab_cl      [hbits [DbGet $db $inst RELIAB_CL]    5 7]
+	        set peak_thrp      [hbits [DbGet $db $inst PEAK_THRP]    4 7]
+    	    set prec_cl        [hbits [DbGet $db $inst PREC_CL]      5 7]
+	        set mean_thrp      [hbits [DbGet $db $inst MEAN_THRP]    3 7]
+    	    set traffic_cl     [hbits [DbGet $db $inst TRAFFIC_CL]   5 7]
+	        set deliv_ord      [hbits [DbGet $db $inst DELIV_ORD]    6 7]
+    	    set deliv_err_sdu  [hbits [DbGet $db $inst DEL_ERR_SDU]  5 7]
+	        set max_size_sdu   [hbits [DbGet $db $inst MAX_SIZE_SDU] 0 7]
+    	    set max_br_up      [hbits [DbGet $db $inst MAX_BR_UP]    0 7]
+	        set max_br_dw      [hbits [DbGet $db $inst MAX_BR_DW]    0 7]
+    	    set res_ber        [hbits [DbGet $db $inst RES_BER]      4 7]
+	        set sdu_err_rat    [hbits [DbGet $db $inst SDU_ERR_RAT]  4 7]
+    	    set transfer_del   [hbits [DbGet $db $inst TRANSFER_DEL] 2 7]
+	        set traffic_hp     [hbits [DbGet $db $inst TRAFFIC_HP]   6 7]
+    	    set guar_br_up     [hbits [DbGet $db $inst GUAR_BR_UP]   0 7]
+	        set guar_br_dl     [hbits [DbGet $db $inst GUAR_BR_DL]   0 7]
+
+    	    append retVal 00 $delay_cl $reliab_cl $peak_thrp 0 $prec_cl 000 $mean_thrp
+	        append retVal $traffic_cl $deliv_ord $deliv_err_sdu $max_size_sdu $max_br_up $max_br_dw
+    	    append retVal $res_ber $sdu_err_rat $transfer_del $traffic_hp $guar_br_up $guar_br_dl
+
+        	return [btoh $retVal]
+	    } else {
+    	    #per l'UMTS occorre indagare su come va composta la QoS
+        	return 00001f0000000000000000
+	    }
+	}
+}
+
+proc GetQOS_List_fromHumanReadable {db inst item} {
+
+	#retrieve data from DB
+	if {[DbFieldExists $db DELAY_CL]} {
+		set delay_cl       [hbits [lindex [DbGet $db $inst DELAY_CL] $item]     5 7]
+		set reliab_cl      [hbits [lindex [DbGet $db $inst RELIAB_CL] $item]    5 7]
+		set peak_thrp      [hbits [lindex [DbGet $db $inst PEAK_THRP] $item]    4 7]
+		set prec_cl        [hbits [lindex [DbGet $db $inst PREC_CL] $item]      5 7]
+		set mean_thrp      [hbits [lindex [DbGet $db $inst MEAN_THRP] $item]    3 7]
+		set traffic_cl     [hbits [lindex [DbGet $db $inst TRAFFIC_CL] $item]   5 7]
+		set deliv_ord      [hbits [lindex [DbGet $db $inst DELIV_ORD] $item]    6 7]
+		set deliv_err_sdu  [hbits [lindex [DbGet $db $inst DEL_ERR_SDU] $item]  5 7]
+		set max_size_sdu   [hbits [lindex [DbGet $db $inst MAX_SIZE_SDU] $item] 0 7]
+		set max_br_up      [hbits [lindex [DbGet $db $inst MAX_BR_UP] $item]    0 7]
+		set max_br_dw      [hbits [lindex [DbGet $db $inst MAX_BR_DW] $item]    0 7]
+		set res_ber        [hbits [lindex [DbGet $db $inst RES_BER] $item]      4 7]
+		set sdu_err_rat    [hbits [lindex [DbGet $db $inst SDU_ERR_RAT] $item]  4 7]
+		set transfer_del   [hbits [lindex [DbGet $db $inst TRANSFER_DEL] $item] 0 5]
+		set traffic_hp     [hbits [lindex [DbGet $db $inst TRAFFIC_HP] $item]   6 7]
+		set guar_br_up     [hbits [lindex [DbGet $db $inst GUAR_BR_UP] $item]   0 7]
+		set guar_br_dl     [hbits [lindex [DbGet $db $inst GUAR_BR_DL] $item]   0 7]
+
+		append retVal 00 $delay_cl $reliab_cl $peak_thrp 0 $prec_cl 000 $mean_thrp
+		append retVal $traffic_cl $deliv_ord $deliv_err_sdu $max_size_sdu $max_br_up $max_br_dw
+		append retVal $res_ber $sdu_err_rat $transfer_del $traffic_hp $guar_br_up $guar_br_dl
+
+		return [btoh $retVal]
+	} else {
+		#per l'UMTS occorre indagare su come va composta la QoS
+		return 00001f0000000000000000
+	}
+}
+
+proc GetApnFromHumanReadable  {apnDb} {
+
+    #append apn 03 [atoh "web"] 07 [atoh "omnitel"] 02 [atoh "it"]
+    #set apnDb [DbGet $db $inst APN]
+
+	# see 23.003 9.1.1
+	while { [string length $apnDb] > 0} {
+		set idx1 [string first "." $apnDb]
+		if {$idx1 == -1} {
+			# APN with a single label
+            append apn [uctoh [string length $apnDb]] [atoh $apnDb]
+			return $apn
+       	}
+		set str1 [string range $apnDb 0 [expr {$idx1 - 1}]]
+		append apn [uctoh [string length $str1]] [atoh $str1]
+		set apnDb [string range $apnDb [expr {$idx1 + 1}] [string length $apnDb]]
+	}
+}
+
+proc GetHumanReadableFromApn  {apn} {
+
+	# see 23.003 9.1.1
+	if { [IsVoid $apn] } {
+		return $apn
+	}
+
+	set apnStr ""
+	set stringLengthByte [expr {[string length $apn] / 2}]
+	set endOfString [expr {$stringLengthByte - 1}]
+	set stopFlag 0
+
+	while {$stopFlag == 0} {
+		# Get length
+		set len [htouc [hocts $apn 0 0]]
+		
+		set endSelection $len
+		set str [htoa [hocts $apn 1 $endSelection]]
+		append apnStr $str
+
+		# Update apn
+		if { $endSelection == $endOfString } {
+			set stopFlag 1
+		} else {
+			append apnStr "."
+			set apn [hocts $apn [expr {$endSelection + 1}] $endOfString]
+			set endOfString [expr {$endOfString - $endSelection - 1}]
+		}
+	}
+
+	#log "DBG - apnStr $apnStr"
+	return $apnStr
+}
+
+##############################################################
+#
+# ex file "global.tcl"
+#
+# This section contains some procedures of previous "global.tcl".
+#
+##############################################################
+
+proc BuildImsiId { Imsi } {
+
+	set ImsiLength [string length $Imsi]
+	set ImsiIndex 1
+	set ImsiType 9
+	set ImsiId {}
+
+	while { $ImsiIndex < $ImsiLength } {
+		set RightNibble [string index $Imsi $ImsiIndex]
+		incr ImsiIndex
+		if { $ImsiIndex < $ImsiLength } {
+			set LeftNibble [string index $Imsi $ImsiIndex]
+			incr ImsiIndex
+		} else {
+			set LeftNibble f
+			set ImsiType 1
+		}
+		set ImsiId $ImsiId$LeftNibble$RightNibble
+	}
+
+	set ImsiId [string index $Imsi 0]$ImsiType$ImsiId
+
+	return $ImsiId
+}
+
+proc BuildRai { Mcc Mnc Lac Rac } {
+
+	set Mcc1 [string index $Mcc 0]
+	set Mcc2 [string index $Mcc 1]
+	set Mcc3 [string index $Mcc 2]
+	set Spare f
+	set Mnc1 [string index $Mnc 0]
+	set Mnc2 [string index $Mnc 1]
+	set LacStr [ustoh $Lac B ]
+	set RacStr [uctoh $Rac ]
+
+	set Rai $Mcc2$Mcc1$Spare$Mcc3$Mnc2$Mnc1$LacStr$RacStr
+
+	return $Rai
+}
+
+proc BreakRai { Rai } {
+
+	set Mcc [string index $Rai 1][string index $Rai 0][string index $Rai 3]
+	set Mnc [string index $Rai 5][string index $Rai 4]
+	set Lac [htous [hocts $Rai 3 4] B]
+	set Rac [htouc [hocts $Rai 5]]
+
+	return "$Mcc $Mnc $Lac $Rac"
+}
+
+proc BreakLai { Lai } {
+
+	set Mcc [string index $Lai 1][string index $Lai 0][string index $Lai 3]
+	set Mnc [string index $Lai 5][string index $Lai 4]
+	if {[string index $Lai 2] != f} {
+		append Mnc [string index $Lai 2]
+	}
+	set Lac [htous [hocts $Lai 3 4] B]
+
+	return "$Mcc $Mnc $Lac"
+}
+
+# Mcc and Mnc are HEXSTR
+# Lac is USHORT
+proc ComposeLai {Mcc Mnc Lac} {
+	append Lai [string index $Mcc 1]
+	append Lai [string index $Mcc 0]
+	if {[string length $Mnc] == 3} {
+		append Lai [string index $Mnc 2]
+	} else {
+		append Lai "f"
+	}
+	append Lai [string index $Mcc 2]
+	append Lai [string index $Mnc 1]
+	append Lai [string index $Mnc 0]
+	append Lai [ustoh $Lac B]
+	return $Lai
+}
+
+proc DeriveTlli { PTmsi Type } {
+
+	if { $PTmsi == "ffffffff" } {
+		set TlliInt [ expr 0x78000000 + int( 0x7ffffff * rand() ) ]
+	} else {
+		set PTmsiInt [htoui $PTmsi B ]
+		set PTmsiInt [ expr $PTmsiInt & 0x3fffffff ]
+		if { $Type == "local" } {
+			set TlliInt [ expr $PTmsiInt + 0xc0000000 ]
+		} else {
+			set TlliInt [ expr $PTmsiInt + 0x80000000 ]
+		}
+	}
+
+	set TlliHex 0x[ itoh $TlliInt B ]
+
+	return $TlliHex
+}
+
+proc BuildQos { ReliCl DelayCl PrecCl PeakTp MeanTp } {
+
+	set Qos1 [uctoh [expr ($DelayCl * 8) + $ReliCl]]
+	set Qos2 [uctoh [expr ($PeakTp * 16) + $PrecCl]]
+	set Qos3 [uctoh $MeanTp]
+
+	return $Qos1$Qos2$Qos3
+}
+
+proc HexAddr { Addr } {
+
+	set AddrList [tok $Addr "."]
+	set AddrHex [uctoh [lindex $AddrList 0]][uctoh [lindex $AddrList 1]][uctoh [lindex $AddrList 2]][uctoh [lindex $AddrList 3]]
+		
+	return $AddrHex
+}
+
+proc BuildPdpAddr { PdpAddr } {
+
+	set PdpAddrIe 0121
+
+	if { $PdpAddr != "dynamic" } {
+		set PdpAddrIe $PdpAddrIe[HexAddr $PdpAddr]
+	}
+		
+	return $PdpAddrIe 
+}
+
+proc BuildApn { Apn } {
+
+	set ApnLengthHex [uctoh [string length $Apn]]
+
+	set ApnIe $ApnLengthHex[atoh $Apn]
+
+	return $ApnIe 
+}
+
+proc BreakQos { Qos } {
+
+	set ReliCl  [expr  0x[hocts $Qos 1] & 0x07]
+	set DelayCl [expr (0x[hocts $Qos 1] & 0x38) /  8]
+	set PrecCl  [expr  0x[hocts $Qos 2] & 0x07]
+	set PeakTp  [expr (0x[hocts $Qos 2] & 0xf0) / 16]
+	set MeanTp  [expr  0x[hocts $Qos 3] & 0x1f]
+
+	return "$ReliCl $DelayCl $PrecCl $PeakTp $MeanTp"
+}
+
+proc FormatPdpAddr { PdpAddrIe } {
+
+	return "[htouc [hocts $PdpAddrIe 3]].[htouc [hocts $PdpAddrIe 4]].[htouc [hocts $PdpAddrIe 5]].[htouc [hocts $PdpAddrIe 6]]"
+}
+
+#proc BuildMsRadAccCap { AccTecType RfPwrCap A5bits MsClass ExtDynCap EmsClass EextDynCap Psk8PwrCap RevLvl } {
+#
+#	set AccTecTypBin [hbits [ctoh $AccTecType] 4 7]
+#	set RfPwrCapBin [hbits [ctoh $RfPwrCap] 5 7]
+#	if { $A5bits == 0 } {
+#		set A5bitsBin 0
+#	} else {
+#		set A5bitsBin 1[hbits [ctoh $A5bits] 1 7]
+#	}
+#	if { $MsClass == 0 } {
+#		set GprsMultislotClassBin 0
+#	} else {
+#		set GprsMultislotClassBin 1[hbits [ctoh $MsClass] 3 7][hbits [ctoh $ExtDynCap] 7]
+#	}
+#	if { $RevLvl == 0 } {
+#		set MultislotCapBin 10${GprsMultislotClassBin}0
+#		set ContentsBin ${RfPwrCapBin}${A5bitsBin}0000${MultislotCapBin}
+#	} else {
+#		if { $EmsClass == 0 } {
+#			set EgprsMultislotClassBin 0
+#		} else {
+#			set EgprsMultislotClassBin 1[hbits [ctoh $EmsClass] 3 7][hbits [ctoh $EextDynCap] 7]
+#		}
+#		set MultislotCapBin 10${GprsMultislotClassBin}00${EgprsMultislotClassBin}0
+#		if { $Psk8PwrCap == 0 } {
+#			set Psk8PwrCapBin 0
+#		} else {
+#			set Psk8PwrCapBin 1[hbits [ctoh $Psk8PwrCap] 5 7]
+#		}
+#		set ContentsBin ${RfPwrCapBin}${A5bitsBin}0000${MultislotCapBin}${Psk8PwrCapBin}01000
+#	}
+#	set LengthBin [hbits [ctoh [string length $ContentsBin]] 1 7]
+#
+#	set MsRadAccCapBin ${AccTecTypBin}${LengthBin}${ContentsBin}0
+#	set MsRadAccCapHex [btoh $MsRadAccCapBin]
+#
+#	return $MsRadAccCapHex
+#}
+
+proc BuildMsRadAccCap { AccTecType RfPwrCap A5bits MsClass ExtDynCap EmsClass EextDynCap Psk8PwrCap RevLvl GerFeatPkg AddRaCap {MsCapRedDc ?} {RlEgprs ?} {UpEgprs2 ?} {DwnEgprs2 ?}} {
+
+	global glMsId _is_um
+
+	# 24.008 10.5.5.12a High MultiSlot Cap
+	# couples codedMsClass-highMsCap
+	#						30		31		32 		33		34
+	set HighMsList [list {8 00} {10 11} {11 00} {12 00} {9 11}  \
+						 {8 01} {10 01} {11 11} {12 01} {10 00} \
+						 {8 10} {10 10} {11 10} {12 11} {12 10} \
+						 {11 01} ]
+
+    set AccTecTypBin [hbits [ctoh $AccTecType] 4 7]
+    set RfPwrCapBin [hbits [ctoh $RfPwrCap] 5 7]
+
+	# TODO if all other test managers have a5bits ordered
+	# the same way as um tm remove this 'if'
+	if { [info exists _is_um] && $_is_um } {
+		if { $A5bits == 0x80 } {
+			set A5bitsBin 0
+		} else {
+			if { [expr {$A5bits & 0x80}] == 0x80 } {
+				set a5bits_1Bin 0
+			} else {
+				set a5bits_1Bin 1
+			}
+			set a5bits_2Bin [expr {[expr {$A5bits & 0x02}] >> 1}]
+			set a5bits_3Bin [expr {[expr {$A5bits & 0x04}] >> 2}]
+
+			set a5bits_4Bin [expr {[expr {$A5bits & 0x08}] >> 3}]
+			set a5bits_5Bin [expr {[expr {$A5bits & 0x10}] >> 4}]
+			set a5bits_6Bin [expr {[expr {$A5bits & 0x20}] >> 5}]
+			set a5bits_7Bin [expr {[expr {$A5bits & 0x40}] >> 6}]
+
+			set A5bitsBin 1${a5bits_1Bin}${a5bits_2Bin}${a5bits_3Bin}${a5bits_4Bin}${a5bits_5Bin}${a5bits_6Bin}${a5bits_7Bin}
+		}
+	} else {
+		if { $A5bits == 0 } {
+			set A5bitsBin 0
+		} else {
+			set A5bitsBin 1[hbits [ctoh $A5bits] 1 7]
+		}
+	}
+
+	# detect High MS cap 
+	set HighMCap ?
+	if {$MsClass > 29} {
+		set listIdx [expr {$MsClass - 30}]
+		log "MsClass listIdx = $listIdx"
+		set HighMCap [lindex [lindex $HighMsList $listIdx] 1] 
+		set MsClass [lindex [lindex $HighMsList $listIdx] 0]
+	}
+	if { $RevLvl != 0 && $EmsClass > 29} {
+		set listIdx [expr {$EmsClass - 30}]
+		log "EmsClass listIdx = $listIdx"
+		set HighMCap [lindex [lindex $HighMsList $listIdx] 1]
+		set EmsClass [lindex [lindex $HighMsList $listIdx] 0]
+	}
+
+    if { $MsClass == 0 } {
+        set GprsMultislotClassBin 0
+    } else {
+        set GprsMultislotClassBin 1[hbits [ctoh $MsClass] 3 7][hbits [ctoh $ExtDynCap] 7]
+    }
+	# Revision Level (Prisma Internal EDGE parameter; see edgSrv.h)
+    if { $RevLvl == 0 } {
+        set MultislotCapBin 10${GprsMultislotClassBin}0
+        set ContentsBin ${RfPwrCapBin}${A5bitsBin}0000${MultislotCapBin}
+    } else {
+        if { $EmsClass == 0 } {
+            set EgprsMultislotClassBin 0
+        } else {
+            set EgprsMultislotClassBin 1[hbits [ctoh $EmsClass] 3 7][hbits [ctoh $EextDynCap] 7]
+        }
+        set MultislotCapBin 10${GprsMultislotClassBin}00${EgprsMultislotClassBin}0
+
+		# ADDREL99
+        if { $Psk8PwrCap == -1 } {
+            set Psk8PwrCapBin 0
+        } else {
+            set Psk8PwrCapBin 1[hbits [ctoh $Psk8PwrCap] 6 7]
+        }
+        set AddRel99 ${Psk8PwrCapBin}01000
+
+		# ADDREL4
+        if { $RevLvl == 1 } {
+			set AddRel4 ""
+        } else {
+           	set AddRel4 0${GerFeatPkg}00
+        }
+
+		if { [IsVoid $MsCapRedDc] && [IsVoid $RlEgprs] && [IsVoid $HighMCap]} {
+			set AddRel5 ""
+			set AddRel6 ""
+			set AddRel7 ""
+		} else {
+			# ADDREL5
+			if {![IsVoid $HighMCap]} {
+				set AddRel5 1${HighMCap}00000
+			} else {
+				set AddRel5 000000
+			}
+
+			# ADDREL6
+			set AddRel6 0001100
+
+			# ADDREL7
+			if { ![IsVoid $MsCapRedDc] || ![IsVoid $RlEgprs]} {
+				if {![IsVoid $MsCapRedDc] && $MsCapRedDc != -1} {
+					set MsCapRedDc [hbits [ctoh $MsCapRedDc] 5 7]
+					log "MsCapRedDc = $MsCapRedDc"
+					set AddRel7 01${MsCapRedDc}0000
+				} else {
+					# missing ie
+					set AddRel7 00000
+				}	
+				if {![IsVoid $RlEgprs] && $RlEgprs != 0} {
+					set RlEgprs [hbits [ctoh $RlEgprs] 7]
+					log "RlEgprs = $RlEgprs"
+					append AddRel7 $RlEgprs
+				} else {
+					# missing ie
+					append AddRel7 0
+				}
+				if {![IsVoid $UpEgprs2] && $UpEgprs2 != 0} {
+					set UpEgprs2 [hbits [ctoh $UpEgprs2] 6 7]
+					log "UpEgprs2 = $UpEgprs2"
+					append AddRel7 $UpEgprs2
+				} else {
+					# missing ie
+					append AddRel7 00
+				}
+				if {![IsVoid $DwnEgprs2] && $DwnEgprs2 != 0} {
+					set DwnEgprs2 [hbits [ctoh $DwnEgprs2] 6 7]
+					log "DwnEgprs2 = $DwnEgprs2"
+					append AddRel7 $DwnEgprs2
+				} else {
+					# missing ie
+					append AddRel7 00
+				}
+				log "AddRel7 = $AddRel7"
+			} else {
+				set AddRel7 ""
+			}
+		}
+
+		set ContentsBin ${RfPwrCapBin}${A5bitsBin}0000${MultislotCapBin}${AddRel99}${AddRel4}${AddRel5}${AddRel6}${AddRel7}
+		log "ContentsBin = $ContentsBin"
+    }
+
+	if {![IsVoid $AddRaCap]} {
+		set AddRaCap [GetInfoList $AddRaCap]
+		set Data ""
+		foreach item $AddRaCap {
+            set values [split $item ']
+            set AccTecType   [hbits [uctoh [lindex $values 0]] 4 7]
+            set GmskPwr     [hbits [uctoh [lindex $values 1]] 5 7]
+            set PskPwr      [hbits [uctoh [lindex $values 2]] 6 7]
+            log "msid = $glMsId AccTecType = $AccTecType GmskPwr = $GmskPwr PskPwr = $PskPwr"
+			# 10 bits for each list
+            append Data 1${AccTecType}${GmskPwr}${PskPwr}
+			log "Data = $Data"
+        }
+
+		set lenData [llength $AddRaCap]
+		set lenData [expr {$lenData*10 +1}]	
+		set lenData [hbits [uctoh $lenData] 1 7] 
+		set DataHead 11111${lenData}
+		set Data ${DataHead}${Data}
+		append Data 00
+    } else {
+        set Data "0"
+    }
+	
+    set LengthBin [hbits [ctoh [string length $ContentsBin]] 1 7]
+    set MsRadAccCapBin ${AccTecTypBin}${LengthBin}${ContentsBin}${Data}
+	log "MsRadAccCapBin = $MsRadAccCapBin"
+    set MsRadAccCapHex [btoh $MsRadAccCapBin]
+	log "MsRadAccCapHex = $MsRadAccCapHex"
+
+    return $MsRadAccCapHex
+}
+
+
+proc GetInfoList { blkts } {
+
+    set ts_list [split $blkts -]
+    foreach item $ts_list {
+        lappend blk_list $item
+    }
+
+    if {[info exist blk_list]} {
+            return $blk_list
+    } else {
+            return ""
+    }
+}
+
+
+proc BuildMsClmrk1 { db msid } {
+
+	# Get Parameters from MS csv database
+	set 3gpp_rel [DbGet $db $msid 3GPP_Rel] 
+	set es_ind [DbGet $db $msid EarlyClmkSend]
+	set a5_bits [DbGet $db $msid A5bits]
+	set rf_pwr_cap [DbGet $db $msid RfPwrCap]
+
+	set spare 0
+
+	# 3GPP Release (Revision Level Indicator)
+	switch -exact -- $3gpp_rel {
+        "Rel96"     -
+        "Rel97"     -
+        "Rel98"     { set revLvlIndBin 01 }
+        "Rel99"     -
+        "Rel4"      -
+        "Rel5"      -
+        "Rel6"      -
+        "Rel7"      -
+        "Rel8"      -
+        "Rel9"      { set revLvlIndBin 10 }
+		default {
+			logscr "BuildMsClmrk1: Error: bad value for 3GPP Release (RevLvl=$3gpp_rel)"
+			exit
+		}
+	}
+	# Controlled Early Classmarl Sending (ES_IND)
+	if { $es_ind != 0 && $es_ind != 1 } {
+		logscr "Error: EarlyClmkSend parameter is $es_ind; possible values are 0/1"
+		exit
+	}
+	set earlyClmkSendBin $es_ind; # possible values are 0/1
+	# A5/1 bits
+	if { [expr {$a5_bits & 0x80}] == 0x80 } {
+		set a5bits_1Bin 1; # A5/1 not available
+	} else {
+		set a5bits_1Bin 0
+	}
+	# Rf Power Capability
+    set rfPwrCapBin [hbits [ctoh $rf_pwr_cap] 5 7]
+
+	set msClmrk1Bin ${spare}${revLvlIndBin}${earlyClmkSendBin}${a5bits_1Bin}${rfPwrCapBin}
+	log "msClmrk1Bin = $msClmrk1Bin"
+    set msClmrk1Hex [btoh $msClmrk1Bin]
+	log "msClmrk1Hex = $msClmrk1Hex"
+
+    return $msClmrk1Hex
+}
+
+proc BuildMsClmrk2 { db msid } {
+
+	# Get Parameters from MS csv database
+	set 3gpp_rel [DbGet $db $msid 3GPP_Rel] 
+	set es_ind [DbGet $db $msid EarlyClmkSend]
+	set a5_bits [DbGet $db $msid A5bits]
+	set rf_pwr_cap [DbGet $db $msid RfPwrCap]
+	set sm_cap [DbGet $db $msid SmCapCs]
+
+	set spare 0
+
+	# 3GPP Release (Revision Level Indicator)
+	switch -exact -- $3gpp_rel {
+        "Rel96"     -
+        "Rel97"     -
+        "Rel98"     { set revLvlIndBin 01 }
+        "Rel99"     -
+        "Rel4"      -
+        "Rel5"      -
+        "Rel6"      -
+        "Rel7"      -
+        "Rel8"      -
+        "Rel9"      { set revLvlIndBin 10 }
+		default {
+			logscr "BuildMsClmrk1: Error: bad value for 3GPP Release (RevLvl=$3gpp_rel)"
+			exit
+		}
+	}
+	# Controlled Early Classmarl Sending (ES_IND)
+	if { $es_ind != 0 && $es_ind != 1 } {
+		logscr "Error: EarlyClmkSend = $es_ind; possible values are 0/1"
+		exit
+	}
+	set earlyClmkSendBin $es_ind; # possible values are 0/1
+	# A5/1 bits
+	if { [expr {$a5_bits & 0x80}] == 0x80 } {
+		set a5bits_1Bin 1; # A5/1 not available
+	} else {
+		set a5bits_1Bin 0
+	}
+	# Rf Power Capability
+    set rfPwrCapBin [hbits [ctoh $rf_pwr_cap] 5 7]
+
+	set psCap 0
+	if { [DbFieldExists $db PseudoSync] } {
+		set psCap [DbGet $db $msid PseudoSync]
+	} 
+	if { $psCap } {
+		set psCapBin 1
+	} else {
+		set psCapBin 0
+	}
+
+	# SS Screening Indicator
+	set ssScreenIndBin 01; # see 24.080 par. 3.7.1
+
+	# SM Capabilty
+	if { $sm_cap != 0 && $sm_cap != 1 } {
+		logscr "Error: SM Capability = $sm_cap; possible values are 0/1"
+		exit
+	}
+    set smCapBin $sm_cap
+	# VBS Capability
+	set vbsCapBin 0; # Warning: hardcoded value
+	# VGCS Capability; (we check "GroupIdList" field)
+	set vgcsCapBin 0
+	if { [DbFieldExists $db GroupIdList] } {
+		if { ![IsVoid [DbGet $db $msid GroupIdList]] } {
+			set vgcsCapBin 1
+		}
+	}
+	# FC Capability
+	set fcCapBin 0; # Warning: hardcoded value
+
+	# CM3
+	set cm3Bin 1; # Warning: hardcoded value
+	# LcsVa Capability
+	set lcsVaCapBin 0; # Warning: hardcoded value
+	# UCS2
+	set ucs2Bin 0; # Warning: hardcoded value
+	# SoLSA
+	set solsaBin 0; # Warning: hardcoded value
+	# CMSP
+	set cmspBin 0; # Warning: hardcoded value
+	# A5/3
+	set a5bits_3Bin [expr {[expr {$a5_bits & 0x04}] >> 2}]
+	# A5/2 
+	set a5bits_2Bin [expr {[expr {$a5_bits & 0x02}] >> 1}]
+
+	###----------------------------------------###
+	# 1^ octet (same as ClassMark1)
+	set msClmrk2Bin ${spare}${revLvlIndBin}${earlyClmkSendBin}
+	append msClmrk2Bin ${a5bits_1Bin}${rfPwrCapBin}
+	# 2^ octet
+	append msClmrk2Bin ${spare}${psCapBin}${ssScreenIndBin}
+	append msClmrk2Bin ${smCapBin}${vbsCapBin}${vgcsCapBin}${fcCapBin}
+	# 3^ octet
+	append msClmrk2Bin ${cm3Bin}${spare}${lcsVaCapBin}${ucs2Bin}
+	append msClmrk2Bin ${solsaBin}${cmspBin}${a5bits_3Bin}${a5bits_2Bin}
+	###----------------------------------------###
+
+	log "msClmrk2Bin = $msClmrk2Bin"
+    set msClmrk2Hex [btoh $msClmrk2Bin]
+	log "msClmrk2Hex = $msClmrk2Hex"
+
+    return $msClmrk2Hex
+}
+
+proc BuildMsClmrk3 { db msid } {
+
+	set 3gppRel [DbGet $db $msid 3GPP_Rel]
+
+	# Get Parameters from MS csv database
+	set multiband [DbGet $db $msid MultiBand] 
+	set a5_bits [DbGet $db $msid A5bits]
+	set gerFeatPkg [DbGet $db $msid GerFeatPkg]
+	# TODO set extDynCap [DbGet $db $msid ExtDynCap]
+	set psk8PwrCap [DbGet $db $msid Psk8PwrCap]
+	# TODO set gprsMultislotClass [DbGet $db $msid GPRSMsClass]
+	if { [DbFieldExists $db UmtsRat] } {
+		set umts_tech [DbGet $db $msid UmtsRat]
+	} else {
+		set umts_tech "?"
+	}
+
+	set spare 0
+
+	# MultiBand Supported (possible values are: ?,900,1800,900-1800)
+	switch -exact -- $multiband {
+		"900E"	{
+			set bandBin 010
+			# Warning: hardcoded "Associated Radio Capability 1/2"
+			set assocRaCap12 00000001 
+		}
+		"1800"	{ 
+			set bandBin 100
+			# Warning: hardcoded "Associated Radio Capability 1"
+			set assocRaCap12 00000001 
+		}
+		"900E-1800"	{ 
+			set bandBin 110
+			# Warning: hardcoded "Associated Radio Capability 1/2"
+			set assocRaCap12 00010001 
+		}
+		default {
+			set bandBin 000
+			set assocRaCap12 ""
+		}
+	}
+
+	# A5/7-4 
+    set A5bits_74Bin [hbits [ctoh $a5_bits] 1 4]
+	# R Support
+	set rSuppBin 0; # Warning: hardcoded value
+	# HSCSD Multi Slot Capability
+	set hscsdMultiSlotBin 0; # Warning: hardcoded value
+	# UCS2 (see ClassMark2 also)
+	set ucs2Bin 0; # Warning: hardcoded value
+	# Extended Measurement Capability
+	set extMeasCapBin 0; # Warning: hardcoded value
+	# MS Measurement Capability
+	set msMeasCapBin 1; # Warning: hardcoded value
+	if { $msMeasCapBin == 1 } {
+		# SMS_Value
+		append msMeasCapBin 0001; # Warning: hardcoded value
+		# SM_Value
+		append msMeasCapBin 0001; # Warning: hardcoded value
+	}
+	# MS Positioning Method Capability
+	set msPosMethCapBin 0; # Warning: hardcoded value
+	# ECSD MultiSlot Capability
+	set ecsdCapBin 0; # Warning: hardcoded value
+	# 8-PSK Struct
+	#set psk8Bin $psk8PwrCap
+	if { [IsVoid $psk8PwrCap] } {
+		append psk8Bin 0; # Warning: bit presence
+	} else {
+		# Modulation Capability
+		append psk8Bin 1; # Warning: bit presence
+		append psk8Bin 1; # Warning: 8-PSK supported for uplink transmission and downlink reception
+		if { $psk8PwrCap == 1 } {
+			set pwrClass 01; # Warning: hardcoded value (PowerClass E1)
+		} elseif { $psk8PwrCap == 2 } {
+			set pwrClass 10; # Warning: hardcoded value (PowerClass E2)
+		} elseif { $psk8PwrCap == 3 } {
+			set pwrClass 11; # Warning: hardcoded value (PowerClass E3)
+		} else {
+			logscr "WARNING (BuildMsClmrk3): Invalid PSk8 Power Capability (psk8PwrCap=$psk8PwrCap)"
+		}
+		# 8-PSK RF Power Capabilities 1/2
+		append psk8Bin 1${pwrClass}; # 8-PSK RF Power Capabilities 1
+		append psk8Bin 1${pwrClass}; # 8-PSK RF Power Capabilities 2
+	}
+	# GSM 400 Band Supported
+	set gsm400Bin 0
+	# GSM 850 Band Supported
+	set gsm850Bin 0
+	# GSM 1900 Band Supported
+	set gsm1900Bin 0
+
+	# UMTS Radio Access Technology Supported (possible values are: ?,FDD,TDD,FDD-TDD)
+	switch -exact -- $umts_tech {
+		"FDD"	{ 
+			set umtsTechBin 10
+		}
+		"TDD"	{ 
+			set umtsTechBin 01
+		}
+		"FDD-TDD"	{ 
+			set umtsTechBin 11
+		}
+		default {
+			set umtsTechBin 00
+		}
+	}
+	# CDMA 2000 Radio Access Technology Supported
+	set cdma2000TechBin 0; # Warning: hardcoded value
+
+	# DTM GPRS Multi Slot Class
+	set dtm_multislot 0; # Warning: hardcoded value
+
+#--- Release 4 starts here
+	# Single Band Supported
+	set single_band 0; # Warning: hardcoded value
+	# GSM 750 Associated Radio Cap
+	set gsm750RadioCap 0; # Warning: hardcoded value
+	# UMTS 1.28 Mcps TDD Radio Access Tech Cap
+	set umts128TddRadioCap 0; # Warning: hardcoded value
+	# Geran Feature pkg (already available)
+	# Extended DTM GPRS Multi Slot Class
+	set ext_dtm_multislot 0; # Warning: hardcoded value
+
+#--- Release 5 starts here
+	# High Multislot Capability
+	set highMultislotCap 0; # Warning: hardcoded value
+
+	# GERAN Iu Mode
+	set geran_iu_mode 0; # Warning: hardcoded value
+	# Geran Feature pkg 2
+	set gerFeatPkg2 0; # Warning: hardcoded value
+	# GMSK Multislot Power Profile
+	set gmskMultislotCap 00; # Warning: hardcoded value
+	# 8-PSK Multislot Power Profile
+	set psk8MultislotCap 00; # Warning: hardcoded value
+
+#--- Release 6 starts here
+	# T-GSM 400 Bands Supported
+	set tgsm400Supp 0; # Warning: hardcoded value
+	# T-GSM 900 Bands Supported
+	set tgsm900Supp 0; # Warning: hardcoded value
+	# DARP (=Downlink Advanced Receiver Performance)
+	set darpPhaseBin 00; # default: DARP not supported
+	if { [DbFieldExists $db DarpPhase] } {
+		set darpPhase [DbGet $db $msid DarpPhase]
+		if { $darpPhase == 1 } {
+			set darpPhaseBin 01; # DARP Phase 1 supported
+		} elseif { $darpPhase == 2 } {
+			set darpPhaseBin 10; # DARP Phase 2 supported
+		}
+	}
+	# DTM Enhancements Capability
+	set dtmEnhancCap 0; # Warning: hardcoded value
+	# DTM High Multislot Capability
+	set dtmHighMultislotCap 0; # Warning: hardcoded value
+	# Repeated ACCH Capability
+	if { [DbFieldExists $db RepACCH] } {
+		set repAcchCap [DbGet $db $msid RepACCH]
+	} else {
+		set repAcchCap 0; # Warning: hardcoded value
+	}
+
+#--- Release 7 starts here
+	# GSM 710 Associated Radio Capability
+	set gsm710RadioCap 0; # Warning: hardcoded value
+	# GSM 810 Associated Radio Capability
+	set gsm810RadioCap 0; # Warning: hardcoded value
+	# Ciphering Mode Setting Capability
+	set ciphModeSetCap 0; # Warning: hardcoded value
+	# Additional Positioning Capabilities
+	set addPosCap 0; # Warning: hardcoded value
+
+#--- Release 8 starts here
+	# E-UTRA FDD support
+	set eutraFddSupp 0; # Warning: hardcoded value
+	# E-UTRA TDD support
+	set eutraTddSupp 0; # Warning: hardcoded value
+	# E-UTRA Measurement and Reporting support
+	set eutraMeasRepSupp 0; # Warning: hardcoded value
+	# Priority-based reselection support
+	set prioReselSupp 0; # Warning: hardcoded value
+
+#--- Release 9 starts here
+	# UTRA CSG Cells Reporting
+	set utraCsgCellsRep 0; # Warning: hardcoded value
+	# Vamos Level
+	set vamosLvlBin 00; # default: Vamos Level not supported
+	if { [DbFieldExists $db VamosLevel] } {
+		set vamosLevel [DbGet $db $msid VamosLevel]
+		if { $vamosLevel == 1 } {
+			set vamosLvlBin 01; # Vamos Level 1 supported
+		} elseif { $vamosLevel == 2 } {
+			set vamosLvlBin 10; # Vamos Level 2 supported
+		}
+	}
+
+	###----------------------------------------###
+	set msClmrk3Bin ${spare}${bandBin}${A5bits_74Bin}${assocRaCap12}
+	append msClmrk3Bin ${rSuppBin}${hscsdMultiSlotBin}${ucs2Bin}
+	append msClmrk3Bin ${extMeasCapBin}${msMeasCapBin}${msPosMethCapBin}
+	append msClmrk3Bin ${ecsdCapBin}${psk8Bin}
+	append msClmrk3Bin ${gsm400Bin}${gsm850Bin}${gsm1900Bin}
+	append msClmrk3Bin ${umtsTechBin}${cdma2000TechBin}${dtm_multislot}
+	if { [SuppReleaseOrLater $3gppRel "Rel4"] } {
+		append msClmrk3Bin ${single_band}${gsm750RadioCap}
+		append msClmrk3Bin ${umts128TddRadioCap}${gerFeatPkg}${ext_dtm_multislot}
+	}
+	if { [SuppReleaseOrLater $3gppRel "Rel5"] } {
+		append msClmrk3Bin ${highMultislotCap}${geran_iu_mode}${gerFeatPkg2}
+		append msClmrk3Bin ${gmskMultislotCap}${psk8MultislotCap}
+	}
+	if { [SuppReleaseOrLater $3gppRel "Rel6"] } {
+		append msClmrk3Bin ${tgsm400Supp}${tgsm900Supp}${darpPhaseBin}
+		append msClmrk3Bin ${dtmEnhancCap}${dtmHighMultislotCap}${repAcchCap}
+	}
+	if { [SuppReleaseOrLater $3gppRel "Rel7"] } {
+		append msClmrk3Bin ${gsm710RadioCap}${gsm810RadioCap}
+		append msClmrk3Bin ${ciphModeSetCap}${addPosCap}
+	}
+	if { [SuppReleaseOrLater $3gppRel "Rel8"] } {
+		append msClmrk3Bin ${eutraFddSupp}${eutraTddSupp}
+		append msClmrk3Bin ${eutraMeasRepSupp}${prioReselSupp}
+	}
+	if { [SuppReleaseOrLater $3gppRel "Rel9"] } {
+		append msClmrk3Bin ${utraCsgCellsRep}${vamosLvlBin}
+	}
+	###----------------------------------------###
+
+	#debug
+##	log "spare = $spare"
+##	log "bandBin = $bandBin"
+##	log "assocRaCap12 = $assocRaCap12"
+##	log "A5bits_74Bin = $A5bits_74Bin"
+##	log "rSuppBin = $rSuppBin"
+##	log "hscsdMultiSlotBin = $hscsdMultiSlotBin"
+##	log "ucs2Bin = $ucs2Bin"
+##	log "extMeasCapBin = $extMeasCapBin"
+##	log "msMeasCapBin = $msMeasCapBin"
+##	log "msPosMethCapBin = $msPosMethCapBin"
+##	log "ecsdCapBin = $ecsdCapBin"
+##	log "psk8Bin = $psk8Bin"
+##	log "gsm400Bin = $gsm400Bin"
+##	log "gsm850Bin = $gsm850Bin"
+##	log "gsm1900Bin = $gsm1900Bin"
+##	log "umtsTechBin = $umtsTechBin"
+##	log "cdma2000TechBin = $cdma2000TechBin"
+##	log "dtm_multislot = $dtm_multislot"
+##	log "single_band = $single_band"
+##	log "gsm750RadioCap = $gsm750RadioCap"
+##	log "umts128TddRadioCap = $umts128TddRadioCap"
+##	log "gerFeatPkg = $gerFeatPkg"
+##	log "ext_dtm_multislot = $ext_dtm_multislot"
+##	log "highMultislotCap = $highMultislotCap"
+##	log "geran_iu_mode = $geran_iu_mode"
+##	log "gerFeatPkg2 = $gerFeatPkg2"
+##	log "gmskMultislotCap = $gmskMultislotCap"
+##	log "psk8MultislotCap = $psk8MultislotCap"
+##	log "tgsm400Supp = $tgsm400Supp"
+##	log "tgsm900Supp = $tgsm900Supp"
+##	log "darpPhaseBin = $darpPhaseBin"
+##	log "dtmEnhancCap = $dtmEnhancCap"
+##	log "dtmHighMultislotCap = $dtmHighMultislotCap"
+##	log "repAcchCap = $repAcchCap"
+##	log "gsm710RadioCap = $gsm710RadioCap"
+##	log "gsm810RadioCap = $gsm810RadioCap"
+##	log "ciphModeSetCap = $ciphModeSetCap"
+##	log "addPosCap = $addPosCap"
+##	log "eutraFddSupp = $eutraFddSupp"
+##	log "eutraTddSupp = $eutraTddSupp"
+##	log "eutraMeasRepSupp = $eutraMeasRepSupp"
+##	log "prioReselSupp = $prioReselSupp"
+##	log "utraCsgCellsRep = $utraCsgCellsRep"
+##	log "vamosLvlBin = $vamosLvlBin"
+
+	log "msClmrk3Bin = $msClmrk3Bin"
+    set msClmrk3Hex [btoh $msClmrk3Bin]
+	log "msClmrk3Hex = $msClmrk3Hex"
+
+    return $msClmrk3Hex
+}
+
+
+proc BuildMsNetCap { db msid } {
+
+	# Get Parameters from MS csv database
+	set 3gpp_rel [DbGet $db $msid 3GPP_Rel] 
+	set gea_bits [DbGet $db $msid GeaBits]
+	set sm_cap_cs [DbGet $db $msid SmCapCs]
+	set sm_cap_ps [DbGet $db $msid SmCapPs]
+	set pfc_mode [DbGet $db $msid PfcMode]
+
+	set spare 0
+
+	# 3GPP Release (Revision Level Indicator)
+	switch -exact -- $3gpp_rel {
+        "Rel96"     -
+        "Rel97"     -
+        "Rel98"     { set revLvlIndBin 0 }
+        "Rel99"     -
+        "Rel4"      -
+        "Rel5"      -
+        "Rel6"      -
+        "Rel7"      -
+        "Rel8"      -
+        "Rel9"      { set revLvlIndBin 1 }
+		default {
+			logscr "BuildMsClmrk1: Error: bad value for 3GPP Release (RevLvl=$3gpp_rel)"
+			exit
+		}
+	}
+	
+        # GEA bits 
+	if { $gea_bits > 0x7F } {
+		logscr "Error: GEA bits parameter is $gea_bits; possible values are <= 0x7F"
+		exit
+	}
+	# GEA/1
+	set geaBits_1Bin [expr {$gea_bits & 0x01}]
+	# GEA/2
+	set geaBits_2Bin [expr {[expr {$gea_bits & 0x02}] >> 1}]
+	# GEA/3
+	set geaBits_3Bin [expr {[expr {$gea_bits & 0x04}] >> 2}]
+	# GEA/4
+	set geaBits_4Bin [expr {[expr {$gea_bits & 0x08}] >> 3}]
+	# GEA/5
+	set geaBits_5Bin [expr {[expr {$gea_bits & 0x10}] >> 4}]
+	# GEA/6
+	set geaBits_6Bin [expr {[expr {$gea_bits & 0x20}] >> 5}]
+	# GEA/7
+	set geaBits_7Bin [expr {[expr {$gea_bits & 0x40}] >> 6}]
+
+
+	# SM Capabilities via dedicated channels 
+	if { $sm_cap_cs != 0 && $sm_cap_cs != 1 } {
+		logscr "Error: SM Cap CS parameter is $sm_cap_cs; possible values are 0/1"
+		exit
+	}
+	set smCapCsBin $sm_cap_cs; # possible values are 0/1
+	
+        # SM Capabilities via GPRS channels 
+	if { $sm_cap_ps != 0 && $sm_cap_ps != 1 } {
+		logscr "Error: SM Cap PS parameter is $sm_cap_ps; possible values are 0/1"
+		exit
+	}
+	set smCapPsBin $sm_cap_ps; # possible values are 0/1
+
+	# SS Screening Indicator
+	set ssScreenIndBin 01; # see 24.080 par. 3.7.1
+
+	# UCS2
+	set ucs2Bin 0; # Warning: hardcoded value
+
+        # SoLSA
+	set solsaBin 0; # Warning: hardcoded value
+
+	# PFC Feature Mode 
+	if { $pfc_mode != 0 && $pfc_mode != 1 } {
+		logscr "Error: Packet Flow Control Mode (PfcMode) is $pfc_mode; possible values are 0/1"
+		exit
+	}
+	set pfcFmBin $pfc_mode; # Warning: hardcoded value
+
+	# LCS VA Capability
+	set lcsVaCapBin 0; # Warning: hardcoded value
+
+	###----------------------------------------###
+	# 1^ octet 
+	set msNetCapBin ${geaBits_1Bin}${smCapCsBin}${smCapPsBin}${ucs2Bin}
+	append msNetCapBin ${ssScreenIndBin}${solsaBin}${revLvlIndBin}
+	# 2^ octet
+	append msNetCapBin ${pfcFmBin}${geaBits_2Bin}${geaBits_3Bin}${geaBits_4Bin}
+	append msNetCapBin ${geaBits_5Bin}${geaBits_6Bin}${geaBits_7Bin}${lcsVaCapBin}
+
+	###----------------------------------------###
+
+	log "msNetCapBin = $msNetCapBin"
+        set msNetCapHex [btoh $msNetCapBin]
+	log "msNetCapHex = $msNetCapHex"
+
+    return $msNetCapHex
+}
+
+
+# It return the IE BearerCapability (see spec 24008 par. 10.5.4.5)
+proc BuildBearerCap { codecs mode } {
+
+	# debug
+	#logscr "BuildBearerCap: codecs=$codecs ##"
+
+	# Set "Information Transfer Capability"
+	switch -exact -- $mode {
+		"Speech"			{ set itc 000 }
+		"UDI"     			{ set itc 001 }
+		"3.1 kHz audio, ex PLMN"	{ set itc 010 }
+		"facsimile group 3"	{ set itc 011 }
+		"Other ITC"			{ set itc 101 }
+		"Alternate"			{ set itc 111 }
+		default {
+			logscr "ERROR(BuildBearerCap): Bad Mode ($mode)" 
+			exit
+		}
+	}
+
+	# Set "Radio Channel Requirement"
+	### case "Speech"
+	if { [string eq $mode "Speech"] } {
+		set hr_pos [string first "HR" $codecs]
+		# debug
+		#logscr "\tBuildBearerCap: hr_pos=$hr_pos ##"
+
+		if { $hr_pos >= 0 } {
+			set fr_pos [string first "FR" $codecs]
+			# debug
+			#logscr "\tBuildBearerCap: fr_pos=$fr_pos ##"
+
+			if { $hr_pos < $fr_pos } {
+				# dual rate support MS/half rate speech version 1 preferred, 
+				# full rate speech version 1 also supported
+				set radio_ch_req 10
+			} else {
+				# dual rate support MS/full rate speech version 1 preferred, 
+				# half rate speech version 1 also supported
+				set radio_ch_req 11
+			}
+		} else {
+			# full rate support only MS/fullrate speech version 1 supported
+			set radio_ch_req 01
+		}
+		# debug
+		#logscr "BuildBearerCap: radio_ch_req=$radio_ch_req"
+
+	### case "no Speech"
+	} else {
+		# dual rate support MS/full rate preferred
+		set radio_ch_req 11
+	}
+
+	#
+	if { [IsVoid $codecs] } {
+		set extb0 1
+	} else {
+		set extb0 0
+	}
+
+	append b0 $extb0 $radio_ch_req 00 $itc
+	set bcap [btoh $b0]
+	# debug
+	#logscr "BuildBearerCap: b0=$b0, bcap=$bcap"
+
+	### case "Speech"
+	if { [string eq $mode "Speech"] } {
+		# Add Speech Version Indications
+		append bcap [BuildSpeechVerList $codecs]
+	### case "no Speech"
+	} else {
+		# Warning: hardcoded value for CSD
+		append bcap B8812115EB
+		#CSD 4.8
+		#append bcap  B88921144380
+	}
+
+	# debug info
+	log "BuildBearerCap: mode=$mode, bcap=$bcap"
+
+    return $bcap
+}
+
+proc SuppReleaseOrLater { rel tgtRel } {
+
+	switch -exact -- $rel {
+        "Rel96"     { set relIdx 0 }
+        "Rel97"     { set relIdx 1 }
+        "Rel98"     { set relIdx 2 }
+        "Rel99"     { set relIdx 3 }
+        "Rel4"      { set relIdx 4 }
+        "Rel5"      { set relIdx 5 }
+        "Rel6"      { set relIdx 6 }
+        "Rel7"      { set relIdx 7 }
+        "Rel8"      { set relIdx 8 }
+        "Rel9"      { set relIdx 9 }
+		default {
+			logscr "SuppReleaseOrLater: Error: bad value for 3GPP Release (rel=$rel)"
+			exit
+		}
+	}
+	
+	switch -exact -- $tgtRel {
+        "Rel96"     { set tgtRelIdx 0 }
+        "Rel97"     { set tgtRelIdx 1 }
+        "Rel98"     { set tgtRelIdx 2 }
+        "Rel99"     { set tgtRelIdx 3 }
+        "Rel4"      { set tgtRelIdx 4 }
+        "Rel5"      { set tgtRelIdx 5 }
+        "Rel6"      { set tgtRelIdx 6 }
+        "Rel7"      { set tgtRelIdx 7 }
+        "Rel8"      { set tgtRelIdx 8 }
+        "Rel9"      { set tgtRelIdx 9 }
+		default {
+			logscr "SuppReleaseOrLater: Error: bad value for 3GPP Release (rel=$rel)"
+			exit
+		}
+	}
+	
+	if { $relIdx < $tgtRelIdx } {
+		return 0
+	} else {
+		return 1
+	}
+}
+
+proc BuildSpeechVerList { codecs } {
+
+	# 
+	set cod_list [split $codecs ":"]
+	set cod_num [llength $cod_list]
+
+	if { $cod_num <= 0 } {
+		logscr "ERROR(BuildSpeechVerList): No Codec available (cod_list=$cod_list)"
+		exit
+	
+	} else {
+
+		for {set i 0} {$i < $cod_num} { } {
+		
+			set cod [lindex $cod_list $i]
+
+			switch -exact -- $cod {
+				"FR"	{
+					# GSM full rate speech version 1
+					set spver 0x00
+				}
+				"EFR"	{
+					# GSM full rate speech version 2
+					set spver 0x02
+				}
+				"FR_AMR"	{
+					# GSM full rate speech version 3
+					set spver 0x04
+				}
+				"FR_AMR-WB"	{
+					# GSM full rate speech version 5
+					set spver 0x08
+				}
+				"HR"	{
+					# GSM half rate speech version 1
+					set spver 0x01
+				}
+				"HR_AMR"	{
+					# GSM half rate speech version 3
+					set spver 0x05
+				}
+				default {
+					# GSM full rate speech version 4
+					# GSM full rate speech version 5
+					# GSM half rate speech version 4
+					# GSM half rate speech version 6
+					logscr "ERROR(BuildSpeechVerList): Bad Codec ($cod) \
+					in CodecList ($cod_list) of MS DB csv"
+					exit
+				}
+			}
+			#
+			incr i
+
+			# Add ext bit for last speech version indication
+			if {$i == $cod_num} {
+				incr spver 0x80
+			}
+		
+			# debug
+			log "BuildSpeechVerList: cod=$cod, spver=$spver"
+			append spverlist [uctoh $spver]
+		}
+	}
+
+	# debug info
+	log "BuildSpeechVerList: $spverlist"
+
+    return $spverlist
+}
+
+
+proc BuildRevLvl { 3gppRel } {
+
+	# Revision Level (Prisma Internal EDGE parameter; see edgSrv.h)
+	switch -exact -- $3gppRel {
+        "Rel96"     { set revLvl -1; # NO Gprs Enabled }
+        "Rel97"     { set revLvl 0; # GPRS only - Warning: set as Rel98 for Prisma stack  }
+        "Rel98"     { set revLvl 0; # EDGE without 8PSK }
+        "Rel99"     { set revLvl 1 }
+        "Rel4"      { set revLvl 2 }
+        "Rel5"      { set revLvl 3 }
+        "Rel6"      { set revLvl 4 }
+        "Rel7"      -
+        "Rel8"      -
+        "Rel9"      { set revLvl 5 ; # Warning: set ame rev_lvl on EDGE for Rel7/8/9 }
+		default {
+			logscr "BuildRevLvl: Error: bad value for 3GPP Release (3gppRel=$3gppRel)"
+			exit
+		}
+	}
+	
+	return $revLvl
+}
+
+# 29.018 18.4.8
+proc GbImeiToGsImei { gbImei } {
+
+    append gbImei "0f"
+    set gsImei ""
+    for { set i 0 } { $i < 15 } { incr i 2} {
+        set NibbleEven [string index $gbImei $i]
+        set NibbleOdd [string index $gbImei [expr {$i + 3}]]
+        set gsImeiByte "$NibbleOdd$NibbleEven"
+        append gsImei $gsImeiByte
+    }
+    return $gsImei
+}
+
+# 29.018 18.4.9
+proc GbImeiSvToGsImeiSv { gbImeiSv } {
+
+    set gsImeiSv ""
+    for { set i 0 } { $i < 16 } { incr i 2} {
+        set NibbleEven [string index $gbImeiSv $i]
+        set NibbleOdd [string index $gbImeiSv [expr {$i + 3}]]
+        set gsImeiSvByte "$NibbleOdd$NibbleEven"
+        append gsImeiSv $gsImeiSvByte
+    }
+    return $gsImeiSv
+}
+
+
+
+proc LbInterfaceActive {} {
+	global __smlc_on
+
+	if { [info exists __smlc_on] && $__smlc_on } {
+		return 1
+	} else {
+		return 0
+	}
+}
+
+
+# Check the presence of Signalling GW
+proc SgwActive {} {
+	global __sgw_on 
+
+	if { [info exists __sgw_on] && $__sgw_on } {
+		return 1
+	} else {
+		return 0
+	}
+}
+
+proc MultiMgwTdm { } {
+	global __multi_mgw 
+
+	if { [info exists __multi_mgw] && $__multi_mgw } {
+		return 1
+	} else {
+		return 0
+	}
+}
+
+proc MgwMscCroxCon { } {
+	global __mgwCroxCon
+
+	if { [info exists __mgwCroxCon] && $__mgwCroxCon } {
+		return 0
+	} else {
+		return 1
+	}
+}
+
+proc MultiLinkSetCheck { } {
+	global __multi_LinkSet
+
+	if { [info exists __multi_LinkSet] && $__multi_LinkSet } {
+		return 1
+	} else {
+		return 0
+	}
+}
+
+##############################################################
+# to make unique the PDP CONTEXT IP address among all the PDP
+# of one ue
+
+proc DHCP_GetIpForThisNsapiBigDb { ipAddrFromDb NSAPI } {
+
+	# 10.136.16.3     16: lower 4 bits should be 0 to leave place for nsapi
+	# nsapi = 5
+	# ---> 10.136.31.3 
+	# __gi_mask must be 255.255.0.0 or 255.0.0.0
+	set ipBytes [split $ipAddrFromDb "."]
+	set third [expr {[lindex $ipBytes 2] + $NSAPI}]
+	
+	set ipBytes "[lindex $ipBytes 0] [lindex $ipBytes 1] $third [lindex $ipBytes 3]"
+	set ipaddress [join $ipBytes "."]
+	log "DHCP_GetIpForThisNsapiBigDb $ipaddress"
+	return $ipaddress
+}
+
+
+proc DHCP_GetIpForThisNsapi { ipAddrFromDb NSAPI } {
+
+	# 10.136.74.3
+	# nsapi = 5
+	# ---> 10.136.5.3
+	# __gi_mask must be 255.255.0.0 or 255.0.0.0
+	
+    set ipIdx [string last "." $ipAddrFromDb]
+    set ipaddress [string range $ipAddrFromDb 0 [expr {$ipIdx -1 }]]
+	set lastByte [string range $ipAddrFromDb $ipIdx end]
+    set ipIdx [string last "." $ipaddress]
+	set ipaddress [string range $ipAddrFromDb 0 [expr {$ipIdx -1 }]]
+	set ipaddress "${ipaddress}.${NSAPI}${lastByte}"
+	return $ipaddress	
+}
+
+
+#########################################################################
+#  ApcIp: aa.bb.cc.dd
+#			aa = 1
+#			bb = pdp (3 bits) + cell (5 most sig. bits)
+#			cc-dd = MS id
+#########################################################################
+
+# global constants
+set  ::__ApcIpPdpSize 3
+
+if { [info exists ::_is_umts] && ($::_is_umts) } {
+	set	 ::__ApcIpMaxPdp4Ue 2
+} else {
+	set	 ::__ApcIpMaxPdp4Ue 1
+}
+
+if { $::__ApcIpMaxPdp4Ue > [expr (1 << $::__ApcIpPdpSize) -1 ] } {
+	log "L3Utils.tsm: __ApcIpMaxPdp4Ue too big."
+	exit
+}
+
+proc ApcIpNatIp { baseIp } {
+
+	global __ApcIpPdpSize
+
+	set ipBytes [split $baseIp "."]
+	set cellByte [lindex $ipBytes 1]
+	for {set i 0} { $i < $__ApcIpPdpSize } { incr i} {
+		set cellByte [expr {$cellByte & ~(1 << $i)}]
+	}
+	set natIp [join "[lindex $ipBytes 0] $cellByte 0 0" "."]
+	log "ApcIpNatIp: natIp = $natIp"
+
+	return $natIp
+}
+
+proc ApcIpNatMask {  } {
+
+	global __ApcIpPdpSize
+
+	set cellByte 255
+	for {set i 0} { $i < $__ApcIpPdpSize } { incr i} {
+		set cellByte [expr {$cellByte & ~(1 << $i)}]
+	}
+	set natMask [join "255 $cellByte 0 0" "."]
+	log "ApcIpNatMask: natMask = $natMask"
+	return $natMask
+}
+
+proc ApcIpSet { cellId ueId } {
+
+	global __ApcIpPdpSize 
+
+	set cellByte [expr {$cellId << $__ApcIpPdpSize}]
+
+	set ip [join "1 $cellByte [expr {$ueId / 256}] [expr {$ueId % 256}]" "."]
+
+	log "ApcIpSetBase: cell $cellId, ue $ueId, ApcIp $ip"
+	return $ip
+}
+
+proc ApcIpPdpIp { ipBase pdpNum } {
+
+	set ipBytes [split $ipBase "."]
+	set cellByte [lindex $ipBytes 1]
+
+	set cellByte [expr {$cellByte | $pdpNum}]
+
+	set pdpIp [join "[lindex $ipBytes 0] $cellByte \
+				[lindex $ipBytes 2] [lindex $ipBytes 3]" "."]
+
+	log "ApcIpPdpIp: ipBase $ipBase, pdpNum $pdpNum, pdpIp $pdpIp"
+	return $pdpIp
+}
+
+
+proc Retrieve_cK_iK_from_2G_Kc { Kc } {
+
+	log "(debug) Retrieve_cK_iK_from_2G_Kc: Kc = $Kc"
+	set cK ${Kc}$Kc
+	log "(debug) Retrieve_cK_iK_from_2G_Kc: cK = $cK"
+	
+	set Kc1 [string range $Kc 0 7]
+	set Kc2 [string range $Kc 8 end]
+	log "(debug) Retrieve_cK_iK_from_2G_Kc: Kc1 = $Kc1, Kc2 = $Kc2"
+	set xor [format %.8x [expr "0x$Kc1 ^ 0x$Kc2"]]
+	log "(debug) Retrieve_cK_iK_from_2G_Kc: xor = $xor"
+	set iK ${xor}${Kc}$xor
+	log "(debug) Retrieve_cK_iK_from_2G_Kc: iK = $iK"
+	
+	return "$cK $iK"
+}
+
+################################################################################
+
+
+
+
+################################################################################
+#   TFT generator according to 3GPP TS 24.008 (10.5.6.12)
+################################################################################
+
+proc CreateTFTAddRepPf { ipAddress ipMask localport endlocalport } {
+    set len 0
+    set pfElem ""
+    set pfId 15
+    set pfDirection 3
+    set pfEvalPrecedence 1 
+    set pfContent ""
+
+    if { [IsIPv6Format $ipAddress] } {
+        # IPv6 Remote Address Type
+        set pfComponentTypeId 32
+        append pfContent [format %02X $pfComponentTypeId]
+        incr len
+
+        set ipAddress [GetIPv6Str2Hex $ipAddress]
+
+        if { [expr {([string length $ipAddress]) / 2}] != 16 } {
+            logscr "Invalid IPv6 Remote Address length ([expr {([string length $ipAddress]) / 2}])"
+            exit 0
+        }
+        if { [expr {([string length $ipMask]) / 2}] != 16 } {
+            logscr "Invalid IPv6 Remote Mask length ([expr {([string length $ipMask]) / 2}])"
+            exit 0
+        }
+
+        append pfContent $ipAddress
+        append pfContent $ipMask
+        incr len 32
+
+    } else {
+        # IPv4 Remote Address Type
+        set pfComponentTypeId 16
+        append pfContent [format %02X $pfComponentTypeId]
+        incr len
+        
+        set ipAddress [iptoh $ipAddress]
+
+        if { [expr {([string length $ipAddress]) / 2}] != 4 } {
+            logscr "Invalid IPv4 Remote Address length ([expr {([string length $ipAddress]) / 2}])"
+            exit 0
+        }
+        if { [expr {([string length $ipMask]) / 2}] != 4 } {
+            logscr "Invalid IPv4 Remote Mask length ([expr {([string length $ipMask]) / 2}])"
+            exit 0
+        }
+
+        append pfContent $ipAddress
+        append pfContent $ipMask
+        incr len 8
+    }
+        
+    set port $localport 
+    if { [IsVoid $endlocalport] } {
+        # Single Local Port Type 
+        set pfComponentTypeId 64
+        append pfContent [format %02X $pfComponentTypeId]
+            
+        append pfContent [format %04X $port]
+        incr len 3
+    } else {
+        # Range Local Port Type 
+        set pfComponentTypeId 65
+        append pfContent [format %02X $pfComponentTypeId]
+            
+        append pfContent [format %04X $port]
+        append pfContent [format %04X $endlocalport]
+        incr len 5
+    }
+
+    append pfElem [format %02X [expr {(($pfDirection & 0x03) << 4) | ($pfId & 0x0F)}]]
+    append pfElem [format %02X $pfEvalPrecedence]
+    append pfElem [format %02X $len]
+    append pfElem $pfContent
+
+    append pfList $pfElem
+
+    return $pfList
+}
+
+################################################################################
+
+proc Compose_CreateTFT { ipAddress ipMask localport {endlocalport ?} } {
+
+    set tftOperationCode 1
+    set parametersListPresent 0
+    set numPf 1
+
+    # Build byte1
+    append B1 [expr {($tftOperationCode << 5) | ($parametersListPresent << 4) | ($numPf)}]
+
+    set pfList ""
+    append pfList [format %02X $B1]
+
+    append pfList [CreateTFTAddRepPf $ipAddress $ipMask $localport $endlocalport]
+
+    return $pfList
+}
+        
+################################################################################
+        
+proc CreateTFTAddRepPf_RemotePort { ipAddress ipMask remoteport endremoteport } {
+    set len 0
+    set pfElem ""
+    set pfId 15
+    set pfDirection 3
+    set pfEvalPrecedence 1 
+    set pfContent ""
+
+    if { [IsIPv6Format $ipAddress] } {
+        # IPv6 Remote Address Type
+        set pfComponentTypeId 32
+        append pfContent [format %02X $pfComponentTypeId]
+        incr len
+
+        set ipAddress [GetIPv6Str2Hex $ipAddress]
+
+        if { [expr {([string length $ipAddress]) / 2}] != 16 } {
+            logscr "Invalid IPv6 Remote Address length ([expr {([string length $ipAddress]) / 2}])"
+            exit 0
+        }
+        if { [expr {([string length $ipMask]) / 2}] != 16 } {
+            logscr "Invalid IPv6 Remote Mask length ([expr {([string length $ipMask]) / 2}])"
+            exit 0
+        }
+
+        append pfContent $ipAddress
+        append pfContent $ipMask
+        incr len 32
+
+    } else {
+        # IPv4 Remote Address Type
+        set pfComponentTypeId 16
+        append pfContent [format %02X $pfComponentTypeId]
+        incr len
+        
+        set ipAddress [iptoh $ipAddress]
+
+        if { [expr {([string length $ipAddress]) / 2}] != 4 } {
+            logscr "Invalid IPv4 Remote Address length ([expr {([string length $ipAddress]) / 2}])"
+            exit 0
+        }
+        if { [expr {([string length $ipMask]) / 2}] != 4 } {
+            logscr "Invalid IPv4 Remote Mask length ([expr {([string length $ipMask]) / 2}])"
+            exit 0
+        }
+
+        append pfContent $ipAddress
+        append pfContent $ipMask
+        incr len 8
+    }
+        
+    set port $remoteport 
+    if { [IsVoid $endremoteport] } {
+        # Single Remote Port Type 
+        set pfComponentTypeId 80
+        append pfContent [format %02X $pfComponentTypeId]
+            
+        append pfContent [format %04X $port]
+        incr len 3
+    } else {
+        # Range Remote Port Type 
+        set pfComponentTypeId 81
+        append pfContent [format %02X $pfComponentTypeId]
+            
+        append pfContent [format %04X $port]
+        append pfContent [format %04X $endremoteport]
+        incr len 5
+    }
+
+    append pfElem [format %02X [expr {(($pfDirection & 0x03) << 4) | ($pfId & 0x0F)}]]
+    append pfElem [format %02X $pfEvalPrecedence]
+    append pfElem [format %02X $len]
+    append pfElem $pfContent
+
+    append pfList $pfElem
+
+    return $pfList
+}
+        
+################################################################################
+
+proc Compose_CreateTFT_RemotePort { ipAddress ipMask remoteport {endremoteport ?} } {
+
+    set tftOperationCode 1
+    set parametersListPresent 0
+    set numPf 1
+
+    # Build byte1
+    append B1 [expr {($tftOperationCode << 5) | ($parametersListPresent << 4) | ($numPf)}]
+
+    set pfList ""
+    append pfList [format %02X $B1]
+
+    append pfList [CreateTFTAddRepPf_RemotePort $ipAddress $ipMask $remoteport $endremoteport]
+
+    return $pfList
+}
+
+################################################################################
+
+proc CreateTFTAddPf_IMS { pfId pfEvalPrecedence ipAddress ipMask localport remoteport } {
+    set len 0
+    set pfElem ""
+    set pfDirection 1
+    set pfContent ""
+
+    if { [IsIPv6Format $ipAddress] } {
+        # IPv6 Remote Address Type
+        set pfComponentTypeId 32
+        append pfContent [format %02X $pfComponentTypeId]
+        incr len
+
+        set ipAddress [GetIPv6Str2Hex $ipAddress]
+
+        if { [expr {([string length $ipAddress]) / 2}] != 16 } {
+            logscr "Invalid IPv6 Remote Address length ([expr {([string length $ipAddress]) / 2}])"
+            exit 0
+        }
+        if { [expr {([string length $ipMask]) / 2}] != 16 } {
+            logscr "Invalid IPv6 Remote Mask length ([expr {([string length $ipMask]) / 2}])"
+            exit 0
+        }
+
+        append pfContent $ipAddress
+        append pfContent $ipMask
+        incr len 32
+
+    } else {
+        # IPv4 Remote Address Type
+        set pfComponentTypeId 16
+        append pfContent [format %02X $pfComponentTypeId]
+        incr len
+        
+        set ipAddress [iptoh $ipAddress]
+
+        if { [expr {([string length $ipAddress]) / 2}] != 4 } {
+            logscr "Invalid IPv4 Remote Address length ([expr {([string length $ipAddress]) / 2}])"
+            exit 0
+        }
+        if { [expr {([string length $ipMask]) / 2}] != 4 } {
+            logscr "Invalid IPv4 Remote Mask length ([expr {([string length $ipMask]) / 2}])"
+            exit 0
+        }
+
+        append pfContent $ipAddress
+        append pfContent $ipMask
+        incr len 8
+    }
+
+    # Protocol Id = RTP
+    set pfComponentTypeId 48
+    append pfContent [format %02X $pfComponentTypeId]
+    append pfContent [format %02X 17]
+    incr len 2
+        
+    # Single Local Port Type 
+    set pfComponentTypeId 64
+    append pfContent [format %02X $pfComponentTypeId]
+    append pfContent [format %04X $localport]
+    incr len 3
+    
+    # Single Remote Port Type 
+    set pfComponentTypeId 80
+    append pfContent [format %02X $pfComponentTypeId]
+    append pfContent [format %04X $remoteport]
+    incr len 3
+
+    append pfElem [format %02X [expr {(($pfDirection & 0x03) << 4) | ($pfId & 0x0F)}]]
+    append pfElem [format %02X $pfEvalPrecedence]
+    append pfElem [format %02X $len]
+    append pfElem $pfContent
+
+    append pfList $pfElem
+
+    return $pfList
+}
+
+
+proc Compose_CreateTFT_IMS { ipAddress ipMask localport remoteport } {
+
+    set tftOperationCode 1
+    set parametersListPresent 0
+    set numPf 2
+
+    # Build byte1
+    append B1 [expr {($tftOperationCode << 5) | ($parametersListPresent << 4) | ($numPf)}]
+
+    set pfList ""
+    append pfList [format %02X $B1]
+
+    # RTP/UDP
+    append pfList [CreateTFTAddPf_IMS 0 16 $ipAddress $ipMask $localport $remoteport]
+    # RTCP/UDP
+    incr localport
+    incr remoteport
+    append pfList [CreateTFTAddPf_IMS 1 17 $ipAddress $ipMask $localport $remoteport]
+
+    log "Compose_CreateTFT_IMS=$pfList"
+
+    return $pfList
+}
+
+################################################################################
+
+proc CheckParmsFromPF { pf len ipv4 ipv6 protid localport remoteport } {
+
+    set ipv4match 0
+    set ipv6match 0
+    set protidmatch 0
+    set localportmatch 0
+    set remoteportmatch 0
+
+    set i 3
+    set j $i 
+    set tlen [expr {$len+3}]
+
+    while { $j < $tlen } {
+        set pfct [hocts $pf $i]
+        log "pfct=$pfct"
+
+        switch $pfct {
+            10 {
+                incr i; incr j 4;   set _ipv4 [htoip [hocts $pf $i $j]]
+                incr i 4; incr j 4; set _mask [htoip [hocts $pf $i $j]]
+                log "_ipv4=$_ipv4, _mask=$_mask"
+                if { $ipv4 == $_ipv4 || ($_ipv4 == "0.0.0.0" && $_mask == "0.0.0.0") } {
+                    set ipv4match 1
+                }
+            }
+            20 {
+                incr i; incr j 16;    set _ipv6 [hocts $pf $i $j]
+                incr i 16; incr j 16; set _mask [hocts $pf $i $j]
+                log "_ipv6=$_ipv6, _mask=$_mask"
+                if { $ipv6 == $_ipv6 } {
+                    set ipv6match 1
+                }
+            }
+            30 {
+                incr i; incr j; set _protid [htoi [hocts $pf $i]]
+                log "_protid=$_protid"
+                if { $protid == $_protid } {
+                    set protidmatch 1
+                }
+            }
+            40 {
+                incr i; incr j 2; set _localport [htoi [hocts $pf $i $j] B]
+                log "_localport=$_localport"
+                if { $localport == $_localport } {
+                    set localportmatch 1
+                }
+            }
+            50 {
+                incr i; incr j 2; set _remoteport [htoi [hocts $pf $i $j] B]
+                log "_remoteport=$_remoteport"
+                if { $remoteport == $_remoteport } {
+                    set remoteportmatch 1
+                }
+            }
+            41 {
+                incr i; incr j 2;   set localp1 [htoi [hocts $pf $i $j] B]
+                incr i 2; incr j 2; set localp2 [htoi [hocts $pf $i $j] B]
+                log "localp1=$localp1, localp2=$localp2"
+                if { ($localport >= $localp1) && ($localport <= $localp2) } {
+                    set localportmatch 1
+                }
+            }
+            51 {
+                incr i; incr j 2;   set remotep1 [htoi [hocts $pf $i $j] B]
+                incr i 2; incr j 2; set remotep2 [htoi [hocts $pf $i $j] B]
+                log "remotep1=$remotep1, remotep2=$remotep2"
+                if { ($remoteport >= $remotep1) && ($remoteport <= $remotep2) } {
+                    set remoteportmatch 1
+                }
+            }
+            default {
+            }
+        }
+        
+        incr j; set i $j
+    }
+
+    # Matching rule
+    log "CheckParmsFromPF: $ipv4match $ipv6match $protidmatch $localportmatch $remoteportmatch"
+    if { ($ipv4match || $ipv6match) && ($localportmatch || $remoteportmatch) } {
+        return 1
+    }
+
+    return 0
+}
+
+
+################################################################################
+# Compose TFT for QoS Bearer Modification
+#
+proc ComposeTFT_NoTftOperation { TFT } {
+    set i 0
+    set by1 [htoi [hocts $TFT $i $i]] 
+    set ope [expr {($by1 & 0xe0) >> 5}]
+    set npfi [expr {$by1 & 0x0f}]
+    incr i
+    set pfiList ""
+    for {set k 0} {$k<$npfi} {incr k} {
+        set pfi [htoi [hocts $TFT $i $i]] 
+        set pfi [expr {$pfi & 0x0f}]
+        lappend pfiList $pfi
+        set j $i        
+        incr j 2
+        set pfLen [htoi [hocts $TFT $j $j]]
+        incr j $pfLen
+        incr j
+        set i $j
+    }
+
+    set tftOperationCode 6
+    set parametersListPresent 1
+    set B1 [expr {($tftOperationCode << 5) | ($parametersListPresent << 4) | 0}]
+    set pfList ""
+    append pfList [format %02X $B1]
+    # list of PFI as parameter identifier
+    append pfList [format %02X 3]
+    # length == npfi
+    append pfList [format %02X $npfi]
+    # list of PFI
+    foreach pfi $pfiList {
+        append pfList [format %02X $pfi]
+    }
+
+    return $pfList
+}
+
+
+################################################################################
+#   IPv6 Utils
+################################################################################
+
+# This procedure returns IPv6 Address in string format 
+# given IPv6 address in hex format (16 bytes)
+proc GetIPv6Hex2Str { ipv6_hex } {
+
+	set ipv6bin [binary format H* $ipv6_hex]
+	return [iPv6Hex2Str $ipv6bin]
+}
+
+# This procedure returns IPv6 Address in hex format (16 bytes)
+# given IPv6 address in string format
+proc GetIPv6Str2Hex { ipv6_str } {
+
+	set ipv6Bin [iPv6Str2Hex $ipv6_str]
+	binary scan $ipv6Bin H* ipv6
+
+	return $ipv6
+}
+
+proc IsIPv6Format { ip_addr_str } {
+
+	if { [string first ":" $ip_addr_str] == -1 } {
+		log "IP $ip_addr_str is not in IPv6 format"
+		return 0
+	}
+
+	return 1
+}
+
+
+################################################################################
+
+typedef { STRUCT 
+	{STRING PdpAddress} 
+	{STRING PdpAddressIpv6} 
+	{STRING DNS1} 
+	{STRING DNS2} 
+	{STRING DNS1Ipv6} 
+	{STRING DNS2Ipv6} 
+	{STRING Pcscf} 
+	{STRING PcscfIpv6} 
+
+	PCO_Params
+}
+
+# Build Protocol Configuration Option Response
+# TS 24.008 10.5.6.3
+# optsReq,  MS to NET pco hexstr without IEI and IE Len
+# pcoParam, struct of PCO_Params
+
+proc HandlePCORequest { optsReq pcoParam } {
+
+	# Check Protocol Configuration Options
+	log "optsReq = $optsReq"
+    if { ![IsVoid $optsReq] } {
+        set type [hbits [hocts $optsReq 0] 5 7]
+        if { [string equal $type "000"] } {
+			# only PPP is managed
+			log "configuration protocol is PPP"
+            set offset 1
+			set optLen [expr {[string length $optsReq]/2}]
+			set optsAck 80
+			log "optLen = $optLen offset = $offset"
+            while { $offset < $optLen } {
+            	set nextprot [hocts $optsReq $offset [expr {$offset + 1}]]
+				incr offset 2
+				set len [htouc [hocts $optsReq $offset]]
+
+				switch -nocase $nextprot {
+					"c023" {
+						log "PAP protocol len of PAP packet is $len"
+						set papAck [HandlePapRequest [hocts $optsReq $offset [expr {$offset + $len}]]]
+						append optsAck $papAck
+					} 
+					"8021" {
+						log "IPCP protocol len of IPCP packet is $len"
+						set pdpaddr [rd pcoParam PdpAddress]
+						set dns1    [rd pcoParam DNS1]
+						set dns2    [rd pcoParam DNS2]
+						set ipcpAck [HandleIpcpRequest [hocts $optsReq $offset [expr {$offset + $len}]] $pdpaddr $dns1 $dns2]
+						append optsAck $ipcpAck
+					} 
+					"000c" {
+						log "P-CSCF IPv4 address request identifier, len=$len"
+						set pcscf [rd pcoParam Pcscf]
+						if { ![IsVoid $pcscf] } {
+							set pcscf [iptoh $pcscf]
+							append optsAck 000C
+							append optsAck 04
+							append optsAck $pcscf
+						} else {
+							log "   P-CSCF IPv4 address empty!"
+						}
+					}
+					"000d" {
+						log "DNS IPv4 address request identifier, len=$len"
+						set dns [rd pcoParam DNS1]
+						if { [IsVoid $dns] } {
+							set dns [rd pcoParam DNS2]
+						}
+
+						if { ![IsVoid $dns] } {
+							set dns [iptoh $dns]
+							append optsAck 000D
+							append optsAck 04
+							append optsAck $dns
+						} else {
+							log "   DNS IPv4 address empty!"
+						}
+						
+					}
+					"0001" {
+						log "P-CSCF IPv6 address request identifier, len=$len"
+						set pcscf [rd pcoParam PcscfIpv6]
+						if { ![IsVoid $pcscf] } {
+							set pcscf [GetIPv6Str2Hex $pcscf]
+							append optsAck 0001
+							append optsAck 10
+							append optsAck $pcscf
+						} else {
+							log "   P-CSCF IPv6 address empty!"
+						}
+						
+					}
+					"0003" {
+						log "DNS IPv6 address request identifier, len=$len"
+						set dns [rd pcoParam DNS1Ipv6]
+						if { [IsVoid $dns] } {
+							set dns [rd pcoParam DNS2Ipv6]
+						}
+
+						if { ![IsVoid $dns] } {
+							set dns [GetIPv6Str2Hex $dns]
+							append optsAck 0003
+							append optsAck 10
+							append optsAck $dns
+						} else {
+							log "   DNS IPv6 address empty!"
+						}
+					}
+					"000a" {
+						log "IP address allocation via NAS signalling identifier, len=$len"
+					}
+					default {
+						log "Unknown protocol $nextprot; ignore its packet"
+					}
+				
+				}
+				set offset [expr {$offset + $len + 1}]
+			}
+			return $optsAck
+        } else {
+			log "Unknown protocol to be configured $type"
+			return ?
+		}
+    }
+	return ?
+}
+
+##############################################################
+proc HandlePapRequest { protOpt } {
+
+	# auth ack RFC 1334 2.2.2
+	log "HandlePapRequest protOpt = $protOpt"
+	set code [hocts $protOpt 1]
+	set id [hocts $protOpt 2]
+	if {$code != "01"} {
+		log "Only PAP auth request can be managed"
+		log "code = $code ignored"
+		return ""
+	}
+	set peerLen [htouc [hocts $protOpt 5]]
+	set endPeer [expr {7 + $peerLen}]
+	set peerId [htoa [hocts $protOpt 6 $endPeer]]
+	set pwdLen [htouc [hocts $protOpt [expr {1 + $endPeer}]]] 
+	set endPwd [expr {1 + $endPeer + $pwdLen}]
+	set pwd [htoa [hocts $protOpt [expr {2 + $endPeer}] $endPwd]]
+
+	log "id = $id code = $code"
+	log "peerLen = $peerLen peerId = $peerId"
+	log "pwdLen = $pwdLen pwd = $pwd"
+
+	set retVal c0230502
+	append retVal $id
+	append retVal 000500
+	return $retVal 
+}
+
+##############################################################
+proc HandleIpcpRequest {protOpt pdpaddr dns1 dns2} {
+
+	log "HandleIpcpRequest protOpt = $protOpt pdpaddr = $pdpaddr"
+	log "HandleIpcpRequest dns1 = $dns1"
+	log "HandleIpcpRequest dns2 = $dns2"
+	log "HandleIpcpRequest dns1 = [iptoh $dns1]"
+	if { [IsVoid $dns2] } {
+		set dns2 $dns1
+	}
+	log "HandleIpcpRequest dns2 = [iptoh $dns2]"
+
+	#RFC 1331 6.1 6.3 RFC 1877
+	set code [hocts $protOpt 1]
+	set id [hocts $protOpt 2]
+	if {$code != "01"} {
+		log "Only LPC config req can be managed"
+		log "code = $code ignored"
+		#return ""
+	}
+	set opt [hocts $protOpt 5]
+	if {$opt != "81" && $opt != "83"} {
+		log "Only IPCP DNS or sec DNS can be managed"
+		log "code = $opt ignored"
+		#return ""
+	}
+	set opt [hocts $protOpt 11]
+	if {$opt != "81" && $opt != "83"} {
+		log "Only IPCP DNS or sec DNS can be managed"
+		log "code = $opt ignored"
+		#return ""
+	}
+
+	set retVal 80211002  ;#ACK
+	append retVal $id
+	append retVal 00108106
+	append retVal [iptoh $dns1]
+	append retVal 8306
+	append retVal [iptoh $dns2]
+	return $retVal 
+}
+
+# Get Protocol Configuration Option Response
+# TS 24.008 10.5.6.3
+# optsRes,  NET to MS pco hexstr without IEI and IE Len
+# return = struct of PCO_Params
+
+proc HandlePCOResponse { optsRes } {
+
+	new PCO_Params pcoRes
+
+	# Check Protocol Configuration Options
+	log "optsRes = $optsRes"
+    if { ![IsVoid $optsRes] } {
+        set type [hbits [hocts $optsRes 0] 5 7]
+        if { [string equal $type "000"] } {
+			# only PPP is managed
+			log "configuration protocol is PPP"
+            set offset 1
+			set optLen [expr {[string length $optsRes]/2}]
+			log "optLen = $optLen offset = $offset"
+            while { $offset < $optLen } {
+            	set nextprot [hocts $optsRes $offset [expr {$offset + 1}]]
+				incr offset 2	
+				set len [htouc [hocts $optsRes $offset]]
+
+				switch -nocase $nextprot {
+					"c023" {
+						log "PAP protocol len of PAP packet is $len"
+					} 
+					"8021" {
+						log "IPCP protocol len of IPCP packet is $len"
+					} 
+					"000c" {
+						set pcscf [htoip [hocts $optsRes [expr {$offset+1}] [expr {$offset+$len+1}]] B]
+						log "P-CSCF IPv4 address identifier, len=$len ip=$pcscf"
+						wr pcoRes Pcscf $pcscf
+					}
+					"000d" {
+						set dns [htoip [hocts $optsRes [expr {$offset+1}] [expr {$offset+$len+1}]] B]
+						log "DNS IPv4 address request identifier, len=$len ip=$dns"
+						wr pcoRes DNS1 $dns
+					}
+					"0001" {
+						set pcscfhex [hocts $optsRes [expr {$offset+1}] [expr {$offset+$len+1}]]
+						set pcscf [GetIPv6Hex2Str $pcscfhex]
+						log "P-CSCF IPv6 address request identifier, len=$len ipv6=$pcscf"
+						wr pcoRes PcscfIpv6 $pcscf
+					}
+					"0003" {
+						set dnshex [hocts $optsRes [expr {$offset+1}] [expr {$offset+$len+1}]]
+						set dns [GetIPv6Hex2Str $dnshex]
+						log "DNS IPv6 address request identifier, len=$len ipv6=$dns"
+						wr pcoRes DNS1Ipv6 $dns
+					}
+					default {
+						log "Unknown protocol $nextprot; ignore its packet"
+					}
+				}
+				set offset [expr {$offset + $len + 1}]
+			}
+			return $pcoRes
+        } else {
+			log "Unknown protocol to be configured $type"
+			return $pcoRes
+		}
+    }
+	return $pcoRes
+}
+
+##############################################################
+proc GetMccFromLteRrcPlmnId { plmn } {
+    
+    if { [IsVoid $plmn] } {
+        return "?"
+    }
+    
+    set mcc1 [rd plmn MCC_d1]
+    set mcc2 [rd plmn MCC_d2]
+    set mcc3 [rd plmn MCC_d3]
+    if { [IsVoid $mcc1] } {
+        return "?"
+    }
+
+    append mcc $mcc1 $mcc2 $mcc3
+    return $mcc
+}
+        
+##############################################################
+proc GetMncFromLteRrcPlmnId { plmn } {
+    
+    if { [IsVoid $plmn] } {
+        return "?"
+    }
+    
+    set mnc1 [rd plmn MNC_d1]
+    set mnc2 [rd plmn MNC_d2]
+    set mnc3 [rd plmn MNC_d3]
+    if { [IsVoid $mnc3] } {
+        append mnc $mnc1 $mnc2
+    } else {
+        append mnc $mnc1 $mnc2 $mnc3
+    }
+
+    return $mnc
+}
+
+
+
+
+##############################################################
+# Encoding RP-DATA/TPDU - SMS-SUBMIT
+#
+# - SMSCAddr value must be in 24011 format (RpAddressNumber)
+# - need Sms7Codec external
+##############################################################
+
+proc GetRpDataTpduSmsSubmit { dest text SMSCAddr } {
+
+	global glNumOfSms glMsId glCommonDb
+
+	set enc_text [smsEncode $text] 
+	set enc_text_len [expr {[string length $enc_text] / 2}]
+
+    # TRANSPORT PROTOCOL
+    # 3GPP 23.040,   9.2 Service provided by the SM-TL 
+	# Msg Type 9.2.2.2 SMS-SUBMIT  (MS->NTW)
+	set datalen 0
+
+	set tpRpBin     0;       # TP-Reply-Path   
+	set tpUdhiBin   0;       # TP-User-Data-Header-Indication
+	set tpSrrBin    1;       # TP-Status-Report-Request 
+# TP-Status-Report-Request set to 1: no problems using Wind SC
+   
+	set tpVpfBin   10;       # TP-Validity-Period-Format
+# TP-Validity-Period-Format meaning:
+#0 0 TP-VP field not present                     TP-VP len = 0
+#1 0 TP-VP field present - relative format       TP-VP len = 1 octet in integer representation
+#0 1 TP-VP field present - enhanced format       TP-VP len = 7 octet 
+#1 1 TP-VP field present - absolute format       TP-VP len = 7 octet in semi-octet representation
+
+    set tpRdBin     0;        # TP-Reject-Duplicates
+	set tpMtiBin   01;        # TP-Message-Type-Indicator: SMS-SUBMIT
+
+    set dataBin ${tpRpBin}${tpUdhiBin}${tpSrrBin}${tpVpfBin}${tpRdBin}${tpMtiBin}
+    log "DEBUG (GetRpDataTpduSmsSubmit): dataBin = $dataBin"
+    set data [btoh $dataBin]
+    log "data HEX = $data"
+    
+	incr datalen 1
+
+
+	# TP-Message-Reference (Warning: hardcoded)
+	#TODO vedere tstM2M_SMS.tcl - implementare contatore 
+    # 3GPP 23.040 - 9.2.3.6 TP-MR
+    set tpMr       51
+    append data    $tpMr
+	incr datalen   1
+
+
+    #TP-Destination-Address
+	# 3GPP 23.040 - 9.1.2.5 Address fields
+    # implemented as 3GPP 24.008 - 10.5.4.7 Called Party BCD Number
+
+    set hnum [CalledPartyBcdNumber $dest]
+	set destlen [expr {[string length $hnum] / 2}]	
+    log "DEBUG (GetRpDataTpduSmsSubmit): hnum = $hnum"
+    log "DEBUG (GetRpDataTpduSmsSubmit): destlen = $destlen"
+
+	append data   $hnum
+	incr datalen  $destlen
+
+
+    #TP-Protocol-Identifier - (Warning: hardcoded)
+    # same value as present in available sms logs
+    set tpPid     00
+	append data   $tpPid
+	incr datalen  1
+
+
+    # TP-Data-Coding-Scheme - (Warning: hardcoded)
+    # defined in 23.038
+    # the special case of bits 7..0 being 0000 0000 indicates 
+    #    the GSM 7 bit default alphabet with no message class
+    # same value as present in available sms logs
+    set tpDcs     00
+	append data   $tpDcs ;       # default 
+	incr datalen  1
+
+
+    #TP-Validity-Period (presence/length depends on TP-Validity-Period-Format value)
+    #TP-Validity-Period - (Warning: hardcoded for each of the 4 TP-VPF cases)
+    
+    if { $tpVpfBin == 00 } {
+        set tpVp_len   0
+    } elseif { $tpVpfBin == 01 } {
+        append data    00000000000000
+        set tpVp_len   7
+    } elseif { $tpVpfBin == 10 } {        
+        append data    ff ;                 # default value
+        set tpVp_len   1
+    } elseif { $tpVpfBin == 11 } {
+        append data    00000000000000
+        set tpVp_len   7
+    }
+
+#0 0 TP-VP field not present                     TP-VP len = 0
+#1 0 TP-VP field present - relative format       TP-VP len = 1 octet in integer representation
+#0 1 TP-VP field present - enhanced format       TP-VP len = 7 octet
+#1 1 TP-VP field present - absolute format       TP-VP len = 7 octet in semi-octet representation
+
+	incr datalen    $tpVp_len
+
+	# Data : Length + Text
+	append data $enc_text
+	incr datalen $enc_text_len
+
+
+	# RELAY PROTOCOL
+    # 3GPP 24.011   7.3.1 RP-DATA 
+	# Msg Type RP-DATA ms->ntw
+    set rpMtSpareBin     00000;        # RP-Reject-Duplicates
+    set rpMtMtiBin         000;        # RP-Message-Type-Indicator: RP-DATA, MS->NTW
+
+    set rpMtBin ${rpMtSpareBin}${rpMtMtiBin}
+    set rpMt [btoh $rpMtBin]
+	set msg $rpMt
+    set rpMr   00;                     # RP-Message-Reference
+    append msg $rpMr
+    set rpOa   00 ;                    # RP-Originator-Address; MS->NTW, value always set to 00
+	append msg $rpOa
+
+	                                   # RP-Destination-Address
+    # RpAddressNumber implements 3GPP 24.011 - 8.2.5.1/8.2.5.2 RP Originator/Destination Address
+    # SMSCAddr value must be in 24011 format
+    log "DEBUG (GetRpDataTpduSmsSubmit): SMSCAddr = $SMSCAddr"
+
+	if { [IsVoid $SMSCAddr] } {
+		log "GetRpDataTpduSmsSubmit: ERROR: the SMSCAddr value is void"
+		return "?"
+	}
+
+    append msg $SMSCAddr
+        
+	append msg [uctoh $datalen];       # RP-User-Data
+
+	append msg $data
+	return $msg
+}

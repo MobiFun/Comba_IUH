@@ -1,0 +1,367 @@
+#####################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/RUA/tags/RUA-1.3.0/scripts/rua_db.tsm $
+#
+# $Author: roger $
+#
+# Description: RUA Multi-Instance handler procedures
+#
+# $Rev: 53207 $
+#
+# $Date: 2012-07-17 12:15:04 +0200 (Tue, 17 Jul 2012) $
+######################################################
+
+# ================================================================
+set gldb_RuaEnb    "dbRuaEnb"
+set glEnbIdx ?
+
+proc dbRuaIuhCreate {} {
+
+    lappend idxList [list EnbIdx                    Index       Read/Write]
+    lappend idxList [list State                     Normal      Read/Write]
+    lappend idxList [list SctpKey                   Key         Read/Write]; # SctpKey ::= <spc>-<stkId>-<sctpId>
+
+    DbCreate $::gldb_RuaEnb $idxList
+    foreach enbIdx [dbEnbGetIndexList] {
+        DbCreateDefEntry $::gldb_RuaEnb $enbIdx
+        dbRuaEnbNextState	$enbIdx	?
+        dbRuaEnbSet			$enbIdx SctpKey	?
+    }
+}
+
+proc dbRuaEnbThis {} {
+	return $::glEnbIdx
+}
+
+proc dbRuaEnbComposeSctpKey {spc stkId sctpId} {
+    return "${spc}-${stkId}-${sctpId}"
+}
+
+proc dbRuaEnbGetSctpKeyParts {enbIdx} {
+    return [split [DbGet $::gldb_RuaEnb $enbIdx SctpKey] -]
+}
+
+proc dbRuaEnbGetIndexList {} {
+    return [DbGetIndexList $::gldb_RuaEnb]
+}
+
+proc dbRuaEnbNextState { enbIdx stName } {
+    DbSet $::gldb_RuaEnb $enbIdx State $stName
+    nextstate $stName
+}
+
+proc dbRuaEnbSet { enbIdx fld val} {
+    DbSet $::gldb_RuaEnb $enbIdx $fld $val
+}
+
+proc dbRuaEnbGet {enbIdx fld} {
+    return [DbGet $::gldb_RuaEnb $enbIdx $fld]
+}
+
+proc dbRuaEnbInstSet { fld val } {
+    DbSet $::gldb_RuaEnb $::glEnbIdx $fld $val
+}
+
+proc dbRuaEnbInstGet {fld} {
+    return [DbGet $::gldb_RuaEnb $::glEnbIdx $fld]
+}
+
+proc dbRuaEnbInstNextState { stName } {
+	DbSet $::gldb_RuaEnb $::glEnbIdx State $stName
+	nextstate $stName
+}
+
+# enodeB multi-instance utilities ----------------------
+
+proc dbRuaEnbGetInst { enbIdx } {
+    GetInstanceNoSwap $enbIdx $::gldb_RuaEnb ::glEnbIdx
+}
+
+proc dbRuaEnbGetInstByTimer {} {
+    GetInstanceFromTimerNoSwap $::gldb_RuaEnb ::glEnbIdx
+}
+
+proc dbRuaEnbGetInstBySctpKey {spc stkId sctpId} {
+    set key [dbRuaEnbComposeSctpKey $spc $stkId $sctpId]
+    if { [DbKeyExists $::gldb_RuaEnb SctpKey $key] } {
+        set enbIdx [DbGetIdx $::gldb_RuaEnb SctpKey $key]
+        log "dbRuaEnbGetInstBySctpKey: key=$key => enbIdx=$enbIdx"
+        dbRuaEnbGetInst $enbIdx
+    } else {
+        abort "dbRuaEnbGetInstBySctpKey: failed for $spc $stkId $sctpId"
+    }
+}
+
+# ================================================================
+
+set gldb_RuaAssoc    "dbRuaAssoc"
+set glAssocIdx ?; # <enbIdx>-<mmeIdx>
+
+proc dbRuaAssocCreate {} {
+
+    # Idx ::= <enbIdx>-<mmeIdx>
+    # AssocKey ::= <spc>-<stkId>-<sctpId>-<assocId>
+    lappend idxList [list Idx                       Index       Read/Write] 
+    lappend idxList [list State                     Normal      Read/Write]
+    lappend idxList [list AssocKey                  Key         Read/Write]
+    lappend idxList [list T_SCTP_ASSOCIATEid        Key         Read/Write]
+    lappend idxList [list T_WAIT_BEFORE_NEXT_REQid  Key         Read/Write]
+    lappend idxList [list PeerIpPort                Normal      Read/Write]
+    lappend idxList [list EpcInitReset              Normal      Read/Write]
+    lappend idxList [list ResetType                 Normal      Read/Write]
+    lappend idxList [list ResetUeAssLogConnList     Normal      Read/Write]
+
+    DbCreate $::gldb_RuaAssoc $idxList
+
+    foreach enbIdx [dbEnbGetIndexList] {
+        set mmeList [dbEnbGet $enbIdx CtlPeerNetElemList]
+        if { ![IsVoid $mmeList] } {
+            foreach mme $mmeList {
+                # mme = {mmeIdx [ip/port]}
+                lassign {mmeIdx mmeIpPort} $mme
+                if { [string equal $mmeIpPort ""] } {
+                    set mmeIpPort [dbMmeGet $mmeIdx CtlLocalIpPort]
+                    log "dbRuaAssocCreate: default mmeIpPort=$mmeIpPort"
+                }
+                set assocIdx "${enbIdx}-${mmeIdx}"
+                log "dbRuaAssocCreate: assocIdx=$assocIdx, mmeIpPort=$mmeIpPort"
+                DbCreateDefEntry $::gldb_RuaAssoc $assocIdx
+                dbRuaAssocSet $assocIdx PeerIpPort $mmeIpPort
+                dbRuaAssocSet $assocIdx T_SCTP_ASSOCIATEid       [tmrnew T_SCTP_ASSOCIATE       60000]
+                dbRuaAssocSet $assocIdx T_WAIT_BEFORE_NEXT_REQid [tmrnew T_WAIT_BEFORE_NEXT_REQ 60000]; # modified at Rua_SETUP_FLR
+                dbRuaAssocNextState $assocIdx stAssoc_down
+            }
+        }
+    }
+}
+
+proc dbRuaAssocThis {} {
+	return $::glAssocIdx
+}
+
+proc dbRuaAssocSetThis {enbIdx mmeIdx} {
+    log "dbRuaAssocSetThis: ${enbIdx}-${mmeIdx}"
+    set ::glAssocIdx "${enbIdx}-${mmeIdx}"
+    return $::glAssocIdx
+}
+
+proc dbRuaAssocGetEnbIdxMmeIdx {assocIdx} {
+    return [split $assocIdx -]
+}
+
+proc dbRuaAssocInstGetEnbIdxMmeIdx {} {
+	return [split $::glAssocIdx -]
+}
+
+#proc dbRuaAssocEntryExists {enbIdx mmeIdx} {
+#	return [DbEntryExists $::gldb_RuaAssoc "${enbIdx}-${mmeIdx}"]
+#}
+
+proc dbRuaAssocGetIndexList {} {
+	return [DbGetIndexList $::gldb_RuaAssoc]
+}
+
+proc dbRuaAssocNextState { assocIdx stName } {
+    DbSet $::gldb_RuaAssoc $assocIdx State $stName
+    nextstate $stName
+}
+
+proc dbRuaAssocSet { assocIdx fld val} {
+    DbSet $::gldb_RuaAssoc $assocIdx $fld $val
+}
+
+proc dbRuaAssocGet {assocIdx fld} {
+    return [DbGet $::gldb_RuaAssoc $assocIdx $fld]
+}
+
+proc dbRuaAssocGetPeerIpPort {assocIdx} {
+	return [split [DbGet $::gldb_RuaAssoc $assocIdx PeerIpPort] /]
+}
+
+proc dbAssocGetPeerIdxByIpPort {enbIdx ip port} {
+	set mmeIdx ?
+	foreach idx [DbGetIndexList $::gldb_RuaAssoc "${enbIdx}-*"] {
+		set peerIpPort [dbRuaAssocGet $idx PeerIpPort]
+		if { [string equal $peerIpPort "${ip}/${port}"] } {
+			set mmeIdx [lindex [split $idx -] end]
+		}
+	}
+    return $mmeIdx
+}
+
+proc dbRuaAssocInstSet { fld val} {
+    DbSet $::gldb_RuaAssoc $::glAssocIdx $fld $val
+}
+
+proc dbRuaAssocInstGet {fld} {
+    return [DbGet $::gldb_RuaAssoc $::glAssocIdx $fld]
+}
+
+proc dbRuaAssocInstNextState { stName } {
+    DbSet $::gldb_RuaAssoc $::glAssocIdx State $stName
+    nextstate $stName
+}
+
+proc dbRuaAssocInstSetAssocKey {spc stkId sctpId assId} {
+    DbSet $::gldb_RuaAssoc $::glAssocIdx AssocKey "$spc-$stkId-$sctpId-$assId"
+}
+
+proc dbRuaAssocInstGetAssocKeyParts {} {
+    return [split [DbGet $::gldb_RuaAssoc $::glAssocIdx AssocKey] -]
+}
+
+# association multi-instance utilities ----------------------
+
+proc dbRuaAssocGetInst {assIdx} {
+	GetInstanceNoSwap $assIdx $::gldb_RuaAssoc ::glAssocIdx
+	lassign {::glEnbIdx ::glMmeIdx} [split $::glAssocIdx -]
+}
+
+proc dbRuaAssocGetInstByAssocKey {spc stkId sctpId assId} {
+    set key "${spc}-${stkId}-${sctpId}-${assId}"
+    if { [DbKeyExists $::gldb_RuaAssoc AssocKey $key] } {
+        set assocIdx [DbGetIdx $::gldb_RuaAssoc AssocKey $key]
+        dbRuaAssocGetInst $assocIdx
+    } else {
+        abort "dbRuaAssocGetInstByAssocKey: failed for $spc $stkId $sctpId $assId"
+    }  
+}
+
+proc dbRuaAssocGetInstByTimer {} {
+	GetInstanceFromTimerNoSwap $::gldb_RuaAssoc ::glAssocIdx
+	lassign {::glEnbIdx ::glMmeIdx} [split $::glAssocIdx -]
+}
+
+# ================================================================
+set gldb_RuaUe    "dbRuaUe"
+set glRuaUeIdx    ?
+
+proc dbRuaUeCreate {} {
+
+    # RuaUeIdx ::= <cellIdx>/<ueIdx>
+    lappend idxList [list RuaUeIdx                  Index      Read/Write]
+    lappend idxList [list MgrUeIdx                 Key        Read/Write]
+    lappend idxList [list State                    Normal     Read/Write]
+    lappend idxList [list MmeIdx                   Normal     Read/Write]
+    lappend idxList [list AssocEnbUeIdKey          Key        Read/Write]; # <assocIdx>-<enbRuaUeId>
+    lappend idxList [list AssocMmeUeIdKey          Key        Read/Write]; # <assocIdx>-<mmeRuaUeId>
+    lappend idxList [list ErabIdxPendingList       Normal     Read/Write]
+    #lappend idxList [list T_FAKE_HOIN_MSCREATEid   Key        Read/Write]
+
+    DbCreate $::gldb_RuaUe $idxList
+}
+
+proc dbRuaUeComposeIdx {cellIdx ueIdx} {
+    return "${cellIdx}/${ueIdx}"
+}
+
+proc dbRuaUeInstGetCellIdx {} {
+    lassign {enbIdx cell_Num ueIdx} [split $::glRuaUeIdx /]
+    return "${enbIdx}/${cell_Num}"
+}
+
+proc dbRuaUeInstGetEnbIdx {} {
+    lassign {enbIdx cell_Num ueIdx} [split $::glRuaUeIdx /]
+    return ${enbIdx}
+}
+
+proc dbRuaUeComposeUeIdKey {assocIdx enbUeId} {
+    return "${assocIdx}-${enbUeId}"
+}
+
+proc dbRuaUeEntryExists {ruaUeIdx} {
+    return [DbEntryExists $::gldb_RuaUe $ruaUeIdx]
+}
+
+proc dbRuaUeAddEntry {ruaUeIdx mmeIdx} {
+    log "dbRuaUeAddEntry: ruaUeIdx=$ruaUeIdx"
+    DbCreateDefEntry $::gldb_RuaUe $ruaUeIdx
+    set ::glRuaUeIdx $ruaUeIdx
+    dbRuaUeInstSet MmeIdx $mmeIdx
+    #dbRuaUeInstSet T_FAKE_HOIN_MSCREATEid  [tmrnew T_FAKE_HOIN_MSCREATE  3000]
+    dbRuaAssocSetThis [dbRuaUeInstGetEnbIdx] $mmeIdx
+}
+
+proc dbRuaUeRemEntry {ruaUeIdx} {
+    log "dbRuaUeRemEntry: ruaUeIdx=$ruaUeIdx"
+    forEachDbTimer $::gldb_RuaUe $ruaUeIdx t { tmrfree $t }    
+    DbRemEntry $::gldb_RuaUe $ruaUeIdx
+}
+
+proc dbRuaUeThis {} {
+    return $::glRuaUeIdx
+}
+
+proc dbRuaUeInstGetUeIdx {} {
+    set ueIdx [lindex [split $::glRuaUeIdx /] end]
+    return $ueIdx
+}
+
+proc dbRuaUeGetIndexList {} {
+    return [DbGetIndexList $::gldb_RuaUe]
+}
+
+proc dbRuaUeNextState { ruaUeIdx stName } {
+    DbSet $::gldb_RuaUe $ruaUeIdx State $stName
+    nextstate $stName
+}
+
+proc dbRuaUeSet { ruaUeIdx fld val} {
+    DbSet $::gldb_RuaUe $ruaUeIdx $fld $val
+}
+
+proc dbRuaUeGet {ruaUeIdx fld} {
+    return [DbGet $::gldb_RuaUe $ruaUeIdx $fld]
+}
+
+proc dbRuaUeInstSet {fld val} {
+    DbSet $::gldb_RuaUe $::glRuaUeIdx $fld $val
+}
+
+proc dbRuaUeInstGet {fld} {
+    return [DbGet $::gldb_RuaUe $::glRuaUeIdx $fld]
+}
+
+proc dbRuaUeInstNextState { stName } {
+    DbSet $::gldb_RuaUe $::glRuaUeIdx State $stName
+    nextstate $stName
+}
+
+# UE multi-instance utilities ----------------------
+
+proc dbRuaUeGetInst { ruaUeIdx } {
+    GetInstanceNoSwap $ruaUeIdx $::gldb_RuaUe ::glRuaUeIdx
+    set mmeIdx [dbRuaUeInstGet MmeIdx]
+    set enbIdx [dbRuaUeInstGetEnbIdx]
+    dbRuaAssocSetThis $enbIdx $mmeIdx
+}
+
+proc dbRuaUeGetInstByTimer {} {
+    GetInstanceFromTimerNoSwap $::gldb_RuaUe ::glRuaUeIdx
+    set mmeIdx [dbRuaUeInstGet MmeIdx]
+    set enbIdx [dbRuaUeInstGetEnbIdx]
+    dbRuaAssocSetThis $enbIdx $mmeIdx
+}
+
+proc dbRuaUeGetInstByAssocEnbUeId {assocIdx enbUeId} {
+    set k [dbRuaUeComposeUeIdKey $assocIdx $enbUeId]
+    log "dbRuaUeGetInstByAssocEnbUeId: assocIdx=$assocIdx, enbUeId=$enbUeId, k=$k"
+    if { [DbKeyExists $::gldb_RuaUe AssocEnbUeIdKey $k] } {
+        set idx [DbGetIdx $::gldb_RuaUe AssocEnbUeIdKey $k]
+        GetInstanceNoSwap $idx $::gldb_RuaUe ::glRuaUeIdx
+        return 1
+    } else {
+        return 0
+    }
+}
+
+proc dbRuaUeGetInstByAssocMmeUeId {assocIdx mmeUeId} {
+    set k [dbRuaUeComposeUeIdKey $assocIdx $mmeUeId]
+    log "dbRuaUeGetInstByAssocMmeUeId: assocIdx=$assocIdx, mmeUeId=$mmeUeId, k=$k"
+    if { [DbKeyExists $::gldb_RuaUe AssocMmeUeIdKey $k] } {
+        set idx [DbGetIdx $::gldb_RuaUe AssocMmeUeIdKey $k]
+        GetInstanceNoSwap $idx $::gldb_RuaUe ::glRuaUeIdx
+        return 1
+    } else {
+        return 0
+    }
+}

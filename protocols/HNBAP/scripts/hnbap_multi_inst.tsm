@@ -1,0 +1,401 @@
+#####################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/HNBAP/tags/HNBAP-1.3.0/scripts/hnbap_multi_inst.tsm $
+#
+# $Author: roger $
+#
+# Description: HNBAP Multi-Instance handler procedures
+#
+# $Rev: 53537 $
+#
+# $Date: 2012-07-27 15:55:36 +0200 (Fri, 27 Jul 2012) $
+######################################################
+
+proc HnbapMultiInstanceHdl { } {
+
+	switch -glob -- [lindex $::_sig 0] {
+
+        "T_SCTP_ASSOCIATE"       { dbHnbapAssocGetInstByTimer }
+        "T_WAIT_BEFORE_NEXT_REQ" { dbHnbapAssocGetInstByTimer }
+	"HNBAP_BSSAP_SAP"		{ HnbapBssapPidHnd }       
+        "SCTP_*"                 { PreSCTP }
+	"RUA_*"					{ RuaSapHnd }
+	"T_HNBREGDelay"	    	{ dbHnbapEnbGetInstByTimer }
+	"T_UEDeReg"		-
+	"T_HNBUeREG"			{ dbHnbapUeGetInstByTimer }
+		default { exit "ABORT-HnbapMultiInstanceHdl: unexpected signal $::_sig" }
+	}
+
+	log "HNBAP: state=$::_state"
+}
+
+
+######################################################
+# Multi Instance Handling Procedures
+######################################################
+## the two signals are used to trigger UE reg and UE De Reg
+typedef { STRUCT { UINT MsIdx } { STRUCTURE Pdu } HNBAP_UE_REG_REQ }
+#typedef { STRUCT { UINT ContextId }  HNBAP_UE_DE_REG_REQ }
+
+proc PreSCTP { } {
+
+    set primName [lindex $::_sig 0]
+    switch -exact -- $primName {
+    "SCTP_INITIALIZE_ACK" {
+        set enbId [lindex $::glHnbapSctpListToSetup 0]
+        dbHnbapEnbGetInst $enbId
+    }
+    "SCTP_ASSOCIATE_ACK"             {
+        log "SCTP_ASSOCIATE_ACK: spc=[rd ::_sig Spc], stkId=[rd ::_sig StkId], stcpId=[rd ::_sig SctpId]"
+        skipMsg
+    }
+    "SCTP_ASSOCIATE_NAK"             {
+		# SCTP_ASSOCIATE_NAK might be received because there is another
+		# sctpAssociate pending.
+		# For example, if the peer sctp stack is running, but there is no sctp
+		# peer ready, then the peer sctp stack immediately replies with ABORT
+		# and the ASSOCIATE_CMD is consumed.
+		# But if there is no peer sctp stack at all, the originating stcp stack
+		# never receives ABORT so that the next SCTP_ASSOCIATE_CMD might find the
+		# previous sctpAssociate command still BUSY and this will cause
+		# SCTP_ASSOCIATE_NAK.
+		# this is why SCTP_ASSOCIATE_NAK is traced, but is not considered an error.
+		# TODO: discriminate real error in SCTP_ASSOCIATE_NAK. 
+		log "### SCTP_ASSOCIATE_NAK: spc=[rd ::_sig Spc], stkId=[rd ::_sig StkId], stcpId=[rd ::_sig SctpId] ###"
+        skipMsg
+    }
+    "SCTP_COMMUNICATION_UP_IND"      {
+        set spc     [rd ::_sig Spc]
+        set stkId   [rd ::_sig StkId]
+        set sctpId  [rd ::_sig SctpId]
+        set assId   [rd ::_sig AssId]
+        set peerIpNum [rd ::_sig DstAddrListSize]
+        set peerPort  [rd ::_sig DstAddrListPort]
+        set peerIp    [htoip [rd ::_sig DstAddrListHost] B]
+        log "PreSCTP.SCTP_COMMUNICATION_UP_IND: assId=$assId, peerIpNum=$peerIpNum, peerIp=$peerIp, peerPort=$peerPort"
+        dbHnbapEnbGetInstBySctpKey $spc $stkId $sctpId
+        set mmeIdx [dbAssocGetPeerIdxByIpPort $::glEnbIdx $peerIp $peerPort]
+        dbHnbapAssocGetInst "${::glEnbIdx}-${mmeIdx}"
+        dbHnbapAssocInstSetAssocKey $spc $stkId $sctpId $assId
+	
+    }
+    "SCTP_COMMUNICATION_LOST_IND"    -
+    "SCTP_NETWORK_STATUS_CHANGE_IND" -
+    "SCTP_SHUTDOWN_COMPLETE_IND" {
+        set spc     [rd ::_sig Spc]
+        set stkId   [rd ::_sig StkId]
+        set sctpId  [rd ::_sig SctpId]
+        set assId   [rd ::_sig AssId]
+        logscr "PreSCTP.$primName: assId=$assId"
+        dbHnbapEnbGetInstBySctpKey $spc $stkId $sctpId
+        dbHnbapAssocGetInstByAssocKey $spc $stkId $sctpId $assId
+    }
+    "SCTP_DATA_IND"                  { PreSCTP_DATA_IND }
+    default                          { Unexpected }
+    }
+}
+
+proc PreSCTP_DATA_IND { } {
+	global glHnbapPayloadID  glRUAPayloadID _bssappid
+    set spc     [rd ::_sig Spc]
+    set stkId   [rd ::_sig StkId]
+    set sctpId  [rd ::_sig SctpId]
+    set assId   [rd ::_sig AssId]
+	# Update glCurrStreamId (used to reply in case context actualization fails)
+	set ::glCurrStreamId [rd ::_sig StreamId]
+    log "PreSCTP_DATA_IND: assId=$assId, glCurrStreamId=$::glCurrStreamId"
+	# set current enb, mme and assoc
+    dbHnbapEnbGetInstBySctpKey $spc $stkId $sctpId
+    dbHnbapAssocGetInstByAssocKey $spc $stkId $sctpId $assId
+
+	set IuhPdu [rd ::_sig Data]
+	if { [IsVoid $IuhPdu] } {
+		logscr "PreSCTP_DATA_IND: Warning Received Empty SCTP DATA IND"
+        return -1
+	} else {
+
+		set payloadId [rd ::_sig 	PayloadProtocolId]
+		if { $payloadId == $glHnbapPayloadID } {
+			HNBAPPduToSig IuhPdu
+			# Store hnbap Pdu in _sig
+			set ::_sig $::_sigpdu
+
+			if { ![CheckSignal] } {
+				skipMsg
+			}
+						set primName [lindex $::_sig 0]
+			switch -exact -- $primName {
+				"HNB_REGISTERACC"			-
+				"HNB_REGISTERREJ"			{ dbHnbapEnbGetInstBySctpKey $spc $stkId $sctpId }
+				"HNB_UEREGISTERACC"			-
+				"HNB_UEREGISTERREJ"			{ dbHnbapUeGetInst }
+				default						{ Unexpected }
+			}
+		} elseif {$payloadId == $glRUAPayloadID} {
+			RUAPduToSig IuhPdu
+			wr ::_sigpdu ApId [dbHnbapEnbThis]
+			set ::_sig $::_sigpdu
+			if { ![CheckSignal] } {
+				skipMsg
+			}
+			#forward to RANAP
+			send ::_sig $_bssappid
+			skipMsg
+		} else {
+			logscr "ERROR: Payload Protocol ID ($payloadId) is not for HNBAP/RUA"
+			skipMsg
+			return
+		}
+
+	}
+
+}
+proc HnbapBssapPidHnd {} {
+	global _bssappid _src
+	set _bssappid $_src
+	skipMsg
+	return
+}
+
+
+proc RuaSapHnd {} {
+	# Global Variables
+	global _sig  
+
+	set primName [lindex $_sig 0]
+
+	switch -exact -- $primName {
+		"RUA_CONNECT"    				{ RuaConnectHnd }
+		"RUA_DIRECTTRANSFER"			-
+		"RUA_CONNECTIONLESSTRANSFER"	-
+		"RUA_ERRORINDICATION"			{ 
+			SendOutRUAMessage 
+			skipMsg
+		} 
+		"RUA_DISCONNECT"				{ RuaDisconnHnd }
+	}
+
+}
+
+
+proc RuaConnectHnd {} {
+	global _sig glIdx glCurrentInstanceDb
+	# at first,ContexId is empty. We use MsId in order to find MS state in gldb_HnbapUe
+	set msId [rd _sig ContextId]
+	#set opcDpc [rd _sig SpcStkId]
+	set glIdx $msId
+	if { [DbEntryExists $::gldb_HnbapUe $msId] } {
+
+		log "RuaConnectHnd: RUA Connect (ms:$msId) is received"
+		
+		new HNBAP_UE_REG_REQ s
+		wr s MsIdx $msId
+		wr s Pdu $_sig
+		set _sig $s
+		#LogDb $::gldb_HnbapUe
+		#log "RuaConnectHnd: currDb=$::gldb_HnbapUe oldDb=$glCurrentInstanceDb currIdx=$msId oldIdx=$glIdx"
+		dbHnbapEnbUeGetInst $msId
+	} else {
+		LogDb $::gldb_HnbapUe
+		logscr "ERROR: No Ms ($msId) is found in hnbap UE db, so RUA_Connect can not be sent out"
+		skipMsg
+	}
+	 
+}
+
+proc RuaDisconnHnd {} {
+	global _sig _bssappid
+	
+	set contextId [rd _sig ContextId]
+	set apId [rd _sig ApId]
+
+	if { [DbKeyExists $::gldb_HnbapUe ContextId $contextId] } {
+
+		set msId [DbGetIdx $::gldb_HnbapUe ContextId $contextId]
+		log "RuaDisConnectHnd: RUA DisConnect (ms:$msId) is received"
+
+		# to trigger RANAP to context is released
+		new RUA_DISCONNECT_ACK s
+		wr s ApId $apId
+		wr s ContextId $contextId
+		wr s CnDomain  0
+		send s $_bssappid
+		
+		SendOutRUAMessage
+		dbHnbapEnbUeGetInst $msId
+		tmrstart [DbGet $::gldb_HnbapUe $msId T_UEDeRegid]
+		#if { [IsVoid $t_UEDeRegid]} {
+		#	logscr "ERROR: HNBAP UE DEREGISTER Timer not defined,fatal error!"
+		#	exit
+		#}
+		#tmrstart $t_UEDeRegid
+		#new HNBAP_UE_DE_REG_REQ s
+		#wr s ContextId $contextId
+		#set _sig $s
+		
+		skipMsg
+	} else {
+		LogDb $::gldb_HnbapUe
+		logscr "ERROR: No Context ($contextId) is found in hnbap UE db, so RUA_DisConnect can not be sent out"
+		skipMsg
+	}
+	 
+}
+
+proc RuaNetConnectHnd {} {
+
+	global glSctpDb glIdx glCurrentInstanceDb _sig glHnbapDb
+	
+	set opcDpc [rd _sig SpcStkId]
+    # Get SS7 index
+    set sctpIdx [GetSctpDbIdxFromOpcDpc [GetOpcFromOpcDpc $opcDpc] [GetDpcFromOpcDpc $opcDpc]]
+	log "sctp id is ($sctpIdx)"
+	#LogDb $glHnbapDb
+	# Get Instance
+	set index [DbGetIdx $glHnbapDb SctpDbIdx $sctpIdx]
+	log "HnbapGetInstanceHnd: currDb $glHnbapDb, oldDb $glCurrentInstanceDb currIdx=$index oldIdx=$glIdx"
+	GetInstanceDoubleDb $index $gldb_HnbapEnb $glCurrentInstanceDb glIdx
+
+}
+
+
+################Send Part######################
+proc SendHnbRegisterReq { } {
+	global glHnbapStreamId
+
+	set hnbapId [dbHnbapEnbGet $::glEnbIdx HNBIdentity]
+	binary scan $hnbapId H* hnbapId
+	set cellid [htoi [dbHnbapEnbGet $::glEnbIdx CellIdentity]]
+	set plmnId [dbHnbapEnbGet $::glEnbIdx PlmnIdentity]
+	set rac [dbHnbapEnbGet $::glEnbIdx RAC] 
+	set lac [dbHnbapEnbGet $::glEnbIdx LAC]
+	set sac [dbHnbapEnbGet $::glEnbIdx SAC]
+	#set sctpDbIdx [DbGet $glHnbapDb $glIdx SctpDbIdx]
+	GetAssocIdxFromApId $::glEnbIdx
+	log "HNB $::glEnbIdx SCTP data will be sent on association $::glAssocIdx"
+	new  HNB_REGISTER s
+	wr s HnbapId $hnbapId
+	## to build HNB_LOC_INFO
+	new HNB_LOC_INFO loc_info
+	new MACRO_COVERAGE_INFO macro_cover_info
+	new UTRAN_CELLID utran_cellid
+	wr utran_cellid LAC $lac
+	wr utran_cellid RAC $rac
+	wr utran_cellid PLMNidentity $plmnId
+	wr utran_cellid CellID $cellid
+	#uTRANCellID_tag 1 CGI_tag 2
+	wr macro_cover_info Tag 1; ## utranCell id is used
+	wr macro_cover_info Value $utran_cellid
+	wr loc_info MacroCoverageInformation $macro_cover_info
+	wr s HnbapLocInfo $loc_info
+	wr s PlmnId $plmnId
+	wr s CellId $cellid
+	wr s LAC    $lac
+	wr s RAC    $rac
+	wr s SAC    $sac
+	
+	LogOutputMsg $s
+	SctpSendDataReq $s $glHnbapStreamId	  
+}
+
+proc SendHnbDeReg { causeType causeValue {backoffTimer ?} } {
+	global glIdx glHnbapStreamId
+	
+	new  HNB_DEREGISTER s
+	new CAUSE cause
+	wr cause Tag $causeType
+	wr cause Value $causeValue
+	wr s Cause $cause
+	wr s BackOffTimer $backoffTimer
+	LogOutputMsg $s	
+	GetAssocIdxFromApId [dbHnbapEnbThis]
+	SctpSendDataReq $s $glHnbapStreamId	  
+}
+
+proc SendHnbErrorInd { causeType causeValue {hnbapIdx ? } } {
+	global glIdx glHnbapStreamId
+
+	if { [IsVoid $hnbapIdx] } {
+		set hnbIdx $glIdx
+	} else {
+		set hnbIdx $hnbapIdx
+	}
+	
+	new  HNB_ERRORINDICATION s
+	new CAUSE cause
+	wr cause Tag $causeType
+	wr cause Value $causeValue
+	wr s Cause $cause
+	GetAssocIdxFromApId [dbHnbapEnbThis]
+	LogOutputMsg $s	
+	SctpSendDataReq $s $glHnbapStreamId
+}
+
+##########hnbap ue reg part ########
+proc SendHnbUeRegisterReq { {ueIdx ?} } {
+	global glIdx glHnbapStreamId glCommonDb
+	
+	if { [IsVoid $ueIdx] } {
+		set hnbapUeIdx $glIdx
+	} else {
+		set hnbapUeIdx $ueIdx
+	}
+		new  HNB_UEREGISTER s
+	new UE_ID ue_id
+	wr ue_id Tag 1; ## with imsi
+	#wr ue_id Value [GetImsiFrom24008Format [DbGet $glCommonDb $hnbapUeIdx IMSI]]
+	wr ue_id Value [GetBCDFormat [GetHumanImsiFrom24008 [DbGet $glCommonDb $hnbapUeIdx IMSI]]]
+	wr s UeId $ue_id
+	#   HNBAP_emergency_call = 0,HNBAP_normal_1 = 1
+	wr s RegCause 1; # normal
+	new UE_CAP ue_cap
+	wr ue_cap AS_Rel_Indicator [dbHnbapEnbUeGet $hnbapUeIdx AS_REL] 
+	wr ue_cap CSG_Indicator    [dbHnbapEnbUeGet $hnbapUeIdx CSG_IND]
+	wr s UE_Cap $ue_cap
+	
+	GetAssocIdxFromMsId $hnbapUeIdx
+
+	LogOutputMsg $s	
+	SctpSendDataReq $s $glHnbapStreamId	
+	
+}
+
+proc SendHnbUeDeReg { contextId causeType causeValue {ueIdx ?} } {
+	global glIdx glHnbapStreamId glCommonDb
+	
+	if { [IsVoid $ueIdx] } {
+		set hnbapUeIdx $glIdx
+	} else {
+		set hnbapUeIdx $ueIdx
+	}
+		new  HNB_UEDEREGISTER s
+	wr s ContextId $contextId
+	new CAUSE cause
+	wr cause Tag $causeType
+	wr cause Value $causeValue
+	wr s Cause $cause
+
+	GetAssocIdxFromMsId $hnbapUeIdx
+
+	LogOutputMsg $s	
+	SctpSendDataReq $s $glHnbapStreamId	
+	
+}
+
+proc SendOutRUAMessage {} {
+	global _sig glRuaStreamId 
+	set apId [rd _sig ApId]
+	set ne [lindex [dbEnbGet $apId CtlPeerNetElemList] 0]
+	lassign {neIdx neIpPort} $ne
+        dbHnbapAssocGetInst "${apId}-${neIdx}"	
+	LogOutputMsg $_sig
+	SctpSendDataReq $_sig $glRuaStreamId	
+}
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,74 @@
+
+       ___
+     /_\_/_\    PRISMA Engineering S.r.l.
+    |\ /_\ /|   Telecom testing solutions
+    | |   | |   Via Petrocchi, 4 - 20127 Milano (Italy)
+    |/|___|\|   Tel. +39 02 26113507 - Fax +39 02 26113597
+     \|/_\|/    info@prisma-eng.com - http://www.prisma-eng.com
+
+
+
+typedef VOID RUA_OM_CFG;
+
+typedef VOID RUA_OM_CFG_ACK;
+
+typedef {
+INT    Tag
+HEXSTR Value
+} INTRADOMAIN_NASNODE_SELECTOR;
+
+typedef {
+UINT				    IECriticality
+USHORT				IE_ID
+UINT				    TypeOfError
+} CRITICALITY_DIAGNOSTICS_IE_ITEM;
+
+typedef {
+UCHAR											ProcedureCode
+UINT 										    TriggeringMessage
+UINT										    ProcedureCriticality
+LIST_OF	CRITICALITY_DIAGNOSTICS_IE_ITEM		IEsCriticalityDiagnostics
+} CRITICALITY_DIAGNOSTICS;
+
+typedef {
+INT 			Tag
+UINT 			Value
+} CAUSE;
+
+typedef {
+UINT CnDomain
+UINT ContextId
+STRUCTURE INTRADOMAIN_NASNODE_SELECTOR IntraDomainNasNodeSelector
+UINT EstCause
+BINSTR RanapMsg
+STRING ApId
+} RUA_CONNECT;
+
+typedef {
+UINT CnDomain
+UINT ContextId
+BINSTR RanapMsg
+STRING ApId
+} RUA_DIRECTTRANSFER;
+
+typedef {
+UINT CnDomain
+UINT ContextId
+STRUCTURE CAUSE Cause
+BINSTR RanapMsg
+STRING ApId
+} RUA_DISCONNECT;
+
+typedef {
+BINSTR RanapMsg
+STRING ApId
+} RUA_CONNECTIONLESSTRANSFER;
+
+typedef {
+STRUCTURE CAUSE Cause
+STRUCTURE CRITICALITY_DIAGNOSTICS CriticalDiag
+STRING ApId
+} RUA_ERRORINDICATION;
+
+typedef VOID RUA_PRIVATEMESSAGE;
+

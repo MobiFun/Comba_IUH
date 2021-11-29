@@ -1,0 +1,357 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/scheduler/tags/scheduler-1.17.0/Scheduler.tsm $
+#
+# $Author: sergiol $
+#
+# Description: USER SCRIPT SCHEDULER
+#
+#
+# $Rev: 49820 $
+#
+# $Date: 2012-03-22 17:16:44 +0100 (Thu, 22 Mar 2012) $
+##############################################################
+
+include "sched/schedUtils.tsm"
+include "common/utils/generalUtils.tsm"
+
+set InstanceStarted 		0
+set GroupStarted 			0
+set MsStarted 			0
+set MsPassed 			0
+set MsFailed 			0
+set MsInProgress 			0
+set PassiveScriptFlag		0
+
+proc Init { DbPId profilename ScenarioCommand } {
+
+	global ScenarioPId ProfileName
+
+	set ProfileName $profilename
+
+	set ScenarioPId [spawn "$ScenarioCommand $DbPId"]
+	logscr "Spawning profile $ProfileName using scenario [lindex $ScenarioCommand 0] with PId $ScenarioPId"
+
+	nextstate Router
+}
+
+state Router {
+	PASSIVE_SCRIPT {
+		global PassiveScriptFlag
+		set PassiveScriptFlag 1
+	}
+    run_sync {
+		global ScenarioPId _sig
+                
+    		set s START_SYNC
+			send s $ScenarioPId
+    }
+    sendsig {
+        global ScenarioPId _sig
+            set s "[lrange $_sig 1 end]"
+            send s $ScenarioPId
+    }
+    sendsig_sync {
+		global ScenarioPId _sig
+                
+    		set s "[lrange $_sig 1 end]"
+			send s $ScenarioPId
+    }
+	  runall {
+
+        global ScenarioType NumMobile ProfileName
+        global ScenarioPId _sig
+
+                        set ScenarioType [lindex $_sig 1]
+                        set NumMobile [lindex $_sig 2]         
+                        if { ![IsVoid $ScenarioType] && ![IsVoid $NumMobile] } {
+                                        set mySig STARTALL 
+                                        lappend mySig $ScenarioType
+                                        lappend mySig $NumMobile
+                                        send mySig $ScenarioPId
+                                log " ScenarioType= $ScenarioType NumMobile=$NumMobile"
+                        } elseif { ![IsVoid $ScenarioType] } {
+                                logscr " You have to choose the Snario to be started between sms and call"      
+                        } else {
+                                 logscr " You have to specify the Mt Ms Number"
+                        }
+    }
+	run {
+		global ScenarioPId _sig PassiveScriptFlag
+		global InterArrivalTime IterationLimit GroupInterArrivalTime GroupIterationLimit T_NEW_ITERATION_id T_NEW_GROUP_ITERATION_id
+		global GroupStarted InstanceStarted ProfileName MsStarted MsInProgress MsPassed MsFailed
+		global RandomTraffic 
+
+		log "Scheduler:run:_sig=$_sig"
+
+		if { $PassiveScriptFlag != "1" } {
+
+			if { [string equal [lindex $_sig 1] "-r"] } {
+				set RandomTraffic 1
+				set _sig [lreplace $_sig 1 1]
+			} else {
+				set RandomTraffic 0
+			}
+
+			set InstanceStarted 		0
+			set GroupStarted 			0
+
+			switch [llength $_sig] {
+			1 {
+				set InterArrivalTime		1
+				set IterationLimit		1
+				set GroupInterArrivalTime	1
+				set GroupIterationLimit		1
+				}
+			2 {
+				set InterArrivalTime		[lindex $_sig 1]
+				set IterationLimit		0
+				set GroupInterArrivalTime	1
+				set GroupIterationLimit		1
+				}
+			3 {
+				set InterArrivalTime		[lindex $_sig 1]
+				set IterationLimit		[lindex $_sig 2]
+				set GroupInterArrivalTime	1
+				set GroupIterationLimit		1
+				}
+			4 {
+				set InterArrivalTime		[lindex $_sig 1]
+				set IterationLimit		[lindex $_sig 2]
+				set GroupInterArrivalTime	[lindex $_sig 3]
+				set GroupIterationLimit		0
+				}
+			5 - default {
+				set InterArrivalTime		[lindex $_sig 1]
+				set IterationLimit		[lindex $_sig 2]
+				set GroupInterArrivalTime	[lindex $_sig 3]
+				set GroupIterationLimit		[lindex $_sig 4]
+				}
+			}
+
+			if { $InterArrivalTime != 0 } {
+
+		
+				set T_NEW_ITERATION_id		[ tmrnew T_NEW_ITERATION $InterArrivalTime ]
+				set T_NEW_GROUP_ITERATION_id	[ tmrnew T_NEW_GROUP_ITERATION $GroupInterArrivalTime ]
+
+				set s START
+				send s $ScenarioPId
+				incr GroupStarted
+				incr InstanceStarted
+				incr MsStarted
+				incr MsInProgress
+
+				log "MS $ProfileName STARTED"
+				log "$ProfileName: Started $MsStarted: Passed $MsPassed: Failed $MsFailed: In Progress $MsInProgress."
+
+				if { $IterationLimit == 0 } {
+					UpdateInterArrivalTime 
+					tmrstart $T_NEW_ITERATION_id
+				} else {
+					if { $InstanceStarted < $IterationLimit } {
+						UpdateInterArrivalTime 
+						tmrstart $T_NEW_ITERATION_id
+					}
+					if { ($GroupIterationLimit == 0) || ($GroupStarted < $GroupIterationLimit) } {
+						tmrstart $T_NEW_GROUP_ITERATION_id
+					}
+				}
+			}
+		}
+	}
+	runonevent {
+		global _sig glRunArrayPars
+		# Store all the passed paameters in order to use them when the Event will arrive
+		set len [expr [llength $_sig] - 1]
+		set glRunArrayPars ""
+		for {set i 0} {$i<$len} {incr i} {
+			lappend glRunArrayPars [lindex $_sig [expr $i +1]]
+		}
+		log "runonevent: _sig=$_sig glRunArrayPars=$glRunArrayPars"
+		nextstate WaitForEvent
+	}
+	stop {
+		global T_NEW_ITERATION_id T_NEW_GROUP_ITERATION_id
+
+        if { [info exists T_NEW_ITERATION_id]  && ![IsVoid $T_NEW_ITERATION_id] \
+			&& [info exists T_NEW_GROUP_ITERATION_id]  && ![IsVoid $T_NEW_GROUP_ITERATION_id] } {
+	        tmrstop $T_NEW_ITERATION_id
+    	    tmrstop $T_NEW_GROUP_ITERATION_id
+		}
+
+    }
+	update {
+
+        global MsInProgress ProfileName
+        global ScenarioPId _sig
+
+        if { [info exists MsInProgress] && ($MsInProgress == 0) } {
+
+			set T_new_timer [lindex $_sig 1]
+				if { $T_new_timer != "" } {
+					set mySig UPDATE
+					lappend mySig $T_new_timer
+					send mySig $ScenarioPId
+				}
+
+        } elseif { [info exists MsInProgress] && ($MsInProgress > 0) } {
+
+			logscr "You have to stop first the profile $ProfileName"
+
+		} elseif { ![info exists MsInProgress] } {
+
+			set T_new_timer [lindex $_sig 1]
+			set mySig UPDATE
+			lappend $mySig $T_new_timer
+			send mySig $ScenarioPId
+		}
+    }
+	status {
+		global ProfileName MsStarted MsInProgress MsPassed MsFailed
+		set StrToSend "$ProfileName: Started $MsStarted: Passed $MsPassed: Failed $MsFailed: In Progress $MsInProgress."
+		RespondToRemote $StrToSend
+		log $StrToSend
+	}
+	clear {
+		global ProfileName MsStarted MsInProgress MsPassed MsFailed
+
+		set MsStarted 0
+		set MsPassed 0
+		set MsFailed 0
+
+		set StrToSend "$ProfileName: Started $MsStarted: Passed $MsPassed: Failed $MsFailed: In Progress $MsInProgress."
+		RespondToRemote $StrToSend
+		log $StrToSend
+	}
+	reset {
+        global ScenarioPId ProfileName
+        remcmd $ScenarioPId "ResetAllCounters"
+        set StrToSend "$ProfileName: Counters Reset"
+		RespondToRemote $StrToSend
+		log $StrToSend
+    }
+	delete {
+		global ScenarioPId
+		set s DELETE
+		send s $ScenarioPId
+	}
+	DELETED {
+		#global ProfileName
+		#set StrToSend "$ProfileName: Deleted."
+		#RespondToRemote $StrToSend
+		#log $StrToSend
+		RespondToRemote "OK"
+
+		stop
+	}
+	UPDATED {
+		global ProfileName
+		set StrToSend "$ProfileName: Updated."
+		RespondToRemote $StrToSend
+		log $StrToSend
+	}
+	CLEAR {
+		global _sig ProfileName MsStarted MsInProgress MsPassed MsFailed 
+
+		set MsStarted 0
+		set MsPassed 0
+		set MsFailed 0
+		set MsInProgress 0
+		log "$ProfileName: Started $MsStarted: Passed $MsPassed: Failed $MsFailed: In Progress $MsInProgress."
+	}
+	STARTED {
+		global _sig ProfileName MsStarted MsInProgress MsPassed MsFailed 
+		incr MsStarted
+		incr MsInProgress
+		log "MS [lindex $_sig 1] $ProfileName STARTED"
+		log "$ProfileName: Started $MsStarted: Passed $MsPassed: Failed $MsFailed: In Progress $MsInProgress."
+	}
+	PASS {
+		global _sig ProfileName MsStarted MsInProgress MsPassed MsFailed 
+		incr MsPassed
+		incr MsInProgress -1
+		log "MS [lindex $_sig 1] $ProfileName PASSED"
+		log "$ProfileName: Started $MsStarted: Passed $MsPassed: Failed $MsFailed: In Progress $MsInProgress."
+	}
+	FAIL {
+		global _sig ProfileName MsStarted MsInProgress MsPassed MsFailed 
+		incr MsFailed
+		incr MsInProgress -1
+		log "MS [lindex $_sig 1] $ProfileName FAILED"
+		log "$ProfileName: Started $MsStarted: Passed $MsPassed: Failed $MsFailed: In Progress $MsInProgress."
+	}
+	T_NEW_ITERATION {
+		global ScenarioPId T_NEW_ITERATION_id InstanceStarted ProfileName MsStarted MsInProgress MsPassed MsFailed IterationLimit
+		set s START
+		send s $ScenarioPId
+		incr InstanceStarted
+		incr MsStarted
+		incr MsInProgress
+		log "MS $ProfileName STARTED"
+		log "$ProfileName: Started $MsStarted: Passed $MsPassed: Failed $MsFailed: In Progress $MsInProgress."
+		if { ($IterationLimit == 0) || ($InstanceStarted < $IterationLimit) } {
+			UpdateInterArrivalTime 
+			tmrstart $T_NEW_ITERATION_id
+		}
+	}
+	T_NEW_GROUP_ITERATION {
+		global ScenarioPId T_NEW_ITERATION_id T_NEW_GROUP_ITERATION_id
+		global GroupStarted InstanceStarted ProfileName MsStarted MsInProgress MsPassed MsFailed
+		global IterationLimit GroupIterationLimit
+		set s START
+		send s $ScenarioPId
+		set InstanceStarted 1
+		incr GroupStarted
+		incr MsStarted
+		incr MsInProgress
+#		logscr "$ProfileName: Started $MsStarted: Passed $MsPassed: Failed $MsFailed: In Progress $MsInProgress."
+		if { ($GroupIterationLimit == 0) || ($GroupStarted < $GroupIterationLimit) } {
+			tmrstart $T_NEW_GROUP_ITERATION_id
+		}
+		if { $InstanceStarted < $IterationLimit } {
+			UpdateInterArrivalTime 
+			tmrstart $T_NEW_ITERATION_id
+		}
+	}
+	VIDEOCALLNOTSUPPORTED {
+		global _sig ProfileName MsStarted MsInProgress MsPassed MsFailed 
+		log "MS [lindex $_sig 1] $ProfileName VIDEOCALLNOTSUPPORTED"
+		log "$ProfileName: Switching Video->Voice Call for MS [lindex $_sig 1]."
+	}
+	default {
+		global _sig ScenarioPId
+		send _sig $ScenarioPId
+	}
+}
+
+state WaitForEvent {
+	EVENT {
+		global glRunArrayPars ScenarioPId _self
+		set s "run"
+		set len [llength $glRunArrayPars]
+		for {set i 0} {$i<$len} {incr i} {
+			lappend s [lindex $glRunArrayPars $i]
+		}
+		logscr "s=$s"
+		send s $_self
+		nextstate Router
+	}
+	default {
+		Unexpected
+	}
+}
+
+proc UpdateInterArrivalTime {} {
+
+	global T_NEW_ITERATION_id InterArrivalTime RandomTraffic 
+
+	if { $RandomTraffic == 1 } {
+		tmrset $T_NEW_ITERATION_id		[ expr {int( -log(rand()) * $InterArrivalTime )} ]
+	}
+}
+
+proc Any {} {
+
+	global _sig
+	logscr "received unexpected signal $_sig"
+}

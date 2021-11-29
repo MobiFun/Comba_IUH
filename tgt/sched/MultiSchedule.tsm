@@ -1,0 +1,572 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/scheduler/tags/scheduler-1.17.0/MultiSchedule.tsm $
+#
+# $Author: sergiol $
+#
+# Description: MAIN SCRIPT SCHEDULER
+#
+#
+# $Rev: 49821 $
+#
+# $Date: 2012-03-22 17:17:54 +0100 (Thu, 22 Mar 2012) $
+##############################################################
+
+include sched/schedUtils.tsm
+
+proc Init { } {
+
+	# BackWard Compatibility
+	global DbPId
+	set DbPId 0; #not used by any script
+
+	logscr ""
+	logscr "MultiSchedule.tsm Started, Waiting for UDP Client Request ..."
+	logscr ""
+
+	# Check if the Test Manager is splitted or not
+	if { [llength [info commands isSplitted]] } {
+		if { [isSplitted] } {
+			if { ![ismaster] } {
+				initslave
+			}
+		}
+	}
+
+	if { [llength [info commands isServerMode]] } {
+		if { [isServerMode] } {
+			if { [IsChild] } {
+				logscr "Child Tstm launched"
+				set stackCtlScript [GetStackScript]
+				global glStackPid
+				set glStackPid [spawn $stackCtlScript]
+				logscr "Spawned pid = $glStackPid"
+			} else {
+			}
+		} else {
+		}
+	} else {
+	}
+
+	global env
+	if {[info exists env(TSTM_MULTISCHED_SEND_START)] && $env(TSTM_MULTISCHED_SEND_START)} {
+		RespondToRemote "START"
+		logscr "Send START command"
+	}
+
+	nextstate WaitForUserPath
+}
+
+proc get_profile_pid { Profile } {
+	global SchedulerPId
+
+	if {[info exists SchedulerPId($Profile)]} {
+		set pid $SchedulerPId($Profile)
+	} else {
+		logscr "Profile $Profile not yet created"
+		set pid -1
+	}
+
+	return $pid
+}
+
+###------------------------------------------------------------------###
+###---- Monitor Handling functions ----------------------------------###
+
+proc AddScnToMonitor { name } {
+	global SchedulerPId 
+
+	# Set Profile Pid
+	set pid [expr {$SchedulerPId($name) + 1}]
+
+	monNewProcess $name $pid
+	log "AddScnToMonitor: name=$name pid=$pid"
+}
+
+proc RemScnToMonitor { name } {
+	global SchedulerPId 
+
+	# Set Profile Pid
+	set pid [expr {$SchedulerPId($name) + 1}]
+
+	monDeletePid $pid
+	log "RemScnToMonitor: pid=$pid"
+}
+
+###------------------------------------------------------------------###
+###---- Configuration functions -------------------------------------###
+
+proc UpdateConfiguration { command } {
+
+	logscr "UpdateConfiguration:command=($command)"
+	set fname [lindex $command 1]
+	if { [string equal $fname ""] } {
+		logscr "Error: \"cfgupdate\" value missing"
+		return
+	}
+	
+	set fext [file extension $fname]
+	switch $fname {
+		".tgz" 		{ set topt "xvzf" }
+		default		{ set topt "xvf" }
+	}
+
+	set dname [file dirname $fname]
+
+	logscr "UpdateConfiguration: exec tar $topt $fname -C $dname"
+	set ret [catch {exec tar $topt $fname -C $dname} res] 
+	if { $ret != 0 } {
+		logscr "Error: \"cfgupdate\" $res "
+		### return
+	}
+
+	# This is not needed
+	#set ret [catch {exec date +%F-%k-%M-%S} res] 
+	#if { $ret != 0 } {
+	#	logscr "Error: \"cfgupdate\" $res "
+	#	return
+	#}
+	#append newfname $dname "/" $res "-" [file tail $fname]
+	#file rename $fname $newfname
+
+	RespondToRemote "OK"
+
+	nextstate ListenRemoteSocket
+}
+
+###------------------------------------------------------------------###
+
+state WaitForUserPath {
+	RMT_CTRL_REQ {
+		global SchedulerPId ScriptPId
+
+		#global _sig; logscr "_sig=$_sig"
+
+		set Command [ExtractRemoteCommand]
+
+		#logscr "WaitForUserPath: Command=$Command"
+
+		switch [lindex $Command 0] {
+			userpath {
+				set path [lindex $Command 1]
+				if { [string equal $path ""] } {
+                		logscr "Error: \"userpath\" value missing" 
+                		return
+				}
+				# The string __null is used as empty pah
+				if { [string compare $path "__null"] } {
+					addpath $path
+				} else {
+					logscr "Found empty path"
+				}
+				RespondToRemote "OK"
+				nextstate ListenRemoteSocket
+			}
+			cfgupdate {
+				UpdateConfiguration $Command
+			}
+			kill {
+				logscr "Exiting Test Manager upon request of client"
+				RespondToRemote "OK"
+				exit
+			}
+			default	{logscr "Error: \"userpath\" command missing"}
+		}
+		}
+	default 		Any
+}
+
+state ListenRemoteSocket {
+	RMT_DATA_REQ {
+		global _sig SchedulerPId
+        # Data ::= <profile> <linkSet> <binData>
+        #    <profile> ::= 32 ASCII char, right aligned, blank filled
+        #    <linkSet> ::= 2 byte signed int
+        #    <binData> ::= binary data to be forwarded
+        set Data [rd _sig Data]
+        binary scan $Data A32 Profile
+        set Profile [string trim $Profile]
+		log "ListenRemoteSocket.RMT_DATA_REQ: Profile=($Profile)"
+		if {[info exists SchedulerPId($Profile)]} {
+			# set s "forward [lrange $Command 2 end]"
+			log "ListenRemoteSocket.RMT_DATA_REQ: forward to $SchedulerPId($Profile)"
+			send _sig $SchedulerPId($Profile)
+		} else {
+			log "=> ListenRemoteSocket.RMT_DATA_REQ: $Profile Not Created Yet!"
+		}
+    }
+
+	RMT_CTRL_REQ {
+
+		#global _sig; logscr "_sig=$_sig"
+
+		global SchedulerPId ScriptPId
+		set Command [ExtractRemoteCommand]
+
+		switch [lindex $Command 0] {
+			execute {
+				global DbPId Script
+				set Script [lindex $Command 1]
+				if {[info exists ScriptPId($Script)]} {
+					RespondToRemote "$Script already executing!"
+				} else {
+					set ScriptPId($Script) [spawn "$Script $DbPId [lrange $Command 2 end]"]
+					logscr "spawned process $ScriptPId($Script) to execute $Script"
+					nextstate WaitExecuteOk
+				}
+			}
+			exec_immediate_resp {
+				global DbPId Script
+				set Script [lindex $Command 1]
+				if {[info exists ScriptPId($Script)]} {
+					RespondToRemote "$Script already executing!"
+				} else {
+					set ScriptPId($Script) [spawn "$Script $DbPId [lrange $Command 2 end]"]
+					logscr "spawned process $ScriptPId($Script) to execute $Script"
+					RespondToRemote "OK"
+					nextstate WaitExecuteOkNoResp
+				}
+			}
+			create {
+				global DbPId
+				set Profile [lindex $Command 1]
+				if {[info exists SchedulerPId($Profile)]} {
+					RespondToRemote "$Profile already created!"
+				} else {
+					set SchedulerPId($Profile) [spawn "sched/Scheduler.tsm $DbPId $Profile [list [lrange $Command 2 end]]"]
+					if { [llength [info commands saveprofilepid]] } {
+						saveprofilepid $Profile $SchedulerPId($Profile)
+					}
+					logscr "spawned process $SchedulerPId($Profile) to schedule $Profile"
+					AddScnToMonitor $Profile
+					RespondToRemote "OK"
+				}
+			}
+			create_sync {
+				global DbPId
+				set Profile [lindex $Command 1]
+				if {[info exists SchedulerPId($Profile)]} {
+					RespondToRemote "$Profile already created!"
+				} else {
+					set SchedulerPId($Profile) [spawn "sched/Scheduler.tsm $DbPId $Profile [list [lrange $Command 2 end]]"]
+					if { [llength [info commands saveprofilepid]] } {
+						saveprofilepid $Profile $SchedulerPId($Profile)
+					}
+					logscr "spawned process $SchedulerPId($Profile) to schedule $Profile"
+					log "create_sync"
+					AddScnToMonitor $Profile
+					#RespondToRemote "OK"
+					nextstate WaitForCreateSyncOk
+				}
+			}
+
+			run {
+				set Profile [lindex $Command 1]
+				if {[info exists SchedulerPId($Profile)]} {
+					set s "run [lrange $Command 2 end]"
+					logscr "sending signal $s to $SchedulerPId($Profile)"
+					send s $SchedulerPId($Profile)
+					RespondToRemote "OK"
+				} else {
+					RespondToRemote "$Profile Not Created!"
+				}
+			}
+			
+			 runall {
+                                set Profile [lindex $Command 1]
+                                if {[info exists SchedulerPId($Profile)]} {
+                                        set s "runall [lrange $Command 2 end]"
+                                        logscr "sending signal $s to $SchedulerPId($Profile)"
+                                        send s $SchedulerPId($Profile)
+                                        RespondToRemote "OK"
+                                } else {
+                                        RespondToRemote "$Profile Not Created!"
+                                }
+                        }
+			
+			run_sync {
+				set Profile [lindex $Command 1]
+				if {[info exists SchedulerPId($Profile)]} {
+					set s "run_sync [lrange $Command 2 end]"
+					logscr "sending signal $s to $SchedulerPId($Profile)"
+					send s $SchedulerPId($Profile)
+					#RespondToRemote "OK"
+					nextstate WaitRunSyncOk
+				} else {
+					RespondToRemote "$Profile Not Created!"
+				}
+			}
+			runonevent {
+				set Profile [lindex $Command 1]
+				if {[info exists SchedulerPId($Profile)]} {
+					set s "runonevent [lrange $Command 2 end]"
+					logscr "sending signal $s to $SchedulerPId($Profile)"
+					send s $SchedulerPId($Profile)
+					RespondToRemote "OK"
+				} else {
+					RespondToRemote "$Profile Not Created!"
+				}
+
+			}
+			stop {
+				set Profile [lindex $Command 1]
+				if {[info exists SchedulerPId($Profile)]} {
+					set s "stop [lrange $Command 2 end]"
+					logscr "sending signal $s to $SchedulerPId($Profile)"
+					send s $SchedulerPId($Profile)
+					RespondToRemote "OK"
+				} else {
+					RespondToRemote "$Profile Not Created!"
+				}
+			}
+			update {
+				set Profile [lindex $Command 1]
+				if {[info exists SchedulerPId($Profile)]} {
+					set s "update [lrange $Command 2 end]"
+					logscr "sending signal $s to $SchedulerPId($Profile)"
+					send s $SchedulerPId($Profile)
+					RespondToRemote "OK"
+				} else {
+					RespondToRemote "$Profile Not Created!"
+				}
+			}
+			status {
+				set Profile [lindex $Command 1]
+				if {[info exists SchedulerPId($Profile)]} {
+					set s "status [lrange $Command 2 end]"
+					logscr "sending signal $s to $SchedulerPId($Profile)"
+					send s $SchedulerPId($Profile)
+				} else {
+					RespondToRemote "$Profile Not Created!"
+				}
+			}
+			clear {
+				set Profile [lindex $Command 1]
+				if {[info exists SchedulerPId($Profile)]} {
+					set s "clear [lrange $Command 2 end]"
+					logscr "sending signal $s to $SchedulerPId($Profile)"
+					send s $SchedulerPId($Profile)
+				} else {
+					RespondToRemote "$Profile Not Created!"
+				}
+			}
+			reset {
+				set Profile [lindex $Command 1]
+				if {[info exists SchedulerPId($Profile)]} {
+				    set s "reset [lrange $Command 2 end]"
+				    logscr "sending signal $s to $SchedulerPId($Profile)"
+				    send s $SchedulerPId($Profile)
+				} else {
+				    logscr "NOT FOUND"
+				    RespondToRemote "$Profile Not Created!"
+				}
+			}
+			delete {
+				set Profile [lindex $Command 1]
+				if {[info exists SchedulerPId($Profile)]} {
+					set s "delete [lrange $Command 2 end]"
+					logscr "sending signal $s to $SchedulerPId($Profile)"
+                    			RemScnToMonitor $Profile
+					send s $SchedulerPId($Profile)
+					unset SchedulerPId($Profile)
+				} else {
+					RespondToRemote "$Profile Not Created!"
+				}
+			}
+			rpc {
+				logscr "DEBUG (ListenRemoteSocket): Command=$Command ##"
+				set pid [lindex $Command 1]
+				#set remcommand [lindex $Command 2]
+				set remcommand [lrange $Command 2 end]
+				logscr "DEBUG (ListenRemoteSocket): remcommand=$remcommand ##"
+				remcmd $pid "$remcommand"
+				RespondToRemote "OK"
+			}
+			sendsig_sync {
+				set len [llength $Command]
+				set Profile [lindex $Command 1]
+				if {[info exists SchedulerPId($Profile)]} {
+					set s "sendsig_sync [lrange $Command 2 end]"
+					logscr "sending signal $s to $SchedulerPId($Profile)"
+					send s $SchedulerPId($Profile)
+					#RespondToRemote "OK"
+					nextstate WaitSigSyncOk
+				} else {
+					RespondToRemote "$Profile Not Created!"
+				}
+			}
+			sendsig {
+				set len [llength $Command]
+				set Profile [lindex $Command 1]
+				if {[info exists SchedulerPId($Profile)]} {
+					set s "sendsig [lrange $Command 2 end]"
+					logscr "sending signal $s to $SchedulerPId($Profile)"
+					send s $SchedulerPId($Profile)
+					RespondToRemote "OK"
+				} else {
+					RespondToRemote "$Profile Not Created!"
+				}
+			}
+			userpath {
+				set path [lindex $Command 1]
+				if { [string equal $path ""] } {
+					logscr "Error: \"userpath\" value missing"
+					return
+				}
+				addpath $path
+				RespondToRemote "OK"
+				nextstate ListenRemoteSocket
+			}
+			monitor {
+				#logscr "Monitor: [lrange $Command 1 end]"
+				RespondToRemote [monitor $Command]
+			}
+			cfgupdate {
+				UpdateConfiguration $Command
+			}
+			printprofile {
+				logscr "PRINTING PROFILING"
+				TclProf_PrintMeasure
+				logscr "PROFILING TERMINATED"
+				exit
+			}
+			kill {
+				logscr "Exiting Test Manager on request of client"
+				RespondToRemote "OK"
+				exit
+			}
+			setcfgfile {
+				global _sig glStackPid
+				
+				send _sig $glStackPid
+				RespondToRemote "OK"
+			}
+			setmsdbfile {
+				global _sig glStackPid
+				
+				send _sig $glStackPid
+				RespondToRemote "OK"
+			}
+			dbmodify {
+				set dbName [lindex $Command 1]
+				set index [lindex $Command 2]
+				set field [lindex $Command 3]
+				set value [lindex $Command 4]
+				DbSet $dbName $index $field $value
+				RespondToRemote "OK"
+			}
+			profiler {
+				set actiontype [lindex $Command 1]
+				switch $actiontype {
+					"start" {
+						logscr "start enter"
+						TclProf_StartMeasure
+						logscr "start output"
+					}
+					"stop" {
+						logscr "stop enter"
+						TclProf_StopMeasure
+						logscr "stop output"
+					}
+					"print"  {
+						logscr "print enter"
+						TclProf_PrintMeasure 
+						logscr "print output"
+					}
+					"default" {
+						logscr "(lindex $Command 1)=[lindex $Command 1]"
+						logscr "ListenRemoteSocket: unexpected remote command [lindex $Command 0]"
+					}
+				}
+				RespondToRemote "OK"
+			}
+			default {
+				logscr "ListenRemoteSocket: unexpected remote command [lindex $Command 0]"
+			}
+		}
+	}
+	default 		Any
+}
+
+state WaitExecuteOk {
+	EXECUTE_OK	{
+		global _sig ScriptPId Script
+		unset ScriptPId($Script)
+		logscr "received $_sig"
+		RespondToRemote "OK"
+		nextstate ListenRemoteSocket
+	}
+	RMT_CTRL_REQ {
+
+		#global _sig; logscr "_sig=$_sig"
+
+		global SchedulerPId ScriptPId
+		set Command [ExtractRemoteCommand]
+
+		switch [lindex $Command 0] {
+			kill {
+				logscr "Exiting Test Manager upon request of client"
+				RespondToRemote "OK"
+				exit
+			}
+			default {
+				logscr "WaitExecuteOk: unexpected remote command [lindex $Command 0]"
+			}
+		}
+	}
+	default 		Any
+}
+
+state WaitExecuteOkNoResp {
+	EXECUTE_OK	{
+		global _sig ScriptPId Script
+		unset ScriptPId($Script)
+		logscr "received $_sig"
+		nextstate ListenRemoteSocket
+	}
+	kill {
+		logscr "Exiting Test Manager upon request of client"
+		RespondToRemote "OK"
+		exit
+	}
+	default 		Any
+}
+
+state WaitForCreateSyncOk {
+	CREATE_SYNC_OK	{
+		logscr "Received CREATE_SYNC_OK"
+		RespondToRemote "OK"
+		nextstate ListenRemoteSocket
+	}
+	default Any
+}
+
+state WaitRunSyncOk {
+	START_SYNC_OK	{
+		global _sig ScriptPId Script
+		#unset ScriptPId($Script)
+		logscr "WaitRunSyncOk. received $_sig"
+		RespondToRemote "OK"
+		nextstate ListenRemoteSocket
+	}
+	default 		Any
+}
+
+state WaitSigSyncOk {
+	SIG_SYNC_OK	{
+		global _sig ScriptPId Script
+		logscr "WaitSigSyncOk. received $_sig"
+        set resp [lrange $_sig 1 end]
+        log "resp = $resp"
+		RespondToRemote $resp 
+		nextstate ListenRemoteSocket
+	}
+	default 		Any
+}
+
+proc Any {} {
+	global _sig _state
+
+	logscr "Received an unexpected signal [lindex $_sig 0]"
+	log "Received signal $_sig in state $_state"
+#	abort "Closing TestManager: inconsistent requests from UDP Clients"
+}

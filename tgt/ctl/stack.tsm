@@ -1,0 +1,769 @@
+##############################################################
+# $URL: http://192.168.13.118/svn/tm/A_Tm/trunk/tgt/ctl/stack_a.tsm $
+#
+# $Author: carlom $
+#
+# Description: TSTM STACK CONTROL
+#
+#
+# $Rev: 38149 $
+#
+# $Date: 2012-07-24 15:28:21 +0200 (Tue, 24 Jul 2012) $
+##############################################################
+
+##############################################################
+# INIT
+# ARGUMENTS:
+# 1 - Configuration file
+# 2 - Common Database
+# 3 - Number of MS
+##############################################################
+
+proc Init { dummy cfgFile commonMsDbName msNum {commonGrCallRefDbName "?"} } {
+
+	# Declare and Initialize Global Variables 
+	global __bsc_db __mscemu_enabled env __disp_db
+	global glCfgFile glBscDb glBscIdx glCommonDb glGrCallRefDb
+	global __netStatPeriodSecs __netStatInterface glNetStatTimer
+	global _heartBeat_counter 
+
+	#include files                 
+	include "common/utils/generalUtils.tsm"
+	include "common/utils/Ss7SaalUtils.tsm"
+	include "common/utils/L3Utils.tsm"
+	include "ctl/userplane.tsm"
+
+	# Add Path for Handling Data Base
+	set pathList [split $env(IUH_CS_COMBA_TSTM_SCRIPT_DIR) :]
+	set pathRoot [lindex $pathList end]
+	addpath "$pathRoot/common/dbscripts"
+	addpath "$pathRoot/common/utils"
+	addpath "$pathRoot/protocols/BSSAPPLUS"
+	addpath "$pathRoot/protocols/BSSAP"
+    addpath [GetScriptsDir IUH_CS_COMBA_TSTM_SCRIPT_DIR]/LSUSIM
+
+	# Register the Test Manager
+	register "TM"
+
+	set glCfgFile $cfgFile
+	uplevel #0 include $glCfgFile
+
+	SetNetside
+
+	# Carlo 25/11/2010 ---------------- #
+	# SVN Revision Checking #
+	if { [info exists ::__urlCfg] && [info exists ::__revCfg] } {
+		if { [info exists ::__cfgVersionTested] } {
+			if { [string compare [Version "cfg" $::__urlCfg $::__revCfg] $::__cfgVersionTested] < 0 } {
+				logscr "Tstm tested with [GetName $::__urlCfg "cfg"] version: $::__cfgVersionTested ... "
+				logscr "Updating of the [GetName $::__urlCfg "cfg"] is necessary"
+				exit
+			} else {
+				logscr "[GetName $::__urlCfg "cfg"]: REV OK"
+			}
+		} else {
+			log "[GetName $::__urlCfg "cfg"]: [Version "cfg" $::__urlCfg $::__revCfg]"
+		}
+	} else {
+		log "SVN Revision checking of the cfg file isn't possible because the cfg file doesn't include the necessary global variable"
+	}
+	# ------------------------- #
+
+	# Create Common Ms Db
+	set glCommonDb [DbGetName $commonMsDbName]
+
+	if { [CnSide] } {
+		# Nuova gestione nel caso di load (Carlo TMA-425)
+		spawn "DbCreate.tsm -a $commonMsDbName.csv MsNumber"
+	} else {
+		spawn "DbCreate.tsm $commonMsDbName.csv"
+	}
+
+	# TODO: Add code here for the modification of Db about IMSI/PLMN/MSISDN
+	ConvertFromHumanReadablePars $glCommonDb
+
+	if { [CnSide] } {
+		# Carlo TMA-425
+		# called number field management
+		OwnNumHdl
+	}
+
+	# Initialize Bsc Instance
+	set glHnbIdx 0
+
+	# Allocation of Ms (or similar entities)
+	if { [string is integer -strict $msNum] } {
+		ms_alloc $msNum
+	} elseif { [string compare $msNum ""] } {
+		abort "Unexpected Maximum Number of user entities ($msNum)"
+	} else {
+		logscr "Maximum Number of user entities not set"
+	}
+	#Create the GroupCallReference Db
+
+	set glGrCallRefDb "No File provided"
+
+
+	# Enable Message Dump from Server 
+	dump_on
+
+	# Initial Display
+	logscr "Stack Control Script Started ..."
+	logscr "Configuration File:                 $glCfgFile"
+
+	if { ![info exists __mscemu_enabled] } {
+		logscr "Common Data Base:                   $glCommonDb"
+		logscr "GroupCallReference Data Base:       $glGrCallRefDb"
+		logscr "Maximum Number of Mobiles (plus 1): $msNum"
+	}
+
+
+	# Start OM process
+	StartOm
+
+
+	global glLsuSimMngPid
+	if { [MsSide] } {
+		global glLsuSimSrvToStart
+		
+		set glLsuSimSrvToStart [CheckSimcard $glCommonDb]
+        log "Init: glLsuSimSrvToStart=$glLsuSimSrvToStart"
+
+		set glLsuSimMngPid [spawn "lsu_sim_mng.tsm $glCfgFile"]
+
+		typedef {VOID LSU_SIM_STARTED}
+	} else {
+		set glLsuSimMngPid "?"
+	}
+
+	# Initialize counter OmHeartBeatReq Signal Received
+	#set _heartBeat_counter 0
+}
+
+##############################################################
+# AUXILIARY PROCEDURES
+##############################################################
+
+proc OmStopHdl { } {
+
+	# Global Variables
+	global _sig
+
+	LogInputMsg $_sig
+
+	# Handle Bring Down Here
+
+  	nextstate Inactive
+}
+
+##############################################################
+# START OM
+##############################################################
+
+proc StartOm { } {
+	
+	# spawn OM script
+	set ::glOmPid [spawn [list om/om.tsm $::glCfgFile]]
+
+	new OM_START s
+
+	send s
+	LogOutputMsg $s
+
+	nextstate WaitOmStartAck
+}
+
+##############################################################
+# START HNBAP
+##############################################################
+
+proc StartHnbap { } {
+	global glHnbapPid
+	LogInputSig
+
+	set hnbapDir protocols/HNBAP
+
+	set glHnbapPid [spawn [list $hnbapDir/hnbap.tsm $::glCfgFile $::glCommonDb]]
+
+	nextstate WaitHnbapAck
+}
+
+
+##############################################################
+# START BSSAP
+##############################################################
+
+proc StartBssap { } {
+	
+	global __l3_on __tm_top glCfgFile glCommonDb 
+	global glBssapPid glHnbapPid
+
+	LogInputSig
+
+	# Bssap directory 
+	set BssapDir protocols/BSSAP
+
+	# spawn BSSAP script
+	# Leon: Just consider HNB AP side scripts
+	set bssap_name bssap_hnb.tsm
+
+	set bssapAlName BSSAPrua.tsm
+	set glBssapPid [spawn [list $BssapDir/$bssap_name $glCfgFile \
+              				  $glCommonDb $BssapDir/$bssapAlName \
+								$glHnbapPid ]]
+
+	# config BSSAP
+	new BSSAP_OM_CFG s
+	
+	send s
+	LogOutputMsg $s
+
+	# Check obsolete variable "__l3_on"
+	if { [info exists __l3_on] && $__l3_on } {
+		nextstate WaitStartMM
+	} elseif { [info exists __tm_top] && $__tm_top >= "2" } {
+		nextstate WaitStartMM
+	} else {
+		nextstate WaitBssapCtlReset
+	}
+}
+
+##############################################################
+# START MM
+##############################################################
+
+proc StartMM { } {
+
+	# Global Variables
+	global _sig __l3_on __tm_top glCfgFile glCommonDb 
+
+	LogInputMsg $_sig
+
+	# MM directory 
+	set MMDir protocols/MM
+
+	# spawn MM script
+	if { [CnSide] } {
+		set mmAlName mm_bssap_multi_inst.tsm
+		set mm_name mm_cn.tsm
+		spawn [list $MMDir/$mm_name $glCfgFile $glCommonDb $MMDir/$mmAlName]
+	} else {
+		set mmAlName mm_rr_multi_inst.tsm
+		set mm_name mm_ms.tsm
+		spawn [list $MMDir/$mm_name $glCfgFile $glCommonDb $MMDir/$mmAlName]
+	}
+
+	# config MM
+	global glLsuSimMngPid
+	new MM_CONFIG s
+    wr s LsuSimMngPid   $glLsuSimMngPid
+	send s 
+	LogOutputMsg $s
+
+	# Check obsolete variable "__l3_on"
+	if { [info exists __l3_on] && $__l3_on } {
+		nextstate WaitConfigCC
+
+	# Up Stack is CC
+	} elseif { [info exists __tm_top] && $__tm_top == "3" } {
+		nextstate WaitConfigCC
+
+	# Up Stack is SMC
+	} elseif { [info exists __tm_top] && $__tm_top == "4" } {
+		nextstate WaitConfigSMS
+		
+	# Up Stack is CC + SMC
+	} elseif { [info exists __tm_top] && $__tm_top == "5" } {
+		nextstate WaitConfigCC
+
+	# Up Stack is CC + SMC + GCC
+	} elseif { [info exists __tm_top] && $__tm_top >= "6" } {
+		nextstate WaitConfigCC
+
+	# Up Stack is CC + SMC + SS
+	} elseif { [info exists __tm_top] && $__tm_top >= "7" } {
+		nextstate WaitConfigCC
+
+	# Up Stack is CC + SMC + GCC + SS
+	} elseif { [info exists __tm_top] && $__tm_top >= "8" } {
+		nextstate WaitConfigCC
+	} else {
+		nextstate WaitBssapCtlReset
+	}
+}
+
+##############################################################
+# START CC
+##############################################################
+
+proc StartCC { } {
+
+	# Global Variables
+	global _sig __l3_on __tm_top glCfgFile glCommonDb 
+
+	LogInputMsg $_sig
+
+	# CC directory 
+	set CCDir protocols/CC
+
+	# spawn CC script
+	if { [CnSide] } {
+		set cc_name cc_cn.tsm
+	} else {
+		set cc_name cc_ms.tsm
+	}
+
+	set ccAlName cc_multi_inst.tsm
+	spawn [list $CCDir/$cc_name $glCfgFile $glCommonDb $CCDir/$ccAlName]
+
+	# config CC
+	new CC_CONFIG s
+	send s
+	LogOutputMsg $s
+
+	# Check obsolete variable "__l3_on"
+	if { [info exists __l3_on] && $__l3_on } {
+		nextstate WaitConfigSMS
+	} elseif { [info exists __tm_top] && $__tm_top >= "4" } {
+		nextstate WaitConfigSMS
+	} else {
+		nextstate WaitBssapCtlReset
+	}
+}
+
+##############################################################
+# START SMS
+##############################################################
+
+proc StartSMS { } {
+
+	# Global Variables
+	global _sig __l3_on __tm_top glCfgFile glCommonDb 
+
+	LogInputMsg $_sig
+
+	# SMS directory 
+	set SMCDir protocols/SMC
+
+	# spawn SMC script
+	if { [CnSide] } {
+		set smc_name smc_cn.tsm
+	} else {
+		set smc_name smc_ms.tsm
+	}
+
+	set smcAlName smc_multi_inst.tsm
+	spawn [list $SMCDir/$smc_name $glCfgFile $glCommonDb $SMCDir/$smcAlName]
+
+	# config SMC
+	new SMC_CONFIG s
+	send s
+	LogOutputMsg $s
+
+	if { [info exist __l3_on] && $__l3_on } {
+		nextstate WaitConfigGCC
+	} elseif { [info exist __tm_top] && $__tm_top == "7" } {
+		nextstate WaitConfigSS
+	} elseif { [info exist __tm_top] && $__tm_top > "5" } {
+		nextstate WaitConfigGCC
+	} else {
+		nextstate Active
+	}
+}
+
+##############################################################
+# START GCC
+##############################################################
+
+proc StartGCC { } {
+	global _sig __l3_on __tm_top glCfgFile glCommonDb 
+	global glBssapPid glBscDb glGrCallRefDb
+
+	# GCC directory 
+	set GCCDir protocols/GCC
+
+	# spawn GCC script
+	if { [CnSide] } {
+		set gcc_name gcc_cn.tsm
+		set gccAlName gcc_cn_multi_inst.tsm
+
+	} else {
+		set gcc_name gcc_ms.tsm
+		set gccAlName gcc_ms_multi_inst.tsm
+	}
+
+	set gccPid [spawn [list $GCCDir/$gcc_name $glCfgFile $glCommonDb $GCCDir/$gccAlName $glBscDb $glGrCallRefDb]]
+
+	if { [CnSide] } {
+		new BSSAPVGCS_GCCPID_ASSIGNMENT s
+		wr s GccPid $gccPid
+		send s $glBssapPid
+	}
+
+	# config GCC
+	new GCC_CONFIG s
+	send s
+
+	# Check obsolete variable "__l3_on"
+	if { [info exists __l3_on] && $__l3_on } {
+		nextstate WaitConfigSS
+	} elseif { [info exists __tm_top] && $__tm_top > "6" } {
+		nextstate WaitConfigSS
+	} else {
+		nextstate WaitBssapCtlReset
+	}
+}
+
+##############################################################
+# START SS
+##############################################################
+
+proc StartSS { } {
+
+	# Global Variables
+	global _sig __l3_on __tm_top glCfgFile glCommonDb 
+
+	LogInputMsg $_sig
+
+	# SS directory 
+	set SSDir protocols/SS
+
+	# spawn SS script
+	if { [CnSide] } {
+		set ss_name ss_cn.tsm
+	} else {
+		set ss_name ss_ms.tsm
+	}
+
+	set ssAlName ss_multi_inst.tsm
+	spawn [list $SSDir/$ss_name $glCfgFile $glCommonDb $SSDir/$ssAlName]
+
+	# config SS
+	new SS_CONFIG s
+	send s
+	LogOutputMsg $s
+
+	nextstate WaitBssapCtlReset
+}
+
+##############################################################
+# BSSAP RESET (Bss side only)
+##############################################################
+
+proc BssBssapReset { } {
+
+	global _sig glBscDb glBscIdx 
+
+	LogInputMsg $_sig
+
+	if {[MsSide]} {
+		set bsclist [lsort -integer [DbGetIndexList $glBscDb]]
+
+		while { $glBscIdx < [llength $bsclist] } {
+			# Setting new Bsc Index
+			set bscid [lindex $bsclist $glBscIdx]
+			incr glBscIdx
+
+			if { [DbGet $glBscDb $bscid BssapReset] != 0 } {
+				SendBssapCtlReset $bscid
+				return; #wait for ACK to send next BSSAP_CTL_RESET
+			}
+		}
+		# on MsSide to inform the bssap pid to OM
+		SendCtlInitEnd
+
+	} else {
+		# On CnSide stack_a.tsm notifies to om.tsm that the stack of layers
+		# is completely started.
+		# om.tsm will command directly BSSAP to reset BSCs that have a link
+		# available using signal BSSAP_OM_PCSTATE_IND.
+
+		if { [MultiMgwTdm] && ![string equal [lindex $_sig 0] "BSSAP_CTL_RESET_ACK"] ||\
+			 [MultiLinkSetCheck] && ![string equal [lindex $_sig 0] "BSSAP_CTL_RESET_ACK"] ||\
+			 [info exists ::__tstm_db] && ![string equal [lindex $_sig 0] "BSSAP_CTL_RESET_ACK"] ||\
+			 [info exists ::glAoip] && $::glAoip && ![string equal [lindex $_sig 0] "BSSAP_CTL_RESET_ACK"] } {
+			log "BssBssapReset: signal isn't 'BSSAP_CTL_RESET_ACK' then skip the received signal and it doesn't call the Activate procedure"; #cDEBUG
+			SendCtlInitEnd
+			return
+		} else {
+			SendCtlInitEnd
+		}
+	}
+
+	Activate
+}
+
+proc SendCtlInitEnd { } {
+
+	global glBssapPid glOmPid
+
+	new CTL_INIT_END s
+	wr s BssapPid $glBssapPid
+	send s $glOmPid
+}
+
+proc SendBssapCtlReset { bscid } {
+
+	new BSSAP_CTL_RESET s
+	wr 	s BscId $bscid
+
+	LogOutputMsg $s
+	send s
+
+	nextstate WaitBssapCtlReset
+}
+
+proc GetCodedPLMN { mcc mnc } {
+	set plmn [string range $mcc 1 1]
+	append plmn [string range $mcc 0 0]
+	if { [string length $mnc] == 2 } {
+		append plmn f
+	} else {
+		append plmn [string range $mnc 2 2]
+	}
+	append plmn [string range $mnc 1 1]
+	append plmn [string range $mnc 0 0]
+
+	return $plmn
+}
+
+proc ConvertFromHumanReadablePars { commonDbName } {
+	
+	if { [info exists ::__bssap_plmn] } {
+		# All the data is already coded in the Db, do nothing (old school setting)
+		return
+	}
+
+	if {[info exists ::__imsi_24008_format] && $::__imsi_24008_format} {
+		# don't convert IMSI, because already in 24.008 format.
+    	#MSDbFromHumanReadableTo24008NoImsi $commonDbName
+	} else {
+		ConvertMSDbFromHumanReadableTo24008 $commonDbName
+	}
+}
+
+proc OwnNumHdl { } {
+
+	global glCommonDb
+
+	foreach msId [DbGetIndexList $glCommonDb] {
+                set ownNum [DbGet $glCommonDb $msId OwnNum]
+                log "OwnNumHdl: msId=$msId in $glCommonDb --> OwnNum=$ownNum"
+		DbSet $glCommonDb $msId MsNumber [DecodeCalledMsNumber $ownNum $glCommonDb "OwnNumHdl" $msId]
+        }
+	#LogDbField $glCommonDb MsNumber
+}
+
+proc CreateTstmDb { tstmDb } {
+	set dbPath $tstmDb
+	set dbName [DbGetName $dbPath]
+	spawn "DbCreate.tsm $dbPath.csv"
+
+	settstmdb $dbName
+
+}
+
+proc OmHeartBeat { } {
+	global _sig _heartBeat_counter
+
+	#LogInputSig
+	# -- #
+	#Carlo 08/03/2010
+	if { $_heartBeat_counter <= 99 } {
+		incr _heartBeat_counter +1
+		skipMsg
+	} else {
+		incr _heartBeat_counter -100
+		log "OmHeartBeat: 99 previous OM_HEARTBEAT_REQ signals didn't log"
+		LogInputSig	
+	}
+	# -- #
+
+	new OM_HEARTBEAT_ACK s
+
+	sendtotstm 0 "TM" $s
+}
+
+##############################################################
+# EXECUTE OK
+##############################################################
+
+proc Activate { } {
+
+	global _sig __tstm_db __net_elem
+
+	LogInputMsg $_sig
+
+	set schedPid 1
+
+	set r EXECUTE_OK
+	send r $schedPid
+	
+	LogOutputMsg $r
+
+	if { ![info exists __net_elem] || [info exists __net_elem] && ![string equal $__net_elem "mgw"] } {
+		if { [info exist __tstm_db] } {
+			new OM_MSC_START_IND s
+			wr	s	TstmIndex [gettstmindex]
+
+			sendtotstm 0 "OM" $s
+		}
+	} elseif { [info exists __net_elem] && [string equal $__net_elem "mgw"] } {
+		logscr "MGW CONFIGURATION COMPLETED"
+	} else {
+		log "Activate: WARNING ... TO CHECK qui non deve entrare!"
+	} 
+
+	nextstate Active
+}
+
+##########################################################################################
+proc SetupLsuSim { } {
+	
+	global glLsuSimSrvToStart __lsu_sim_srv_ip  __lsu_sim_srv_port __lsu_sim_srv_zot
+
+	if { $glLsuSimSrvToStart == 1} {
+
+		set login [GetLoginName]
+
+		if { [info exists __lsu_sim_srv_ip] } {
+			set lsuSimIp $__lsu_sim_srv_ip
+		} else {
+			logscr "SetupLsuSim: Any IP address set: __lsu_sim_srv_ip doesn't exist"
+		}
+		if {[info exists __lsu_sim_srv_port]} {
+			set port $__lsu_sim_srv_port
+		} else {
+			set port "?"
+		}
+		if {[info exists __lsu_sim_srv_zot]} {
+			set zot $__lsu_sim_srv_zot
+		} else {
+			set zot "?"
+		}
+
+		set parallelScan TRUE
+
+		StartLsuSim $lsuSimIp $port $login $zot $parallelScan
+	} else {
+		logscr ""
+		logscr "LSU SIM SRV CONFIGURATION COMPLETED"
+		logscr ""
+	
+		StartBssap
+	}
+}
+
+##########################################################################################
+proc StartLsuSim { lsuSimIp port login zot parallelScan } {
+	
+	global glCommonDb glLsuSimMngPid
+
+	spawn [list om/om_lsusim.tsm $glCommonDb $glLsuSimMngPid $lsuSimIp $port $login $zot $parallelScan]
+
+	nextstate WaitStartLsuSim
+}
+
+##########################################################################################
+proc EndingLsuSimConfig {} {
+	
+	global glLsuSimSrvToStart
+
+	set glLsuSimSrvToStart 0; #set LSU SIM SRV configuration as done
+	SetupLsuSim
+}
+
+##############################################################
+# FSM
+##############################################################
+
+state WaitOmStartAck {
+
+	OM_START_ACK 		StartHnbap
+
+	default 			Any
+}
+
+state WaitHnbapAck {
+
+	HNBAP_OM_CFG_ACK	{
+		# TODO: for the time being I avoid starting BSSAP
+		StartBssap
+		#Activate
+	}
+
+	default 			Any
+}
+
+state WaitStartLsuSim {
+	LSU_SIM_STARTED				StartBssap
+	LSUSIM_OM_CONFIG_COMPLETED	EndingLsuSimConfig
+	default 			Any
+}
+
+state WaitStartMM {
+	BSSAP_OM_CFG_ACK    StartMM 
+	default             Any
+}
+
+state WaitConfigCC {
+	MM_CONFIG_ACK 		StartCC 
+	default 			Any
+}
+
+state WaitConfigSMS {
+	MM_CONFIG_ACK 		StartSMS
+	CC_CONFIG_ACK 		StartSMS
+	BSSAP_CTL_RESET_ACK SkippedMsg
+	default 			Any
+}
+
+state WaitConfigGCC {
+	SMC_CONFIG_ACK		StartGCC
+	default 			Any
+}
+
+state WaitConfigSS {
+	GCC_CONFIG_ACK		StartSS
+	SMC_CONFIG_ACK		StartSS
+	default 			Any
+}
+
+state WaitBssapCtlReset {
+	BSSAP_OM_CFG_ACK 	BssBssapReset
+	MM_CONFIG_ACK 		BssBssapReset
+	CC_CONFIG_ACK 		BssBssapReset
+	SMC_CONFIG_ACK 		BssBssapReset
+	GCC_CONFIG_ACK		BssBssapReset
+	SS_CONFIG_ACK		BssBssapReset
+	BSSAP_CTL_RESET_ACK BssBssapReset
+	default 			Any
+}
+
+state Active {
+	OM_START_ACK 		Activate
+	BSSAP_OM_CFG_ACK	Activate
+	MM_CONFIG_ACK		Activate
+	CC_CONFIG_ACK		Activate
+	SMC_CONFIG_ACK 		Activate
+	GCC_CONFIG_ACK		Activate
+	SS_CONFIG_ACK		Activate
+	OM_STOP  			OmStopHdl
+	OM_HEARTBEAT_REQ	OmHeartBeat
+	BSSAP_CTL_RESET_ACK SkippedMsg
+	ERROR_IND			SkippedMsg
+	default 			Any
+}
+
+state Inactive {
+	default 			Any
+}
+
+state Any {
+	T_NETSTAT			{
+							global glNetStatTimer
+							netcount_logstat
+							tmrstart $glNetStatTimer
+						}
+	default 			Unexpected
+}

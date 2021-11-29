@@ -1,0 +1,802 @@
+-- **************************************************************
+--
+-- Elementary Procedure definitions
+--
+-- **************************************************************
+
+RUA-PDU-Descriptions  { 
+itu-t (0) identified-organization (4) etsi (0) mobileDomain (0) 
+umts-Access (20) modules (3) rua(5) version1 (1) rUA-PDU-Descriptions (0)}
+
+DEFINITIONS AUTOMATIC TAGS ::= 
+
+BEGIN
+
+-- **************************************************************
+--
+-- IE parameter types from other modules.
+--
+-- **************************************************************
+
+IMPORTS
+	Criticality,
+	ProcedureCode
+FROM RUA-CommonDataTypes
+	Connect,
+	DirectTransfer,
+	Disconnect,
+	ConnectionlessTransfer,		
+	ErrorIndication,
+	PrivateMessage
+
+
+FROM RUA-PDU-Contents
+	id-Connect,
+	id-DirectTransfer,
+	id-Disconnect,
+	id-ConnectionlessTransfer,
+	id-ErrorIndication,
+	id-privateMessage
+FROM RUA-Constants;
+
+-- **************************************************************
+--
+-- Interface Elementary Procedure Class
+--
+-- **************************************************************
+
+RUA-ELEMENTARY-PROCEDURE ::= CLASS {
+	&InitiatingMessage			,
+	&SuccessfulOutcome			OPTIONAL,
+	&UnsuccessfulOutcome		OPTIONAL,
+	&procedureCode				ProcedureCode 	UNIQUE,
+	&criticality				Criticality 	DEFAULT ignore
+}
+
+WITH SYNTAX {
+	INITIATING MESSAGE			&InitiatingMessage
+	[SUCCESSFUL OUTCOME			&SuccessfulOutcome]
+	[UNSUCCESSFUL OUTCOME		&UnsuccessfulOutcome]
+	PROCEDURE CODE				&procedureCode
+	[CRITICALITY				&criticality]
+}
+
+-- **************************************************************
+--
+-- Interface PDU definitions
+--
+-- **************************************************************
+
+RUA-PDU ::= CHOICE {
+	initiatingMessage		InitiatingMessage,
+	successfulOutcome		SuccessfulOutcome,
+	unsuccessfulOutcome		UnsuccessfulOutcome,
+	...
+}
+
+
+InitiatingMessage ::= SEQUENCE {
+	procedureCode	RUA-ELEMENTARY-PROCEDURE.&procedureCode		({RUA-ELEMENTARY-PROCEDURES}),
+	criticality		RUA-ELEMENTARY-PROCEDURE.&criticality		({RUA-ELEMENTARY-PROCEDURES}{@procedureCode}),
+	value			RUA-ELEMENTARY-PROCEDURE.&InitiatingMessage	({RUA-ELEMENTARY-PROCEDURES}{@procedureCode})
+}
+
+SuccessfulOutcome ::= SEQUENCE {
+	procedureCode	RUA-ELEMENTARY-PROCEDURE.&procedureCode		({RUA-ELEMENTARY-PROCEDURES}),
+	criticality		RUA-ELEMENTARY-PROCEDURE.&criticality		({RUA-ELEMENTARY-PROCEDURES}{@procedureCode}),
+	value			RUA-ELEMENTARY-PROCEDURE.&SuccessfulOutcome	({RUA-ELEMENTARY-PROCEDURES}{@procedureCode})
+}
+
+UnsuccessfulOutcome ::= SEQUENCE {
+	procedureCode	RUA-ELEMENTARY-PROCEDURE.&procedureCode			({RUA-ELEMENTARY-PROCEDURES}),
+	criticality		RUA-ELEMENTARY-PROCEDURE.&criticality			({RUA-ELEMENTARY-PROCEDURES}{@procedureCode}),
+	value			RUA-ELEMENTARY-PROCEDURE.&UnsuccessfulOutcome	({RUA-ELEMENTARY-PROCEDURES}{@procedureCode})
+}
+
+-- **************************************************************
+--
+-- Interface Elementary Procedure List
+--
+-- **************************************************************
+
+RUA-ELEMENTARY-PROCEDURES RUA-ELEMENTARY-PROCEDURE ::= {
+	RUA-ELEMENTARY-PROCEDURES-CLASS-1	|
+	RUA-ELEMENTARY-PROCEDURES-CLASS-2	,
+	...
+}
+
+RUA-ELEMENTARY-PROCEDURES-CLASS-1 RUA-ELEMENTARY-PROCEDURE ::= {
+	...
+}
+
+
+RUA-ELEMENTARY-PROCEDURES-CLASS-2 RUA-ELEMENTARY-PROCEDURE ::= {
+	connectionRequest |
+	directTransfer |
+	disconnectRequest |
+	connectionlessTransfer |	
+	errorIndication |
+	privateMessage,
+	...
+}
+
+-- **************************************************************
+--
+-- Interface Elementary Procedures
+--
+-- **************************************************************
+
+
+connectionRequest RUA-ELEMENTARY-PROCEDURE ::= {
+	INITIATING MESSAGE		Connect
+	PROCEDURE CODE			id-Connect
+	CRITICALITY				ignore
+}
+
+directTransfer RUA-ELEMENTARY-PROCEDURE ::= {
+	INITIATING MESSAGE		DirectTransfer
+	PROCEDURE CODE			id-DirectTransfer
+	CRITICALITY				ignore
+}
+
+disconnectRequest RUA-ELEMENTARY-PROCEDURE ::= {
+	INITIATING MESSAGE		Disconnect
+	PROCEDURE CODE			id-Disconnect
+	CRITICALITY				ignore
+}
+connectionlessTransfer RUA-ELEMENTARY-PROCEDURE ::= {
+	INITIATING MESSAGE		ConnectionlessTransfer
+	PROCEDURE CODE			id-ConnectionlessTransfer
+	CRITICALITY				ignore
+}
+
+errorIndication RUA-ELEMENTARY-PROCEDURE ::= {
+	INITIATING MESSAGE		ErrorIndication
+	PROCEDURE CODE			id-ErrorIndication
+	CRITICALITY				ignore
+}
+
+privateMessage RUA-ELEMENTARY-PROCEDURE ::= {
+	INITIATING MESSAGE		PrivateMessage
+	PROCEDURE CODE			id-privateMessage
+	CRITICALITY				ignore
+}
+
+
+END
+
+
+-- **************************************************************
+--
+-- PDU definitions for RUA.
+--
+-- **************************************************************
+
+RUA-PDU-Contents {
+itu-t (0) identified-organization (4) etsi (0) mobileDomain (0) 
+umts-Access (20) modules (3) rua(5) version1 (1) rUA-PDU-Contents (1) }
+
+DEFINITIONS AUTOMATIC TAGS ::= 
+
+BEGIN
+
+-- **************************************************************
+--
+-- IE parameter types from other modules.
+--
+-- **************************************************************
+
+IMPORTS
+	Cause,
+	CriticalityDiagnostics,
+	Context-ID,
+	CN-DomainIndicator,
+	IntraDomainNasNodeSelector,
+	RANAP-Message,
+	Establishment-Cause
+
+FROM RUA-IEs
+
+
+	ProtocolExtensionContainer{},
+	ProtocolIE-ContainerList{},
+	ProtocolIE-Container{},
+	ProtocolIE-Single-Container{},
+	PrivateIE-Container{},
+	RUA-PRIVATE-IES,
+	RUA-PROTOCOL-EXTENSION,
+	RUA-PROTOCOL-IES
+FROM RUA-Containers
+
+	id-Cause,
+	id-CriticalityDiagnostics,
+	id-Context-ID,
+	id-CN-DomainIndicator,
+	id-RANAP-Message,
+	id-IntraDomainNasNodeSelector,
+	id-Establishment-Cause
+
+FROM RUA-Constants;
+
+
+-- **************************************************************
+--
+-- Connect
+--
+-- **************************************************************
+
+Connect ::= SEQUENCE {
+	protocolIEs			ProtocolIE-Container       { {ConnectIEs} },
+	protocolExtensions	ProtocolExtensionContainer { {ConnectExtensions} } 	OPTIONAL,
+	...
+}
+
+ConnectIEs RUA-PROTOCOL-IES ::= {
+	{ ID id-CN-DomainIndicator				CRITICALITY reject	TYPE CN-DomainIndicator				PRESENCE mandatory } |
+	{ ID id-Context-ID						CRITICALITY reject	TYPE Context-ID						PRESENCE mandatory } |
+	{ ID id-IntraDomainNasNodeSelector 		CRITICALITY ignore	TYPE IntraDomainNasNodeSelector		PRESENCE optional } |
+	{ ID id-Establishment-Cause				CRITICALITY reject	TYPE Establishment-Cause			PRESENCE mandatory } |
+	{ ID id-RANAP-Message					CRITICALITY reject	TYPE RANAP-Message					PRESENCE mandatory },
+	...
+}
+
+ConnectExtensions RUA-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+
+-- **************************************************************
+--
+-- Direct Transfer
+--
+-- **************************************************************
+
+DirectTransfer ::= SEQUENCE {
+	protocolIEs			ProtocolIE-Container       { {DirectTransferIEs} },
+	protocolExtensions	ProtocolExtensionContainer { {DirectTransferExtensions} } 	OPTIONAL,
+	...
+}
+
+DirectTransferIEs RUA-PROTOCOL-IES ::= {
+	{ ID id-CN-DomainIndicator				CRITICALITY reject	TYPE CN-DomainIndicator		PRESENCE mandatory } |
+	{ ID id-Context-ID						CRITICALITY reject	TYPE Context-ID				PRESENCE mandatory } |
+	{ ID id-RANAP-Message					CRITICALITY reject	TYPE RANAP-Message			PRESENCE mandatory  },
+	...
+}
+
+DirectTransferExtensions RUA-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+
+
+-- **************************************************************
+--
+-- Disconnect
+--
+-- **************************************************************
+
+Disconnect ::= SEQUENCE {
+	protocolIEs			ProtocolIE-Container       { {DisconnectIEs} },
+	protocolExtensions	ProtocolExtensionContainer { {DisconnectExtensions} } 	OPTIONAL,
+	...
+}
+
+DisconnectIEs RUA-PROTOCOL-IES ::= {
+	{ ID id-CN-DomainIndicator				CRITICALITY reject	TYPE CN-DomainIndicator		PRESENCE mandatory } |
+	{ ID id-Context-ID						CRITICALITY reject	TYPE Context-ID				PRESENCE mandatory } |
+	{ ID id-Cause							CRITICALITY reject	TYPE Cause					PRESENCE mandatory } |
+	{ ID id-RANAP-Message					CRITICALITY reject	TYPE RANAP-Message			PRESENCE conditional  },
+	-- RANAP message shall be included if Cause value is "normal"
+	...
+}
+
+DisconnectExtensions RUA-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+-- **************************************************************
+--
+-- Connectionless Transfer
+--
+-- **************************************************************
+
+ConnectionlessTransfer ::= SEQUENCE {
+	protocolIEs			ProtocolIE-Container       { {ConnectionlessTransferIEs} },
+	protocolExtensions	ProtocolExtensionContainer { {ConnectionlessTransferExtensions} } 	OPTIONAL,
+	...
+}
+
+ConnectionlessTransferIEs RUA-PROTOCOL-IES ::= {
+	{ ID id-RANAP-Message					CRITICALITY reject	TYPE RANAP-Message			PRESENCE mandatory  },
+	...
+}
+
+ConnectionlessTransferExtensions RUA-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+
+
+
+-- **************************************************************
+--
+-- ERROR INDICATION
+--
+-- **************************************************************
+
+ErrorIndication ::= SEQUENCE {
+	protocolIEs			ProtocolIE-Container       { {ErrorIndicationIEs} },
+	protocolExtensions	ProtocolExtensionContainer { {ErrorIndicationExtensions} } 	OPTIONAL,
+	...
+}
+
+ErrorIndicationIEs RUA-PROTOCOL-IES ::= {
+	{ ID id-Cause						CRITICALITY ignore	TYPE Cause						PRESENCE mandatory } |
+	{ ID id-CriticalityDiagnostics		CRITICALITY ignore	TYPE CriticalityDiagnostics		PRESENCE optional },
+		...
+}
+
+ErrorIndicationExtensions RUA-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+-- **************************************************************
+--
+-- PRIVATE MESSAGE
+--
+-- **************************************************************
+
+PrivateMessage ::= SEQUENCE {
+	privateIEs		PrivateIE-Container  {{PrivateMessage-IEs}},
+	...
+}
+
+PrivateMessage-IEs RUA-PRIVATE-IES ::= {
+	...
+}
+
+
+END
+
+-- **************************************************************
+--
+-- Information Element Definitions
+--
+-- **************************************************************
+
+RUA-IEs {
+itu-t (0) identified-organization (4) etsi (0) mobileDomain (0) 
+umts-Access (20) modules (3) rua(5) version1 (1) rUA-IEs (2) }
+
+DEFINITIONS AUTOMATIC TAGS ::= 
+
+BEGIN
+
+IMPORTS
+	maxNrOfErrors
+FROM RUA-Constants
+
+	Criticality,
+	ProcedureCode,
+	ProtocolIE-ID,
+	TriggeringMessage
+FROM RUA-CommonDataTypes
+
+	ProtocolExtensionContainer{},
+	RUA-PROTOCOL-EXTENSION
+FROM RUA-Containers;
+
+
+CN-DomainIndicator ::= ENUMERATED { 
+	cs-domain, 
+	ps-domain 
+}
+
+Establishment-Cause		::= ENUMERATED {
+							emergency-call,
+							normal-call,
+							... 
+							}
+
+
+
+
+
+Context-ID	::=	 BIT STRING (SIZE(24))
+
+IntraDomainNasNodeSelector ::=					SEQUENCE {
+	version											CHOICE {
+		release99										SEQUENCE {
+			cn-Type											CHOICE {
+				gsm-Map-IDNNS									Gsm-map-IDNNS,
+				ansi-41-IDNNS									Ansi-41-IDNNS
+			}
+		},
+		later											SEQUENCE {
+			futurecoding									BIT STRING (SIZE (15))
+		}
+	}
+}
+
+Gsm-map-IDNNS ::=							SEQUENCE {
+	routingbasis									CHOICE {
+		localPTMSI										SEQUENCE {
+			routingparameter								RoutingParameter
+		},
+		tMSIofsamePLMN									SEQUENCE {
+			routingparameter								RoutingParameter
+		},
+		tMSIofdifferentPLMN								SEQUENCE {
+			routingparameter								RoutingParameter
+		},
+		iMSIresponsetopaging							SEQUENCE {
+			routingparameter								RoutingParameter
+		},
+		iMSIcauseUEinitiatedEvent						SEQUENCE {
+			routingparameter								RoutingParameter
+		},
+		iMEI											SEQUENCE {
+			routingparameter								RoutingParameter
+		},
+		spare2											SEQUENCE {
+			routingparameter								RoutingParameter
+		},
+		spare1											SEQUENCE {
+			routingparameter								RoutingParameter
+		}
+	},
+	-- dummy is not used in this version of the specification and
+	-- it should be ignored by the receiver.
+	dummy									BOOLEAN
+}
+
+
+Ansi-41-IDNNS ::=			BIT STRING (SIZE (14))
+
+RANAP-Message	::=			OCTET STRING
+
+RoutingParameter ::=		BIT STRING (SIZE (10))
+
+
+-- **************************************************************
+--
+-- Cause IE
+--
+-- **************************************************************
+
+Cause ::= CHOICE {
+	radioNetwork			CauseRadioNetwork,
+	transport				CauseTransport,
+	protocol				CauseProtocol,
+	misc					CauseMisc,
+	...
+}
+CauseRadioNetwork ::= ENUMERATED {
+	normal,
+	connect-failed,
+	network-release,
+	unspecified,
+	...
+}
+CauseTransport ::= ENUMERATED {
+	transport-resource-unavailable,
+	unspecified,
+	...
+}
+
+CauseProtocol ::= ENUMERATED {
+	transfer-syntax-error,
+	abstract-syntax-error-reject,
+	abstract-syntax-error-ignore-and-notify,
+	message-not-compatible-with-receiver-state,
+	semantic-error,
+	unspecified,
+	abstract-syntax-error-falsely-constructed-message,
+	...
+}
+
+CauseMisc ::= ENUMERATED {
+	processing-overload,
+	hardware-failure,
+	o-and-m-intervention,
+	unspecified,
+	...
+}
+
+-- **************************************************************
+--
+-- CriticalityDiagnostics
+--
+-- **************************************************************
+
+CriticalityDiagnostics ::= SEQUENCE {
+	procedureCode	ProcedureCode	OPTIONAL,
+	triggeringMessage	TriggeringMessage	OPTIONAL,
+	procedureCriticality	Criticality	OPTIONAL,
+	iEsCriticalityDiagnostics	CriticalityDiagnostics-IE-List	OPTIONAL,
+	iE-Extensions	ProtocolExtensionContainer { {CriticalityDiagnostics-ExtIEs} } 	OPTIONAL,
+	...
+}
+
+CriticalityDiagnostics-IE-List ::= SEQUENCE (SIZE (1..maxNrOfErrors)) OF
+	SEQUENCE {
+		iECriticality			Criticality,
+		iE-ID					ProtocolIE-ID,
+		typeOfError				TypeOfError,
+		iE-Extensions			ProtocolExtensionContainer { {CriticalityDiagnostics-IE-List-ExtIEs} }	OPTIONAL,
+		...
+	}
+
+CriticalityDiagnostics-IE-List-ExtIEs RUA-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+CriticalityDiagnostics-ExtIEs RUA-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+
+TypeOfError ::= ENUMERATED {
+	not-understood,
+	missing,
+	...
+}
+
+END
+
+-- Common definitions
+--
+-- **************************************************************
+
+RUA-CommonDataTypes {
+itu-t (0) identified-organization (4) etsi (0) mobileDomain (0) 
+umts-Access (20) modules (3) rua(5) version1 (1) rUA-CommonDataTypes (3)  }
+
+DEFINITIONS AUTOMATIC TAGS ::= 
+
+BEGIN
+
+-- **************************************************************
+--
+-- Extension constants
+--
+-- **************************************************************
+
+maxPrivateIEs 									INTEGER ::= 65535
+maxProtocolExtensions 							INTEGER ::= 65535
+maxProtocolIEs									INTEGER ::= 65535
+
+-- **************************************************************
+--
+-- Common Data Types
+--
+-- **************************************************************
+Criticality		::= ENUMERATED { reject, ignore, notify }
+
+Presence		::= ENUMERATED { optional, conditional, mandatory }
+
+
+ProcedureCode		::= INTEGER (0..255)
+
+PrivateIE-ID	::= CHOICE {
+	local				INTEGER (0..65535),
+	global				OBJECT IDENTIFIER
+}
+
+ProtocolIE-ID		::= INTEGER (0..maxProtocolIEs)
+
+TriggeringMessage	::= ENUMERATED { initiating-message, successful-outcome, unsuccessful-outcome }
+
+END
+
+-- **************************************************************
+--
+-- Constant definitions
+--
+-- **************************************************************
+
+RUA-Constants { 
+itu-t (0) identified-organization (4) etsi (0) mobileDomain (0) 
+umts-Access (20) modules (3) rua(5) version1 (1) rUA-Constants (4) } 
+
+DEFINITIONS AUTOMATIC TAGS ::= 
+
+BEGIN
+
+IMPORTS
+	ProcedureCode,
+	ProtocolIE-ID
+FROM RUA-CommonDataTypes;
+
+
+-- **************************************************************
+--
+-- Elementary Procedures
+--
+id-Connect							ProcedureCode ::= 1
+id-DirectTransfer					ProcedureCode ::= 2
+id-Disconnect						ProcedureCode ::= 3
+id-ConnectionlessTransfer			ProcedureCode ::= 4
+id-ErrorIndication					ProcedureCode ::= 5
+id-privateMessage					ProcedureCode ::= 6
+
+-- **************************************************************
+--
+-- Lists
+--
+-- **************************************************************
+maxNrOfErrors						INTEGER ::= 256
+
+-- **************************************************************
+--
+-- IEs
+--
+-- **************************************************************
+
+id-Cause										ProtocolIE-ID ::= 1
+id-CriticalityDiagnostics						ProtocolIE-ID ::= 2
+id-Context-ID									ProtocolIE-ID ::= 3
+id-RANAP-Message								ProtocolIE-ID ::= 4
+id-IntraDomainNasNodeSelector					ProtocolIE-ID ::= 5
+id-Establishment-Cause							ProtocolIE-ID ::= 6
+id-CN-DomainIndicator							ProtocolIE-ID ::= 7
+
+ 
+END
+
+-- **************************************************************
+--
+-- Container definitions
+--
+-- **************************************************************
+
+RUA-Containers {
+itu-t (0) identified-organization (4) etsi (0) mobileDomain (0) 
+umts-Access (20) modules (3) rua(5) version1 (1) rUA-Containers (5) }
+
+DEFINITIONS AUTOMATIC TAGS ::= 
+
+BEGIN
+
+-- **************************************************************
+--
+-- IE parameter types from other modules.
+--
+-- **************************************************************
+
+IMPORTS
+	Criticality,
+	Presence,
+	PrivateIE-ID,
+	ProtocolIE-ID,
+	maxPrivateIEs,
+	maxProtocolExtensions,
+	maxProtocolIEs
+FROM RUA-CommonDataTypes;
+
+-- **************************************************************
+--
+-- Class Definition for Private IEs
+--
+-- **************************************************************
+
+RUA-PRIVATE-IES ::= CLASS {
+	&id					PrivateIE-ID,
+	&criticality		Criticality,
+	&Value,
+	&presence			Presence
+}
+WITH SYNTAX {
+	ID					&id
+	CRITICALITY			&criticality
+	TYPE				&Value
+	PRESENCE			&presence
+}
+
+
+-- **************************************************************
+--
+-- Class Definition for Protocol IEs
+--
+-- **************************************************************
+
+RUA-PROTOCOL-IES ::= CLASS {
+	&id					ProtocolIE-ID		UNIQUE,
+	&criticality		Criticality,
+	&Value,
+	&presence			Presence
+}
+WITH SYNTAX {
+	ID					&id
+	CRITICALITY			&criticality
+	TYPE				&Value
+	PRESENCE			&presence
+}
+
+-- **************************************************************
+--
+-- Class Definition for Protocol Extensions
+--
+-- **************************************************************
+
+RUA-PROTOCOL-EXTENSION ::= CLASS {
+	&id					ProtocolIE-ID UNIQUE,
+	&criticality		Criticality,
+	&Extension,
+	&presence			Presence
+}
+WITH SYNTAX {
+	ID					&id
+	CRITICALITY			&criticality
+	EXTENSION			&Extension
+	PRESENCE			&presence
+}
+
+
+-- **************************************************************
+--
+-- Container for Protocol IEs
+--
+-- **************************************************************
+
+ProtocolIE-Container {RUA-PROTOCOL-IES : IEsSetParam} ::= 
+	SEQUENCE (SIZE (0..maxProtocolIEs)) OF
+		ProtocolIE-Field {{IEsSetParam}}
+
+ProtocolIE-Single-Container {RUA-PROTOCOL-IES : IEsSetParam} ::= 
+	ProtocolIE-Field {{IEsSetParam}}
+
+ProtocolIE-Field {RUA-PROTOCOL-IES : IEsSetParam} ::= SEQUENCE {
+	id					RUA-PROTOCOL-IES.&id				({IEsSetParam}),
+	criticality			RUA-PROTOCOL-IES.&criticality		({IEsSetParam}{@id}),
+	value				RUA-PROTOCOL-IES.&Value				({IEsSetParam}{@id})
+}
+
+-- **************************************************************
+--
+-- Container Lists for Protocol IE Containers
+--
+-- **************************************************************
+
+ProtocolIE-ContainerList {INTEGER : lowerBound, INTEGER : upperBound, RUA-PROTOCOL-IES : IEsSetParam} ::=
+	SEQUENCE (SIZE (lowerBound..upperBound)) OF
+		ProtocolIE-Container {{IEsSetParam}}
+
+-- **************************************************************
+--
+-- Container for Protocol Extensions
+--
+-- **************************************************************
+
+ProtocolExtensionContainer {RUA-PROTOCOL-EXTENSION : ExtensionSetParam} ::= 
+	SEQUENCE (SIZE (1..maxProtocolExtensions)) OF
+		ProtocolExtensionField {{ExtensionSetParam}}
+
+ProtocolExtensionField {RUA-PROTOCOL-EXTENSION : ExtensionSetParam} ::= SEQUENCE {
+	id					RUA-PROTOCOL-EXTENSION.&id				({ExtensionSetParam}),
+	criticality			RUA-PROTOCOL-EXTENSION.&criticality		({ExtensionSetParam}{@id}),
+	extensionValue		RUA-PROTOCOL-EXTENSION.&Extension		({ExtensionSetParam}{@id})
+}
+
+
+-- **************************************************************
+--
+-- Container for Private IEs
+--
+-- **************************************************************
+
+PrivateIE-Container {RUA-PRIVATE-IES : IEsSetParam } ::= 
+	SEQUENCE (SIZE (1.. maxPrivateIEs)) OF
+		PrivateIE-Field {{IEsSetParam}}
+
+PrivateIE-Field {RUA-PRIVATE-IES : IEsSetParam} ::= SEQUENCE {
+	id					RUA-PRIVATE-IES.&id					({IEsSetParam}),
+	criticality			RUA-PRIVATE-IES.&criticality		({IEsSetParam}{@id}),
+	value				RUA-PRIVATE-IES.&Value				({IEsSetParam}{@id})
+}
+
+
+END
+
+

@@ -1,0 +1,15 @@
+# $URL: http://memo.prisma/svn/tm/tstmDb/tags/DbScripts-5.1.4/DbCommon.tsm $
+# $Rev: 2759 $
+# $Date: 2005-02-22 09:52:28 +0100 (Tue, 22 Feb 2005) $
+# $Author: roger $
+
+#Tag for csv file
+set TitleLineTag {Title}
+set TypeLineTag {Type}
+set AccessLineTag {Access}
+set ValueLineTag {Value}
+
+#Values to access DbAttrArr
+set AttrNameIdx 0
+set TypeIdx 1
+set AccessIdx 2

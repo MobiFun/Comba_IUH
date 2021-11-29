@@ -1,0 +1,113 @@
+#####################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/RUA/tags/RUA-1.3.0/scripts/rua_multi_inst.tsm $
+#
+# $Author: roger $
+#
+# Description: RUA Multi-Instance handler procedures
+#
+# $Rev: 53207 $
+#
+# $Date: 2012-07-17 12:15:04 +0200 (Tue, 17 Jul 2012) $
+######################################################
+
+proc RuaMultiInstanceHdl { } {
+
+	switch -glob -- [lindex $::_sig 0] {
+
+        "T_SCTP_ASSOCIATE"       { dbRuaAssocGetInstByTimer }
+        "T_WAIT_BEFORE_NEXT_REQ" { dbRuaAssocGetInstByTimer }       
+        "SCTP_*"                 { PreSCTP }
+
+		default { exit "ABORT-RuaMultiInstanceHdl: unexpected signal $::_sig" }
+	}
+
+	log "RUA: state=$::_state"
+}
+
+
+######################################################
+# Multi Instance Handling Procedures
+######################################################
+
+proc PreSCTP { } {
+
+    set primName [lindex $::_sig 0]
+    switch -exact -- $primName {
+    "SCTP_INITIALIZE_ACK" {
+        set enbId [lindex $::glRuaSctpListToSetup 0]
+        dbRuaEnbGetInst $enbId
+    }
+    "SCTP_ASSOCIATE_ACK"             {
+        log "SCTP_ASSOCIATE_ACK: spc=[rd ::_sig Spc], stkId=[rd ::_sig StkId], stcpId=[rd ::_sig SctpId]"
+        skipMsg
+    }
+    "SCTP_ASSOCIATE_NAK"             {
+		# SCTP_ASSOCIATE_NAK might be received because there is another
+		# sctpAssociate pending.
+		# For example, if the peer sctp stack is running, but there is no sctp
+		# peer ready, then the peer sctp stack immediately replies with ABORT
+		# and the ASSOCIATE_CMD is consumed.
+		# But if there is no peer sctp stack at all, the originating stcp stack
+		# never receives ABORT so that the next SCTP_ASSOCIATE_CMD might find the
+		# previous sctpAssociate command still BUSY and this will cause
+		# SCTP_ASSOCIATE_NAK.
+		# this is why SCTP_ASSOCIATE_NAK is traced, but is not considered an error.
+		# TODO: discriminate real error in SCTP_ASSOCIATE_NAK. 
+		log "### SCTP_ASSOCIATE_NAK: spc=[rd ::_sig Spc], stkId=[rd ::_sig StkId], stcpId=[rd ::_sig SctpId] ###"
+        skipMsg
+    }
+    "SCTP_COMMUNICATION_UP_IND"      {
+        set spc     [rd ::_sig Spc]
+        set stkId   [rd ::_sig StkId]
+        set sctpId  [rd ::_sig SctpId]
+        set assId   [rd ::_sig AssId]
+        set peerIpNum [rd ::_sig DstAddrListSize]
+        set peerPort  [rd ::_sig DstAddrListPort]
+        set peerIp    [htoip [rd ::_sig DstAddrListHost] B]
+        logscr "PreSCTP.SCTP_COMMUNICATION_UP_IND: assId=$assId, peerIpNum=$peerIpNum, peerIp=$peerIp, peerPort=$peerPort"
+        dbRuaEnbGetInstBySctpKey $spc $stkId $sctpId
+        set mmeIdx [dbAssocGetPeerIdxByIpPort $::glEnbIdx $peerIp $peerPort]
+        dbRuaAssocGetInst "${::glEnbIdx}-${mmeIdx}"
+        dbRuaAssocInstSetAssocKey $spc $stkId $sctpId $assId
+    }
+    "SCTP_COMMUNICATION_LOST_IND"    -
+    "SCTP_NETWORK_STATUS_CHANGE_IND" -
+    "SCTP_SHUTDOWN_COMPLETE_IND" {
+        set spc     [rd ::_sig Spc]
+        set stkId   [rd ::_sig StkId]
+        set sctpId  [rd ::_sig SctpId]
+        set assId   [rd ::_sig AssId]
+        logscr "PreSCTP.$primName: assId=$assId"
+        dbRuaEnbGetInstBySctpKey $spc $stkId $sctpId
+        dbRuaAssocGetInstByAssocKey $spc $stkId $sctpId $assId
+    }
+    "SCTP_DATA_IND"                  { PreSCTP_DATA_IND }
+    default                          { Unexpected }
+    }
+}
+
+proc PreSCTP_DATA_IND { } {
+
+    set spc     [rd ::_sig Spc]
+    set stkId   [rd ::_sig StkId]
+    set sctpId  [rd ::_sig SctpId]
+    set assId   [rd ::_sig AssId]
+	# Update glCurrStreamId (used to reply in case context actualization fails)
+	set ::glCurrStreamId [rd ::_sig StreamId]
+    logscr "PreSCTP_DATA_IND: assId=$assId, glCurrStreamId=$::glCurrStreamId"
+	# set current enb, mme and assoc
+    dbRuaEnbGetInstBySctpKey $spc $stkId $sctpId
+    dbRuaAssocGetInstByAssocKey $spc $stkId $sctpId $assId
+
+	set ruaPdu [rd ::_sig Data]
+	if { [IsVoid $ruaPdu] } {
+		logscr "PreSCTP_DATA_IND: Warning Received Empty SCTP DATA IND"
+        return -1
+	}
+	RUAPduToSig ruaPdu
+	set ::_sig $::_sigpdu
+
+	if { ![CheckSignal] } {
+		skipMsg
+	}
+}

@@ -1,0 +1,304 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/BSSAP_COMBA/tags/BSSAP_COMBA-1.2.0/scripts/bssap_common.tsm $
+#
+# $Author: roger $
+#
+# Description: BSSAP Common Procedures
+#
+# $Rev: 53539 $
+#
+# $Date: 2012-07-27 15:56:11 +0200 (Fri, 27 Jul 2012) $
+##############################################################
+
+# SVN Revision Checking #
+set url "\$URL: http://memo.prisma/svn/tm/scriptProt/BSSAP_COMBA/tags/BSSAP_COMBA-1.2.0/scripts/bssap_common.tsm $"
+set rev "\$Rev: 53539 $"
+logv0 "[GetName $url]: version [Version "script" $url $rev]"
+
+##############################################################
+
+#------------------------------------------------------------#
+# RESET PROCEDURES for TDM and IP 
+#------------------------------------------------------------#
+
+proc GlobResetRqrd { causeValue {bscIdx ?} } {
+
+	set totalNumberOfBsc [DbSize $::glBscDb]
+	log "GlobResetRqrd: totalNumberOfBsc=$totalNumberOfBsc"
+
+	if { [IsVoid $bscIdx] } {
+		foreach bscId [DbGetIndexList $::glBscDb] {
+			log "GlobResetRqrd: bscId=$bscId"
+			set res1 [ResetNtwElem $causeValue $bscId]
+			if { $res1 } {
+				set res2 1	
+			} else {
+				set res2 0
+			}
+		}
+		if { $res2 } {
+			set res $res2
+		} else {
+			set res $res1
+		}
+	} else {
+		log "GlobResetRqrd: bscIdx=$bscIdx"
+		set res [ResetNtwElem $causeValue $bscIdx]
+	}
+	return $res
+}
+
+proc ResetNtwElem { cause bscId } {
+
+	if { [string match 0 [DbGet $::glBscDb $bscId AllocCics]] } {
+		# only if there aren't connections for the $glMsId we do the GLOBAL RESET
+		set stkId [DbGet $::glBscDb $bscId StkId]
+		log "GlobResetRqrd: stkId=$stkId"
+		SendGlobalReset $cause
+		set res 1
+		# retriggero il reset globale periodico
+		TriggerPeriodicReset GLOBAL
+	} else {
+		if { [info exists ::__Dbssap_PerGlobalReset] } {
+			# PERIODIC GLOBAL RESET
+			TriggerPeriodicReset GLOBAL
+		}
+		set res 0
+	}
+	return $res
+}
+
+proc SendGlobalReset { causeValue } {
+
+	new 	RST s
+	wr      s cause $causeValue
+
+	if { $::glAoip && [info exists ::__interfaceSelectorForReset] } {
+	# IP or MIXED are possible values of the userplane
+		# 0: no resources deleted, 1: deleted only tdm, 2: deleted only IP, 3: both ip and tdm resources are deleted
+		set interfaceSelectorForReset $::__interfaceSelectorForReset
+		log "SendGlobalReset: __interfaceSelectorForReset=$interfaceSelectorForReset"
+		wr 	s a_intf_slctr_for_rst $interfaceSelectorForReset
+	} elseif { $::glAoip && ![info exists ::__interfaceSelectorForReset] } {
+		log "SendGlobalReset: GLOBAL RESET without '__interfaceSelectorForReset'"
+	} 
+
+	LogOutputMsg $s
+
+	SendRuaConnectlessReq $s
+}
+
+proc SendResetAck { } {
+
+	new 	RST_ACK s
+
+	if { $::glAoip && ![IsEmpty [lindex $::_sig 2]] && ![IsVoid [lindex $::_sig 2]] } {
+	# AUoIP: the optional AInterfaceSelectorForReset IE is present in the RST message received
+		log "SendResetAck: a_intf_slctr_for_rst=[rd ::_sig a_intf_slctr_for_rst]"
+		wr 	s a_intf_slctr_for_rst [rd ::_sig a_intf_slctr_for_rst]
+	}
+
+	LogOutputMsg $s
+
+	SendRuaConnectlessReq $s
+}
+
+proc ResetIpResource { {cause 60} } {
+
+	set vl 4; #//verbosity level
+	set logvb "logv"
+	append logvb $vl
+
+	set input_sig [lindex $::_sig 0]
+	$logvb "ResetIpResource: input_sig=$input_sig"
+	
+	append input_sig id
+	set bscid [DbGetIdx $::glBscDb $input_sig $::_src]
+	$logvb "ResetIpResource: bscid=$bscid"
+
+	if { ![isSplitted] } {
+	# Singleprocess version
+
+		set oldValue 0
+		# Call Identifier List (3gpp-48008-940 pg. 3.2.2.106)
+		set callId_list [GetCallIdListForResetIpResource $oldValue moreCallIdList]
+		$logvb "ResetIpResource: callId_list=$callId_list"
+		if { [IsEmpty $callId_list] } {
+			$logvb "ResetIpResource: no allocated IP resources found"
+			return
+		}
+
+		SendResetIpResource $callId_list $cause
+
+		while { ![IsVoid $moreCallIdList] && $moreCallIdList != 0 && $moreCallIdList >= 61 } {
+		# more RESET RESOURCE will be sent in case 'moreCallIdList' is multiple of 61
+			set oldValue $moreCallIdList
+			set callId_list [GetCallIdListForResetIpResource $oldValue moreCallIdList]
+			$logvb "ResetIpResource: moreCallIdList=$moreCallIdList; callId_list=$callId_list"
+			SendResetIpResource $callId_list $cause
+		}; # end while
+	} else {
+	# Multiprocess version
+
+		set oldList 0
+		set callIdSeparatedlist [GetCallIdSeparatedList $oldList otherCallIdList]
+		$logvb "ResetIpResource: callIdSeparatedlist=$callIdSeparatedlist"; #cDEBUG
+		if { [IsEmpty $callIdSeparatedlist] } {
+			$logvb "ResetIpResource: *** NO allocated IP resources found ***"
+			return
+		}
+
+		TriggerResetResource $bscid $callIdSeparatedlist $cause
+
+		while { ![IsVoid $otherCallIdList] && $otherCallIdList != 0 && $otherCallIdList >= 61 } {
+		# more BSSAP RESET RESOURCE will be sent if 'otherCallIdList' is greater or equal to 61
+		# Carlo nota del 16/02/2012: per poter avere msg SCCP di tipo UnitData ovvero con campo Data del msg SCCP <= 255 Bytes;
+		# infatti se mettessi 62 CallId cioe 62 interi avrei 248 ottetti che sommati agli altri parametri del campo Data sforerebbero 255
+		# infatti il nostro SCCP può inviare msg BSSAP di max 247 ottetti di tipo Unitdata (valore hardcoded da Marco nel Ss7-SCCP).
+		# motivo del xche max ho 61 CallId per ogni msg di Reset Resource
+			set oldList $otherCallIdList
+			$logvb "---> oldList=$oldList --> new iteration ....."
+			set callIdSeparatedlist [GetCallIdSeparatedList $oldList otherCallIdList]
+			$logvb "ResetIpResource: otherCallIdList=$otherCallIdList; callIdSeparatedlist=$callIdSeparatedlist"
+			if { [IsEmpty $callIdSeparatedlist] } {
+				$logvb "ResetIpResource: *** NO ALLOCATED IP RESOURCES FOUND ***"
+				return
+			}
+			TriggerResetResource $bscid $callIdSeparatedlist $cause
+		}; # end while
+	}
+
+	# Start timer T_RMSC within to receive an answer to the Reset IP Resource
+	# Carlo interpretation of the use of the timer T_rmsc (to see 3gpp_48008-960 @3.1.4.3.2)
+	# just one timer is used and if it expires before to receive the ACK message then MSC re-sends the RESET_RESOURCE messages.
+	if { [lindex $::_sig 0] != "BSSAP_CTL_RESET_RESOURCES" } {
+		StartStopTimerRstResource 1 $bscid
+	} else {
+		StartStopTimerRstResource 1
+	}
+}
+
+proc SendResetIpResource { callIdList causeValue } {
+
+	# the default cause value is 60 ('protocol error)
+
+	new RESET_RESOURCE s
+	wr s cause 		$causeValue
+	wr s res_list 	$callIdList
+
+	LogOutputMsgv0 $s
+
+	SendRuaConnectlessReq $s
+}
+
+proc SendResetResourceAck { resList } {
+
+	#Carlo TMA-464: it recovers the instance stored when I received the RESET_RESOURCE
+	set ::glMsId $::glInstNull 
+
+	new 	RESET_RESOURCE_ACK s
+	wr		s res_list $resList
+
+	LogOutputMsg $s
+
+	SendRuaConnectlessReq $s
+}
+
+proc ResetCircuit { } {
+	
+	set cic_list [GetActiveCicsList]
+
+	log "ResetCircuit: cic_list=$cic_list --> cic=[split $cic_list ","]"; #cDEBUG
+
+	if { ![IsEmpty $cic_list] && ![IsVoid $cic_list] } {
+		if { ![isSplitted] } {
+			# Singleprocess version
+			foreach cic [split $cic_list ","] {
+				log "ResetCircuit: cic=$cic"
+				if { [DbKeyExists $::glBssapDb Cic $cic] } {
+					set idx [DbGetIdx $::glBssapDb Cic $cic]
+					log "ResetCircuit: --> idx=$idx"
+					# Check if there are calls what mustn't be released (Carlo 28/09/2011: feature for ASB Shanghai)
+					if { ![DbFieldExists $::glMsDb ResNotRel] || [DbGet $::glMsDb $idx ResNotRel] == 0 } {
+						incr ::glnumTimeSlot
+						SendResetTdmCircuit $cic
+					}
+				} else {
+					log "ResetCircuit: WARNING: no reset done for the cic:$cic because it doesn't exist in the $::glBssapDb"
+				}
+			}
+		} else {
+			# Multiprocess version
+			set bscid [DbGetIdx $::glBscDb T_RESET_TDMCIRCUITid $::_src]
+			log "ResetCircuit: cic_list=$cic_list; bscid=$bscid"
+			# check the cic that can be released
+			set cic_releseable_list ""
+			foreach cic [split $cic_list ","] {
+				log "ResetCircuit:  --> Cic=$cic"
+				if { [DbKeyExists $::glBssapDb Cic $cic] } {
+					set idx [DbGetIdx $::glBssapDb Cic $cic]
+					log "ResetCircuit: idx=$idx"
+					# Check if there are calls what mustn't be released
+					if { ![DbFieldExists $::glMsDb ResNotRel] || [DbGet $::glMsDb $idx ResNotRel] == 0 } {
+						if { $cic_releseable_list != "" } {
+							append cic_releseable_list ","
+						}
+						append cic_releseable_list $cic
+					}
+					incr ::glnumTimeSlot
+				} else {
+					log "ResetCircuit: WARNING: no reset done for Cic=$cic because it doesn't exist in the BssapDb"
+				}
+			}
+			log "------------------------------------------------------"
+			log "ResetCircuit: cic_releseable_list=$cic_releseable_list"
+			log "------------------------------------------------------"
+			TriggerResetTdmCircuits $bscid $cic_releseable_list
+		}
+	} else {
+		log "ResetCircuit: no active calls found!"
+		return
+	}
+}
+
+proc SendResetTdmCircuit { cic {causeValue 60} } {
+
+	set cic_hex [ustoh $cic B]
+
+	log "SendResetTdmCircuit: cic=$cic --> cic_hex=$cic_hex"; #cDEBUG
+
+	new 	RST_CIRC s
+	wr s 	circ_idty_code $cic_hex
+	wr s 	cause $causeValue; # the default value 60 is 'protocol error'
+
+	LogOutputMsg $s
+
+	SendRuaConnectlessReq $s
+}
+
+proc SendResetCircAck { cic } {
+
+	new 	RST_CIRC_ACK s
+	wr		s circ_idty_code $cic
+
+	LogOutputMsg $s
+
+	SendRuaConnectlessReq $s
+}
+
+proc GetBscIdByLacCellId { } {
+
+	global glMsId glBssapDb glBtsDb
+
+	set lac [DbGet $glBssapDb $glMsId LAC]
+	set cellid [DbGet $glBssapDb $glMsId CellId]
+
+	set bscid [GetBscIdByCellIdfr $lac $cellid glBtsDb]
+
+	if { $bscid == "-1" } {
+        abort "GetBscIdByLacCellId: BSC identity unknown (LAC=$lac, CellId=$cellid)"
+    }
+	
+	return $bscid
+}
+# EoF ########################################################

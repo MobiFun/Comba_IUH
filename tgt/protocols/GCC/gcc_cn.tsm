@@ -1,0 +1,667 @@
+#**********************************************************************
+# Title:
+#----------------------------------------------------------------------
+# $URL$
+#
+# $Author$
+# $Date$
+#
+# $Rev$
+#**********************************************************************
+
+# GCC Core network script
+#
+# This script is based onto a VGCS call. This is identified by the group
+# call reference number. The multi-instance is base on the group call re-
+# ference of the call, so the Db of the script is indexed by groupCall-
+# reference. In case of dispatcher call, the dispatcher id passed is 
+# stored and used to exchange signal with user script. In case of
+# MS originated call, the originator is stored and also the current
+# talker is present (if the uplink is free, the talkerMsId is set to
+# -1).
+# Global variables:
+# glCurrentGroupCallReference: Current instance of group call selected
+# glGCCDb: Database of the group calls 
+
+#Set to 1 this var to test the C section of codec
+set DebugPduCodec 0
+
+# GCC Core Network simulation module
+proc Init { args } {
+    # Declare and Initialize Global Variables
+    global _self _HandleRxSignalProc __net_side glCommonDb Visible
+	global glCurrentGroupCallReference glMsDb glDefaultPid
+	global glCurrentMsId glBscDb glGroupCallInfoDb glPidMsList
+
+    include "common/utils/generalUtils.tsm"
+    include "common/utils/L3Utils.tsm"
+	include "sched/global.tcl"
+	include "protocols/GCC/gcc_utils.tsm"
+	set Visible 1
+
+    # Uplevel Configuration File
+    set cfgfile [lindex $args 0]
+    uplevel #0 include $cfgfile
+
+	# Set Net Side
+	SetNetside
+	
+	set glMsDb [lindex $args 1]
+
+	#Gcc adaptation layer
+	set al [lindex $args 2]
+	include "$al"
+	
+	#Bsc Db
+	set glBscDb [lindex $args 3]
+	
+	#Group call reference with cell infos
+	set glGroupCallInfoDb [lindex $args 4]
+	register GCC
+
+    # Handle Multi-Instance
+    set _HandleRxSignalProc RxSignalProc
+
+	# Signal definition for simulate the accept by GCR
+	typedef { STRUCT {HEXSTR GroupCallReference} GCR_ACCEPT }
+	set glCurrentGroupCallReference 0
+	set glDefaultPid 0
+	set glCurrentMsId 0
+
+	# Empty the list of the process pid and their MSs
+	set glPidMsList {}
+
+	logscr "GCC Core Network simulation started"
+
+	nextstate WaitForConfig
+}
+
+proc ConfigGccCn { } {
+	global DebugPduCodec global glGCCDb glIdx
+
+	#Create Internal Db
+	set glGCCDb GCC_cn_db
+	CreateDatabase $glGCCDb 
+
+	new GCC_CONFIG_ACK s
+
+	LogOutputMsg $s
+	send s $::_src
+	
+	logscr ""
+	logscr "GCC BRING-UP COMPLETE"
+	logscr ""
+
+    set glIdx 0
+
+	if { $DebugPduCodec == 1 } {
+		nextstate WaitForTestMessages
+	} else {
+		nextstate Null_N0
+	}
+}
+
+proc CheckGroupIdAndArea { grCallAreaId grId } {
+	set len [string length $grId]
+	if { [expr { ($len > 7) || ($len < 1) }] } {
+		logscr "Group Id too long!"
+		return 1
+	}
+	set len2 [string length $grCallAreaId]
+	set totlen [expr $len + $len2]
+	if { $totlen > 8 } {
+		logscr "GroupCall Reference too long"
+		return 2
+	}
+	return 0
+}
+
+proc GetTalkerByGroupCallReference { grCallRef } {
+	global glGCCDb
+	return [DbGet $glGCCDb $grCallRef TalkerMsId]
+}
+
+proc GeteMLPPriorityByOriginator { msDb msId grId } {
+	set grIdList [DbGet $msDb $msId GroupIdList]
+	set eMLPPrioList [DbGet $msDb $msId VGCSeMLPPriorityList]
+	set index 0
+	foreach idx $grIdList {
+		if { ![string compare $grId $idx] } {
+			return [lindex $eMLPPrioList $index]
+		}
+		incr index
+	}
+	logscr "###### ERROR: the originator (MsId = $msId) hasn't the groupId = $grId in the database = $msDb"
+	exit
+}
+
+proc InformUserScriptCallReleased { gccDb signal } {
+	set grCallRef [rd signal GroupCallReference]
+	set grId [DbGet $gccDb $grCallRef GroupId]
+	set usrPid [DbGet $gccDb $grCallRef UserPid]
+	set cause [rd signal Cause]
+	logscr "Received fail indication from BSSAP, informing UserScript (Cause=$cause)"
+	if { ![string compare $cause "CallReleased"] } {
+		new MN_GCC_NET_REL_CNF s
+		wr s GroupCallReference $grCallRef
+		wr s GroupId $grId
+		wr s GroupCallAreaId  [GetGroupAreaIdByRefAndGroupId $grCallRef $grId]
+	} else {
+		new MN_GCC_NET_FAIL_IND s
+		wr s GroupId $grId
+		wr s GroupCallAreaId [GetGroupAreaIdByRefAndGroupId $grCallRef $grId]
+		wr s Cause $cause
+	}
+	wr s DisId [DbGet $gccDb $grCallRef DisId]
+	send s $usrPid
+}
+
+proc SendBssapSetupReq { usrsig grCallAreaId msDb msId cellId lac } {
+	global _bssappid glGCCDb
+
+	upvar 1 $usrsig sig
+
+	if { ![IsVoid $msId] } {
+		set priority [DbGet $msDb $msId Priority]	
+	} else {
+		set priority [rd sig Priority]
+	}
+
+	new BSSAP_CTL_VGCS_SETUP_REQ t
+	wr t GroupId [rd sig GroupId]
+	wr t GroupCallAreaId $grCallAreaId 
+	set eMLPPriority [rd sig eMLPPriority]
+	wr t eMLPPriority $eMLPPriority
+	#While the call begins from an MS the timer is not used
+	wr t BssapAsgReqWaitTime [rd sig BssapAsgReqWaitTime]
+	wr t DispatcherCall 0
+	set lacCellId $lac
+	append lacCellId "_"
+	append lacCellId $cellId
+	wr t TalkerLACCellId $lacCellId
+	set asgReqPrio [rd sig TalkerAsgReq]
+	append asgReqPrio "_"
+	append asgReqPrio [rd sig TalkerPriority]
+	wr t TalkerAsgReqPriority $asgReqPrio
+
+	send t $_bssappid
+}
+
+proc GetGroupCallAreaIdByReference { grCallRef grId } {
+	set grLen [string length $grId]
+	set refLen [string length $grCallRef]
+	
+	set grCallAreaId [string range $grCallRef 0 [expr $refLen - $grLen - 1]]
+	logscr "GetGroupCallAreaIdByReference: grCallAreaId = $grCallAreaId"
+	return $grCallAreaId
+}
+
+proc SendTermination { msId cause } {
+	new GCC_TERMINATION t
+	wr t TIFlag 0
+	wr t TI0 0
+	wr t SeqNum 0
+	wr t Cause $cause
+	set pdu [gccSigToPdu t]
+	new MM_GCC_DATA_REQ s
+	wr s MsId $msId
+	wr s Pdu $pdu
+	send s
+}
+
+proc SendUplinkReleaseToUserScript { gccDb grCallRef } {
+	new MN_GCC_UPLINK_REL s
+	set usrPid [DbGet $gccDb $grCallRef UserPid]
+	set grId [DbGet $gccDb $grCallRef GroupId]
+	wr s GroupId $grId
+	wr s GroupCallAreaId [GetGroupAreaIdByRefAndGroupId $grCallRef \
+				$grId]
+	send s $usrPid
+}
+
+proc SendMmGccRelReq { msId } {
+	global _mmpid
+	new MM_GCC_REL_REQ s
+	wr s MsId $msId
+	wr s Tio 0
+	wr s Cause 09
+	send s $_mmpid 
+}
+
+proc SendUplinkReleaseToBSC { grCallReference cause } {
+	global _bssappid
+
+	new BSSAP_CTL_VGCS_SEND_UPL_REL s
+	wr s GroupCallReference $grCallReference
+	wr s Cause $cause
+	send s $_bssappid
+}
+
+proc IsTalkerPresent { gccDb grCallRef } {
+	set talker [DbGet $gccDb $grCallRef TalkerMsId]
+	return [IsVoid $talker]
+}
+
+proc IsTalkerOriginator { gccDb grCallRef currentTalker } {
+	set originator [DbGet $gccDb $grCallRef OriginatorMsId]
+	if { [string compare $originator $currentTalker] } {
+		return 0
+	} else {
+		return 1
+	}
+}
+
+proc GetBssapCauseCode { cause } {
+	if { ![string compare $cause "e1af"] } {
+		# Convert the cause to terrestrial resource unavailable
+		return 22
+	} else { return $cause }
+}
+
+##############
+### STATES ###
+##############
+
+state WaitForConfig {
+	GCC_CONFIG ConfigGccCn
+}
+
+state Null_N0 {
+	MM_GCC_EST_IND {
+		global _sig glCurrentGroupCallReference glGCCDb
+		global _mmpid glMsDb
+		LogInputSig
+		#Save the information about in what cell the talker is
+		DbSet $glGCCDb $glCurrentGroupCallReference TalkerCellId \
+			[rd _sig CellId]
+		DbSet $glGCCDb $glCurrentGroupCallReference TalkerLAC \
+			[rd _sig Lac]
+		#Retrive the eMLPPriority for the originator by the MsDb
+		set msId [DbGet $glGCCDb $glCurrentGroupCallReference MsId]
+		set groupId [DbGet $glGCCDb $glCurrentGroupCallReference GroupId]
+		set eMLPPriority [GeteMLPPriorityByOriginator $glMsDb $msId $groupId]
+		logscr "Null_N0: eMLPPriority for originator = $eMLPPriority"
+		DbSet $glGCCDb $glCurrentGroupCallReference eMLPPriority $eMLPPriority
+		#Inform the user script that a call has started
+		set usrPid [DbGet $glGCCDb $glCurrentGroupCallReference UserPid]
+		set grId [DbGet $glGCCDb $glCurrentGroupCallReference GroupId]
+		new MN_GCC_NET_SETUP_IND s
+		wr s MsId $msId
+		wr s GroupId $grId
+		wr s GroupCallAreaId [GetGroupAreaIdByRefAndGroupId $glCurrentGroupCallReference $grId]
+		send s $usrPid
+		#Prepare the message to synch with MM
+		set revLev [rd _sig RevLev]	
+		new     MM_SYNC_RES_ASS r
+    	wr      r StreamId ?
+	    wr      r CallType Speech
+	    wr      r MsRate 08
+	    wr      r SpeechVer 01
+		set priority [DbGet $glGCCDb $glCurrentGroupCallReference eMLPPriority]
+	    new     MM_GCC_SYNC_REQ s
+    	wr      s MsId $msId
+		wr		s GroupCallReference \
+			[GetDescriptiveGroupCallReferencePdu $glCurrentGroupCallReference \
+				$priority 0 1]
+	    wr      s CauseVal $r
+		send s $_mmpid
+
+		nextstate GroupCallInitiated_N1
+	}
+	MN_GCC_NET_ACT_REQ {
+		#Call started by a dispatcher
+		global _sig	_bssappid _self _state
+		global glCurrentGroupCallReference
+		LogInputSig
+		#Here call has started by a dispatcher
+		set msId [rd _sig MsIdentity]
+		#Check the values of GroupCallAreaId and GroupId
+		set grCallAreaId [rd _sig GroupCallAreaId]
+		set grId [rd _sig GroupId]
+		if { [CheckGroupIdAndArea $grCallAreaId $grId] } {
+			logscr "Invalid group call area Id or group id"
+			exit
+		} else {
+			#Remove leading zeroes in order to avoid codec 
+			#function to consider number an octal!
+			set grCallAreaId [string trimleft $grCallAreaId 0]
+			if { ![string compare $grCallAreaId ""] } {
+				set grCallAreaId 0
+				}
+		}
+		set groupCallReference [GetGroupCallRef $grCallAreaId $grId]
+		set glCurrentGroupCallReference $groupCallReference
+		#Inform BSSAP to create all necessary links
+		new BSSAP_CTL_VGCS_SETUP_REQ t
+		wr t GroupId [rd _sig GroupId]
+		wr t GroupCallAreaId [rd _sig GroupCallAreaId]
+		wr t Priority [rd _sig Priority]
+		wr t eMLPPriority [rd _sig eMLPPriority]
+		wr t BssapAsgReqWaitTime [rd _sig BssapAsgReqWaitTime]
+		wr t DispatcherCall 1
+		send t $_bssappid
+		#Assume the GCR has accepted the call
+		new GCR_ACCEPT u
+		wr u GroupCallReference $groupCallReference
+		send u $_self
+		nextstate GroupCallInitiated_N1
+	}
+	default { 
+		global _state glCurrentGroupCallReference glGCCDb
+		LogInputSig
+		Unexpected
+		logscr "Current instance: $glCurrentGroupCallReference"
+		LogDb $glGCCDb
+	}
+}
+
+state GroupCallInitiated_N1 {
+	MM_GCC_SYNC_CNF {
+		global _sig glCurrentGroupCallReference glGCCDb
+		LogInputSig
+		set res [rd _sig Res]
+		set grId [DbGet $glGCCDb $glCurrentGroupCallReference GroupId]
+		set grCallAreaId [GetGroupAreaIdByRefAndGroupId $glCurrentGroupCallReference $grId]
+		set usrPid [DbGet $glGCCDb $glCurrentGroupCallReference UserPid]
+		set msId [rd _sig MsId]
+		if { $res != -1 } {
+			new MN_GCC_NET_SYNC_IND s
+			wr s GroupId $grId
+			wr s GroupCallAreaId $grCallAreaId
+		} else {
+			new MN_GCC_NET_ERROR_IND s
+			wr s GroupId $grId
+			wr s GroupCallAreaId $grCallAreaId	
+			wr s Cause e1af
+			#Tell the MS the call cannot be done (Cause = congestion)
+			SendTermination $msId 96
+			#Remove the entry in the Db, the call is finished
+			DbRemEntry $glGCCDb $glCurrentGroupCallReference
+			SendMmGccRelReq $msId
+		}
+		send s $usrPid
+		#Do not change state while we're waiting for the MN_GCC_NET_ACT_REQ
+		#from the user script
+	}
+	MM_GCC_REL_IND {
+		global  _sig glCurrentGroupCallReference glGCCDb
+		set grId [DbGet $glGCCDb $glCurrentGroupCallReference GroupId]
+		set grCallAreaId [GetGroupAreaIdByRefAndGroupId $glCurrentGroupCallReference $grId]
+		set usrPid [DbGet $glGCCDb $glCurrentGroupCallReference UserPid]
+		#Tell to the user script that the call is down, while the Originator has been lost
+		new MN_GCC_NET_ERROR_IND s
+		wr s GroupId $grId
+		wr s GroupCallAreaId $grCallAreaId
+		#Delete the current call, it does not exist anymore
+		DbRemEntry $glGCCDb $glCurrentGroupCallReference
+		send s $usrPid
+	}
+	MN_GCC_NET_ACT_REQ {
+		#Call started by an MS subscriber
+		global _sig glCurrentGroupCallReference glMsDb glGCCDb _mmpid
+		LogInputSig
+		
+		set grId [rd _sig GroupId]
+		set grCallAreaId [GetGroupCallAreaIdByReference $glCurrentGroupCallReference $grId]
+		set msId [DbGet $glGCCDb $glCurrentGroupCallReference TalkerMsId] 
+		set cellId [DbGet $glGCCDb $glCurrentGroupCallReference TalkerCellId]
+		set lac [DbGet $glGCCDb $glCurrentGroupCallReference TalkerLAC]
+		set eMLPPriority [rd _sig eMLPPriority]
+		DbSet $glGCCDb $glCurrentGroupCallReference eMLPPriority $eMLPPriority
+		SendBssapSetupReq _sig $grCallAreaId $glMsDb $msId $cellId $lac
+		
+		nextstate GroupCallEstProceeding_N3
+	}
+	GCR_ACCEPT {
+		global glCurrentGroupCallReference
+		logscr "GroupCallInitiated_N1:"
+		logscr "Current instance: $glCurrentGroupCallReference"	
+		LogInputSig
+
+		nextstate GroupCallEstProceeding_N3
+	}
+	MN_GCC_NET_REL_REQ {
+		logscr "GroupCallInitiated_N1"
+		LogInputSig
+		
+		nextstate Null_N0
+	}
+	BSSAP_CTL_VGCS_FAIL_IND {
+		global glGCCDb _sig
+		set grCallRef [rd _sig GroupCallReference]
+		InformUserScriptCallReleased $glGCCDb $_sig
+		DbRemEntry $glGCCDb $grCallRef
+	}
+	default { Unexpected }
+}
+
+state GroupCallEstProceeding_N3 {
+	BSSAP_CTL_VGCS_SETUP_CNF {
+		global glCurrentGroupCallReference _state glGCCDb
+		LogInputSig
+		logscr $glGCCDb
+		nextstate GroupCallActive_N2
+	}
+	MN_GCC_NET_REL_REQ {
+		global glCurrentGroupCallReference glGCCDb
+		logscr "GroupCallEstProceeding_N3:"
+		LogInputSig
+			
+		nextstate Null_N0
+	}
+	MM_GCC_REL_IND {
+		global glGCCDb glCurrentGroupCallReference
+		LogInputSig
+		# Memorize that the first talker has lost the link
+		DbSet $glGCCDb $glCurrentGroupCallReference UplinkFreeDuringProceeding 1
+		DbSet $glGCCDb $glCurrentGroupCallReference TalkerMsId -1 
+	}
+	BSSAP_CTL_VGCS_FAIL_IND {
+		global glGCCDb _sig glCurrentGroupCallReference
+		set grCallRef [rd _sig GroupCallReference]
+		InformUserScriptCallReleased $glGCCDb $_sig
+		# Send Termination to the originator MS
+		set origMsId [DbGet $glGCCDb $glCurrentGroupCallReference OriginatorMsId]
+		if { $origMsId != "?" } {
+			SendTermination $origMsId 91
+			SendMmGccRelReq $origMsId
+		}
+		DbRemEntry $glGCCDb $grCallRef
+	}
+	default {
+		global _state
+		logscr "Unexpected signal in $_state"
+		LogInputSig
+	}
+	default { Unexpected }
+}
+
+proc IsTalkerValid { msId } {
+	if { $msId != -1 } {
+		return 1 
+	} else {
+		return 0
+	}
+}
+
+proc RemoveTalker { gccdb grCallRef } {
+	set talker [DbGet $gccdb $grCallRef TalkerMsId]
+	if { ![IsVoid $talker] } {
+		if { [IsTalkerValid	$talker] } {
+			if { [IsTalkerOriginator $gccdb $grCallRef $talker] } {
+				SendTermination $talker 96
+			} else {
+				SendMmGccRelReq $talker
+			}
+		}
+	}
+}
+
+state GroupCallActive_N2 {	
+	MN_GCC_NET_REL_REQ {
+		global _sig _bssappid glCurrentGroupCallReference glGCCDb
+		#Send the Release to all the bssap links
+		new BSSAP_CTL_VGCS_RELEASE_REQ s
+		wr s GroupId [rd _sig GroupId]
+		wr s GroupCallAreaId [rd _sig GroupCallAreaId]
+		send s $_bssappid	
+		RemoveTalker $glGCCDb $glCurrentGroupCallReference
+		logscr "GroupCallActive_N2"	
+		logscr "Current instance: $glCurrentGroupCallReference"
+		LogInputSig
+		nextstate TerminationRequested_N4
+	}
+	BSSAP_CTL_VGCS_FAIL_IND {
+		LogInputSig
+		global glGCCDb _sig
+		set grCallRef [rd _sig GroupCallReference]
+		RemoveTalker $glGCCDb $grCallRef
+		InformUserScriptCallReleased $glGCCDb $_sig
+		DbRemEntry $glGCCDb $grCallRef
+	}
+	BSSAP_CTL_VGCS_HOV_PERFD_IND {
+		global _sig glCurrentGroupCallReference glGCCDb glMsDb
+		# The talker has performed an HO outside the group call area
+		set msId [rd _sig MsId]
+		# Check if the MS is in the list
+		if { [DbEntryExists $glMsDb $msId] } {
+			SendMmGccRelReq $msId
+			# TODO: Amel should provide the correct cause for this Release...
+			SendUplinkReleaseToBSC $glCurrentGroupCallReference 09
+			SendUplinkReleaseToUserScript $glGCCDb $glCurrentGroupCallReference
+			DbSet $glGCCDb $glCurrentGroupCallReference TalkerMsId -1
+		} else {
+			logscr "###### ERROR: the MS $msId is not in the MS Db"
+		}
+	}
+	MM_GCC_REL_IND {
+		global _sig glGCCDb glCurrentGroupCallReference
+		set msId [rd _sig MsId]
+		set talkerMsId [DbGet $glGCCDb $glCurrentGroupCallReference TalkerMsId]
+		if { $talkerMsId == $msId } {
+			#The talker is the right one
+			DbSet $glGCCDb $glCurrentGroupCallReference TalkerMsId -1
+			#Inform the user script that the call has been released
+			SendUplinkReleaseToUserScript $glGCCDb $glCurrentGroupCallReference
+		} else {
+			logscr "##### ERROR The talker was $talkerMsId but the Release Indication is from $msId"
+		}
+		LogInputSig
+	}
+	MM_GCC_TALKER_IND {
+		global _sig glCurrentGroupCallReference glGCCDb
+		LogInputSig
+		set msId [rd _sig MsId]
+		set talkerMsId [DbGet $glGCCDb $glCurrentGroupCallReference TalkerMsId]
+		set priority [DbGet $glGCCDb $glCurrentGroupCallReference eMLPPriority]
+		if { $talkerMsId == -1 } {
+			global _mmpid
+			#Store the current talking MS Id
+			DbSet $glGCCDb $glCurrentGroupCallReference TalkerMsId $msId
+			new MM_GCC_SYNC_REQ s
+			wr s MsId $msId
+			wr s GroupCallReference \
+				[GetDescriptiveGroupCallReferencePdu $glCurrentGroupCallReference \
+					$priority 0 1]
+			new MM_SYNC_RES_ASS r
+			wr r StreamId ?
+			wr r CallType Speech
+			wr r MsRate 08
+			wr r SpeechVer 01
+			wr s CauseVal $r
+			send s $_mmpid
+			#Inform user script about the current talker
+			set usrPid [DbGet $glGCCDb $glCurrentGroupCallReference UserPid]
+			new MN_GCC_UPLINK_BUSY s
+			set grId [DbGet $glGCCDb $glCurrentGroupCallReference GroupId]
+			wr s GroupId $grId
+			wr s GroupCallAreaId [GetGroupAreaIdByRefAndGroupId $glCurrentGroupCallReference \
+				$grId]
+			wr s NewTalkerMsId $msId
+			send s $usrPid
+		} else {
+			logscr "####### ERROR: The Talker is already present!"
+		}
+	}
+	MM_GCC_SYNC_CNF {
+		global glGCCDb glCurrentGroupCallReference _sig
+		LogInputSig
+		set res [rd _sig Res]
+		set cause [rd _sig Cause]
+		set msId [rd _sig MsId]
+		if { $res != -1 } {
+			set talkerMsId [DbGet $glGCCDb $glCurrentGroupCallReference TalkerMsId]
+			logscr "Talker confirmed $talkerMsId"
+		} else {
+			# Remove the signaling link toward the MS
+			SendMmGccRelReq $msId
+			logscr "Talker not confirmed, the uplink is still free"
+			SendUplinkReleaseToUserScript $glGCCDb $glCurrentGroupCallReference
+			#Release the link for the BSC
+			SendUplinkReleaseToBSC $glCurrentGroupCallReference [GetBssapCauseCode $cause]
+			#Unconfirm the current talker
+			DbSet $glGCCDb $glCurrentGroupCallReference TalkerMsId "-1"
+		}
+	}
+	GCC_TERMINATION_REQUEST {
+		global _sig _sigpdu glGCCDb glCurrentGroupCallReference
+		global glCurrentMsId
+		#Check if the MS is the originator
+		set origMsId [DbGet $glGCCDb $glCurrentGroupCallReference OriginatorMsId]
+		if { $origMsId == $glCurrentMsId } {
+			global _bssappid
+			set grId [DbGet $glGCCDb $glCurrentGroupCallReference GroupId]
+			set grCallAreaId [GetGroupAreaIdByRefAndGroupId $glCurrentGroupCallReference \
+				$grId]
+			new BSSAP_CTL_VGCS_RELEASE_REQ s
+			wr s GroupId $grId
+			wr s GroupCallAreaId $grCallAreaId
+			send s $_bssappid	
+			logscr "Received a GCC_TERMINATION_REQUEST from the originator: closing the call"
+			logscr "GroupCallActive_N2"	
+			logscr "Current instance: $glCurrentGroupCallReference"	
+			SendTermination $glCurrentMsId 90
+			nextstate TerminationRequested_N4
+		} else {
+			logscr "############# ERROR: The only MS that can stop a call is the originator"
+		}
+	}
+	default { Unexpected }
+}
+
+state TerminationRequested_N4 {
+	BSSAP_CTL_VGCS_FAIL_IND {
+		global glGCCDb _sig _mmpid glCurrentGroupCallReference
+		LogInputSig
+		set talkerMsId [DbGet $glGCCDb $glCurrentGroupCallReference TalkerMsId]
+		if { ![IsVoid $talkerMsId] } {
+			if { $talkerMsId != -1 } {
+				log "Releasing the link with the Talker: $talkerMsId"
+				SendMmGccRelReq $talkerMsId
+			}
+		}
+		set grCallRef [rd _sig GroupCallReference]
+		#Remove the entry in the Db, the call is terminated
+		InformUserScriptCallReleased $glGCCDb $_sig
+		DbRemEntry $glGCCDb $grCallRef
+		LogDb $glGCCDb
+	}
+	MM_GCC_REL_IND {
+		global _sig glGCCDb glCurrentGroupCallReference
+		#The talker has been lost, remove it
+		set msId [rd _sig MsId]
+		set talkerMsId [DbGet $glGCCDb $glCurrentGroupCallReference TalkerMsId]
+		if { $msId == $talkerMsId } {
+			DbSet $glGCCDb $glCurrentGroupCallReference TalkerMsId "-1"
+		} else {
+			logsrc "Received a Rel Ind from an MS ($msId) which wasn't the talker ($talkerMsId)"
+		}
+	}
+	default { Unexpected }
+}
+
+state WaitForTestMessages {
+	default {
+		LogInputSig
+	}
+}

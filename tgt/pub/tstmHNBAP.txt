@@ -1,0 +1,161 @@
+
+       ___
+     /_\_/_\    PRISMA Engineering S.r.l.
+    |\ /_\ /|   Telecom testing solutions
+    | |   | |   Via Petrocchi, 4 - 20127 Milano (Italy)
+    |/|___|\|   Tel. +39 02 26113507 - Fax +39 02 26113597
+     \|/_\|/    info@prisma-eng.com - http://www.prisma-eng.com
+
+
+
+typedef VOID HNBAP_OM_CFG;
+
+typedef VOID HNBAP_OM_CFG_ACK;
+
+typedef {
+UINT LatitudeSign
+UINT Latitude
+INT Longitude
+} GEOGRAPHICAL_COORDINATES;
+
+typedef {
+UINT DirectionOfAltitude
+USHORT Altitude
+} ALTITUDE_AND_DIRECTION;
+
+typedef {
+GEOGRAPHICAL_COORDINATES GeographicalCoordinates
+ALTITUDE_AND_DIRECTION AltitudeAndDirection
+} GEOGRAPHICAL_LOC;
+
+typedef {
+HEXSTR PLMNidentity
+HEXSTR LAC
+HEXSTR CI
+} CGI;
+
+typedef {
+HEXSTR LAC
+HEXSTR RAC
+HEXSTR PLMNidentity
+UINT CellID
+} UTRAN_CELLID;
+
+typedef {
+INT Tag
+HEXSTR Value  /*it can be UTRAN_CELLID or CGI */ 
+} MACRO_COVERAGE_INFO;
+
+typedef {
+STRUCTURE MACRO_COVERAGE_INFO MacroCoverageInformation
+STRUCTURE GEOGRAPHICAL_LOC   GeographicalLocation
+} HNB_LOC_INFO;
+
+typedef {
+INT Tag
+UINT Value
+} CAUSE;
+
+typedef {
+INT  Tag
+HEXSTR Value
+} UE_ID;
+
+typedef {
+HEXSTR PLMNidentity
+HEXSTR LAC
+} LAI;
+
+typedef {
+HEXSTR Tmsi
+LAI Lai
+} TMSILAI;
+
+typedef {
+LAI LAI
+HEXSTR RAC
+} RAI;
+
+typedef {
+HEXSTR Ptmsi
+RAI Rai
+} PTMSIRAI;
+
+typedef {
+HEXSTR IMSIDS41
+HEXSTR ESN
+} IMSIESN;
+
+typedef {
+UINT AS_Rel_Indicator
+UINT CSG_Indicator
+} UE_CAP;
+
+typedef {
+UINT	IECriticality
+USHORT IE_ID
+UINT TypeOfError
+} CRITICALITY_DIAGNOSTICS_IE_ITEM;
+
+typedef {
+UCHAR	ProcedureCode
+UINT 	TriggeringMessage
+UINT	ProcedureCriticality
+LIST_OF CRITICALITY_DIAGNOSTICS_IE_ITEM IEsCriticalityDiagnostics
+} CRITICALITY_DIAGNOSTICS;
+
+typedef {
+HEXSTR HnbapId
+STRUCTURE HNB_LOC_INFO HnbapLocInfo
+HEXSTR PlmnId
+UINT CellId
+HEXSTR LAC
+HEXSTR RAC
+HEXSTR SAC
+HEXSTR CsgId
+} HNB_REGISTER;
+
+typedef {
+USHORT RncId
+} HNB_REGISTERACC;
+
+typedef {
+STRUCTURE CAUSE Cause
+STRUCTURE CRITICALITY_DIAGNOSTICS CriticalDiag
+UINT BackOffTimer
+} HNB_REGISTERREJ;
+
+typedef {
+STRUCTURE CAUSE Cause
+UINT BackOffTimer
+} HNB_DEREGISTER;
+
+typedef {
+STRUCTURE UE_ID UeId
+UINT  RegCause
+STRUCTURE UE_CAP UE_Cap
+} HNB_UEREGISTER;
+
+typedef {
+STRUCTURE UE_ID UeId
+UINT ContextId
+} HNB_UEREGISTERACC;
+
+typedef {
+STRUCTURE UE_ID UeId
+STRUCTURE CAUSE Cause
+STRUCTURE CRITICALITY_DIAGNOSTICS CriticalDiag
+} HNB_UEREGISTERREJ;
+
+typedef {
+HEXSTR ContextId
+STRUCTURE CAUSE Cause
+} HNB_UEDEREGISTER;
+
+typedef {
+STRUCTURE CAUSE Cause
+STRUCTURE CRITICALITY_DIAGNOSTICS CriticalDiag
+} HNB_ERRORINDICATION;
+
+typedef VOID HNB_PRIVATEMESSAGE;
+

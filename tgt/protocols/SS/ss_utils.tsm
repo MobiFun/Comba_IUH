@@ -1,0 +1,512 @@
+##############################################################
+# $URL: $
+#
+# $Author: $
+#
+# Description: Supplementary Service Utilities
+#
+#
+# $Rev: $
+#
+# $Date: $
+##############################################################
+
+#------------------------------------------------------------#
+# Encoding IEs Procedures                                    #
+#------------------------------------------------------------#
+
+# Enccoding Facility IE
+#	Arguments: 
+#	- component (= invoke/return_result/return_error/reject )
+#	- linkedID
+#	- SS Notification (see 3GPP 24.080)
+proc EncFacilityIe { component linkedID notification { callIsWaitingInd "?" } } {
+
+	new FACILITY_IE fac
+
+		# Encoding Component
+		switch -exact -- $component {
+			"invoke"		{ set tag 1; set elem [EncInvoke $linkedID $notification $callIsWaitingInd] }
+			"return_result"	{ set tag 2; set elem [EncReturnResult] }
+			"return_error"	{ set tag 3; set elem [EncReturnError] }
+			default 	{ abort "SS Component unknown ($component)" }
+		}
+		new COMPONENT cmp
+		wr cmp Tag $tag
+		wr cmp Component $elem
+		set cmp [list $cmp]
+		
+	wr fac Components $cmp
+		
+	return $fac
+}
+
+#------------------------------------------------------------#
+# Decoding IEs Procedures                                    #
+#------------------------------------------------------------#
+
+# Decoding Facility IE
+#	Arguments: 
+#	- WSN description of facility info. elem.
+#	Return: 
+#	- operation string
+#	- parameter (if present)
+proc DecFacilityIe { fac } {
+
+	# Initialize variables
+	set value "?"
+	set code "?"
+	set par "?"
+
+	# we consider firs component always
+	set comp [lindex [rd fac Components] 0]
+
+	set tag [rd comp Tag]
+
+	# Get operation string
+	# Tag Values: 1=Invoke, 2=ReturnResult, 3=ReturnError, 4=Reject
+	switch -exact -- $tag {
+		1	-	
+		2	{ set value [rd comp Component]	
+			  set code [rd value operationCode]
+			  set par [rd value parameter] }
+		3	-	
+		4	{  }
+		default { logscr "SS ComponentTag unknown ($tag)" }
+	}
+	if { [IsVoid $code] } {
+		log "DEBUG (DecFacilityIe): fac=$fac --> comp=$comp, tag=$tag, code=$code"
+		set operation "?"
+	} else {
+		set operation [SsCodeToOp $code]
+	}
+
+	return [list $operation $par]
+}
+
+#------------------------------------------------------------#
+# Encoding Proc (Cn side)                                    #
+#------------------------------------------------------------#
+
+proc EncSsWaitingInfo { service } {
+
+	global glSSdb glIdx glHlrDb __net_side
+
+	new SS_INFO si
+	wr si Tag 3; # SS_INFO_SS_DATA
+
+		new SS_INFO_SS_DATA info
+
+		wr info ss_Code [GetMapSsCode $service]
+		wr info ss_Status [HlrGet $service "status"]
+
+		#wr info ss_SubscriptionOption # Carlo --> FIELD OPTIONAL
+		#wr info basicServiceGroupList # Carlo --> FIELD OPTIONAL
+		#wr info defaultPriority # Carlo --> FIELD OPTIONAL
+		#wr info nbrUser # Carlo --> FIELD OPTIONAL
+
+	wr si Ss_Info $info
+
+	return $si
+}
+
+##########################################################################
+
+# Encoding BarringInfo
+#	Arguments: 
+#	- service
+proc EncSsBarringInfo { service } {
+
+	# Declare and Initialize Global Variables
+	global glSSdb glIdx glHlrDb __net_side
+
+	new SS_INFO si
+	wr si Tag 2; # SS_INFO_CALL_BARRING_INFO
+
+		new SS_INFO_CALL_BARRING_INFO info
+
+		wr info ss_Code [GetMapSsCode $service]
+
+			new SS_INFO_CALL_BARRING_INFO_FEAT feat
+
+			if { [CnSide] } {
+
+					new BASIC_SERVICE serv
+					wr serv Tag 1; # 1=bearerService
+					wr serv service 00; # 00=allBearerServices
+				wr feat basicService $serv
+				wr feat ss_Status [HlrGet $service "status"]
+			} else { 
+
+				abort "Bad Net Side ($__net_side) for SS ReturnResult ???"
+			}
+			lappend barrList $feat
+		wr info callBarringFeatureList $barrList
+
+	wr si Ss_Info $info
+
+	return $si
+}
+
+# Encoding ForwardingInfo
+#	Arguments: 
+#	- service
+proc EncSsForwardingInfo { service } {
+
+	# Declare and Initialize Global Variables
+	global glSSdb glIdx glHlrDb __net_side
+
+	new SS_INFO si
+	wr si Tag 1; # SS_INFO_FORWARDING_INFO
+
+		new SS_INFO_FORWARDING_INFO info
+
+		wr info ss_Code [GetMapSsCode $service]
+
+			new FORWARD_FEAT feat
+
+			if { [CnSide] } {
+
+				wr feat ss_Status [HlrGet $service "status"]
+				set forwNum [HlrGet $service "forwMsNum"]
+
+				log "EncSsForwardingInfo: service=$service -- forwNum=$forwNum"; #cDEBUG
+
+			} else { 
+
+				abort "Bad Net Side ($__net_side) for SS ReturnResult ???"
+			}
+			wr feat forwardedToNumber $forwNum
+
+			lappend forwList $feat
+		wr info forwardingFeatureList $forwList
+	wr si Ss_Info $info
+
+	return $si
+}
+
+# CELLNET-361
+# Encoding ReturnError (cn side only)
+proc EncReturnError { } {
+
+	# Declare and Initialize Global Variables
+	global glSSdb glIdx
+
+	# Get Parameters
+	set err [DbGet $glSSdb $glIdx Error]
+	log "EncReturnError err = $err"
+	set errcode [SsErrToCode $err]
+
+	new RETURN_ERROR ret_err 
+	wr ret_err invokeID [DbGet $glSSdb $glIdx LinkedID]
+	wr ret_err errorCode $errcode
+
+	switch -exact -- $err {
+		"facilityNotSupported"	{ set par ? }
+		default 	{ abort "EncReturnResult: SS Error unknown ($err)" }
+	}
+
+	wr ret_err parameter $par
+	return $ret_err
+}
+# END
+
+
+# Encoding ReturnResult (cn side only)
+proc EncReturnResult { } {
+
+	# Declare and Initialize Global Variables
+	global glSSdb glIdx
+
+	#LogDb $glSSdb; #cDEBUG
+
+	# Get Parameters
+	set op [DbGet $glSSdb $glIdx Operation]
+	log "PATCH: EncReturnResult op = $op"
+	set opcode [SsOpToCode $op]
+	set service [DbGet $glSSdb $glIdx Service]
+	# USSD
+	if {$op != "unstructuredSS" && $op != "processUnstructuredSS"} {
+		set ss_status [HlrGet $service "status"]
+	}
+
+	new RETURN_RESULT ret_res 
+	wr ret_res invokeID [DbGet $glSSdb $glIdx LinkedID]
+	wr ret_res operationCode $opcode
+
+	switch -exact -- $op {
+		"registerSS"	-
+		"eraseSS"		-
+		"activateSS"	-
+		"deactivateSS"	{
+			switch -exact -- $service {
+				"CFU" 	-
+				"CFB" 	-
+				"CFNRY" -
+				"CFNRC" 	{ set par [EncSsForwardingInfo $service] }
+				"BAOC" 			-
+				"BOIC" 			-
+				"BOIC-exHC" 	-
+				"BAIC" 			-
+				"BAIC-Roam" { set par [EncSsBarringInfo $service] }
+				"cw"        { set par [EncSsWaitingInfo $service] }
+				"hold"      { logscr "EncReturnResult: TODO $service" }
+				"multiPTY"  { logscr "EncReturnResult: TODO $service" }
+				default 	{ logscr "EncReturnResult: bad Supplementary Service ($service)" }
+			}
+		}
+		"interrogateSS"	{
+			new INTERROGATE_SS_RES par
+			wr par Tag 1; # ss_Status
+			wr par interrogate_res $ss_status
+		}
+		"processUnstructuredSS" { 
+			# USSD
+			log "processUnstructuredSS: USSD_RES"
+			new USSD_RES par
+			wr par ussdDataCodingScheme [DbGet $glSSdb $glIdx UssdDataCodSch]
+			wr par ussdString [DbGet $glSSdb $glIdx UssdStr]
+		}
+		"unstructuredSS" {
+			# USSD
+			# DA RIMUOVERE???
+			log "unstructuredSS: USSD_ARG"
+			new USSD_ARG par
+			wr par ussdDataCodingScheme [DbGet $glSSdb $glIdx UssdDataCodSch]
+			wr par ussdString [DbGet $glSSdb $glIdx UssdStr]
+		}
+		default 	{ abort "EncReturnResult: SS Operation unknown ($op)" }
+	}
+
+	wr ret_res parameter $par
+
+	return $ret_res
+}
+
+# Encoding Invoke
+#	Arguments: 
+#	- linkedID
+proc EncInvoke { linkedID notification callwaiting } {
+
+	# Declare and Initialize Global Variables
+	global glInvokeID glSSdb glIdx glHlrDb glMsNum glCommonDb
+
+	# Get Parameters
+	set op [DbGet $glSSdb $glIdx Operation]
+	set opcode [SsOpToCode $op]
+	set service [DbGet $glSSdb $glIdx Service]
+
+    global __CellNet
+    if { [info exists __CellNet] && $__CellNet } {
+		# DA FARE MEGLIO
+		incr glInvokeID
+		if { $glInvokeID == $linkedID } {
+			incr glInvokeID
+		}
+		#DbSet $glSSdb $glIdx RegInvokeId $glInvokeID
+		DbSet $glSSdb $glIdx LinkedID $linkedID
+		new INVOKE invoke 
+		wr invoke invokeID $glInvokeID
+	} else {
+		new INVOKE invoke 
+		wr invoke invokeID [incr glInvokeID]
+	}
+	wr invoke linkedID $linkedID
+	wr invoke operationCode $opcode
+
+
+	switch -exact -- $op {
+		"registerSS"	{
+			new REGISTER_SS_ARG par
+			wr par ss_Code [GetMapSsCode $service]
+			wr par forwardedToNumber [DbGet $glSSdb $glIdx ForwardedMsNum]
+		}
+		"activateSS"	-
+		"eraseSS"		-
+		"deactivateSS"	-
+		"interrogateSS"	{
+			new SS_FOR_BS par
+			wr par ss_Code [GetMapSsCode $service]
+		}
+		"notifySS"	{
+			new NOTIFY_SS_ARG par
+
+			if { $callwaiting == "?" } {
+				wr par ss_Code [GetMapSsCode $service]
+				wr par ss_Status [HlrGet $service "status"]
+				wr par ss_Notification $notification
+			} else {
+				set callWait "cw"
+				log "EncInvoke: callwaiting=$callwaiting --> ss_Code=[GetMapSsCode $callWait]"; #cDEBUG
+				wr par ss_Code [GetMapSsCode $callWait]
+				wr par ss_Status [HlrGet $callWait "status"]
+				wr par ss_Notification $notification
+			}
+		}
+		"forwardChargeAdvice"	{
+			new FORWARD_CHARGE_ADVICE par
+			wr par ss_Code [GetMapSsCode $service]
+			# ChargingInfos
+			set msid [DbGetIdx $glHlrDb MsNum $glMsNum]; # MS interrogated
+			set chargingInfos [split [DbGet $glCommonDb $msid ChargingInfos] ":"]
+			wr par chargingInformation.0 [lindex $chargingInfos 0]
+			wr par chargingInformation.1 [lindex $chargingInfos 1]
+			wr par chargingInformation.2 [lindex $chargingInfos 2]
+			wr par chargingInformation.3 [lindex $chargingInfos 3]
+			wr par chargingInformation.4 [lindex $chargingInfos 4]
+			wr par chargingInformation.5 [lindex $chargingInfos 5]
+			wr par chargingInformation.6 [lindex $chargingInfos 6]
+		}
+		"processUnstructuredSS" -
+		"unstructuredSSnotify" -
+		"unstructuredSS" {
+			new USSD_ARG par
+			wr par ussdDataCodingScheme [DbGet $glSSdb $glIdx UssdDataCodSch]
+			wr par ussdString [DbGet $glSSdb $glIdx UssdStr]
+			# UssdInfos
+		}
+		default 	{ abort "EncInvoke: SS Operation unknown ($opcode)" }
+	}
+
+	wr invoke parameter $par
+
+	return $invoke
+}
+
+#------------------------------------------------------------#
+# Miscellaneous                                              #
+#------------------------------------------------------------#
+# CELLNET-361
+proc SsErrToCode  { err } {
+
+	# 29.002 17.6.6
+    switch -exact -- $err {
+        "facilityNotSupported"    { set code 21 }
+        default     { abort "SsErrToCode: SS Error unknown ($err)" }
+    }
+
+    return $code
+}
+# END
+
+# It returns OperationCode from OperationString 
+proc SsOpToCode { op } {
+
+	switch -exact -- $op {
+		"registerSS"	{ set code 10 }
+		"eraseSS"		{ set code 11 }
+		"activateSS"	{ set code 12 }
+		"deactivateSS"	{ set code 13 }
+		"interrogateSS"	{ set code 14 }
+		"notifySS"		{ set code 16 }
+		"processUnstructuredSS" { set code 59 }
+		"unstructuredSS" { set code 60 }
+		"unstructuredSSnotify" { set code 61 }
+		"forwardChargeAdvice"	{ set code 125 }
+		default 	{ abort "SsOpToCode: SS Operation unknown ($op)" }
+	}
+
+	return $code
+}
+
+# It returns Operation String from OperationCode
+proc SsCodeToOp { code } {
+
+	switch -exact -- $code {
+		10	{ set op "registerSS" }
+		11	{ set op "eraseSS" }
+		12	{ set op "activateSS" }
+		13	{ set op "deactivateSS" }
+		14	{ set op "interrogateSS" }
+		16	{ set op "notifySS" }
+		59  { set op "processUnstructuredSS" }
+		60  { set op "unstructuredSS" }
+		61  { set op "unstructuredSSnotify" }
+		125	{ set op "forwardChargeAdvice" }
+		default 	{ 	
+						global __CellNet
+    					if { [info exists __CellNet] && $__CellNet } {
+							log "SsCodeToOp: code = $code NOT SUPPORTED"
+							set op ?
+						} else {
+							abort "SsCodeToOp: SS OperationCode unknown ($code)" 
+						}
+					}
+	}
+
+	return $op
+}
+
+# It retrieves the MAP-SS-Code hex value (see par. 17.7.5 3GPP 29.002) 
+# by a SS (supplementary service) description string 
+proc GetMapSsCode { service } {
+
+	switch -exact -- $service {
+		"CFU"		{set code 21}
+		"CFB"		{set code 29}
+		"CFNRY"		{set code 2a}
+		"CFNRC"		{set code 2b}
+		"AOCI"		{set code 71}
+		"AOCC"		{set code 72}
+		"BAOC"		{set code 91}
+		"BOIC"		{set code 93}
+		"BOIC-exHC" {set code 94}
+		"BAIC" 		{set code 99}
+		"BAIC-Roam" {set code 9b}
+		"cw"		{set code 41}
+		"hold"		{set code 42}
+		"multiPTY"	{set code 51}
+		"ForwardCheckSsInd" {set code 26}
+		default {
+			logscr "GetMapSsCode: SS Service unknown ($service)" 
+			set code "?" 
+		}
+	}; #Carlo the 'ForwardCheckSsInd' actually isn't supported
+
+	# Mind that's an hex value 
+	return $code
+}
+
+# It retrieves a SS (supplementary service) description string 
+# by the MAP-SS-Code hex value (see par. 17.7.5 3GPP 29.002) 
+proc GetMapSsService { code } {
+
+	switch -exact -- $code {
+		"21"		{set service "CFU"}
+		"29"		{set service "CFB"}
+		"2a"		{set service "CFNRY"}
+		"2b"		{set service "CFNRC"}
+		"71"		{set service "AOCI"}
+		"72"		{set service "AOCC"}
+		"91"		{set service "BAOC"}
+		"93"		{set service "BOIC"}
+		"94"		{set service "BOIC-exHC"}
+		"99"		{set service "BAIC"}
+		"9b"		{set service "BAIC-Roam"}
+		"41"		{set service "cw"}
+		"42"		{set service "hold"}
+		"51"		{set service "multiPTY"}
+		"26"		{set service "ForwardCheckSsInd"}
+		default {
+			logscr "GetMapSsService: SS Service unknown ($code)" 
+			set service "?" 
+		}
+	}; #Carlo the 'ForwardCheckSsInd' actually isn't supported
+
+	return $service
+}
+
+# It returns InvokeID from Facility Component 
+# (see WSN structures defined in tstmSS.h)
+proc GetInvokeID { fac } {
+
+	# we consider firs component always
+	set comp [lindex [rd fac Components] 0]
+
+	set value [rd comp Component]
+	set invokeID [rd value invokeID]
+	return $invokeID
+}
+
+#------------------------------------------------------------#
+#------------------------------------------------------------#

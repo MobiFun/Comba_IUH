@@ -1,0 +1,13 @@
+##############################################################
+# COUNTERS
+##############################################################
+
+global glCcCounterList
+
+set glCcCounterList [list \
+	t308exp \
+]
+
+proc cc_countersGetCntList {} {
+	return $::glCcCounterList
+}

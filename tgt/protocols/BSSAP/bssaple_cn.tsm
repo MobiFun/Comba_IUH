@@ -1,0 +1,1045 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/BSSAP_COMBA/tags/BSSAP_COMBA-1.2.0/scripts/bssaple_cn.tsm $
+#
+# $Author: roger $
+#
+# Description: BSSAP-LE layer on CN side
+#
+# $Rev: 53313 $
+#
+# $Date: 2012-07-19 15:19:13 +0200 (Thu, 19 Jul 2012) $
+##############################################################
+
+# BSSMAP-LE global vars
+
+# Counters and Timer for RESET, TODO: insert on BSC DB
+global glCntLeRst gT16id
+set glCntLeRst 5
+set gT16id "?"
+
+# Test SRES_1102
+global glCnt_SRES1102
+set glCnt_SRES1102  0
+
+# Test BILR_1206
+global glNoRstAck
+set glNoRstAck 0
+
+
+##############################################################
+
+
+#
+# Rx Signal to handle Le Reset
+#
+
+proc LeRxSignalProc { } {
+
+	# Global Variables
+	global _sig glMsId
+
+	switch -exact -- [lindex $_sig 0] {
+
+		"SCCP_N_UNITDATA_IND"			{ DecSccpNUnitdataInd }
+		"SCCP_N_CONNECT_IND"			{ LeDiscardConnectInd }
+		
+		default 	{ 
+				log "LeRxSignalProc: Waiting for LE Reset..." 
+				log "Message discarded"
+			}
+	}
+	
+	log "LeRxSignalProc: BSSAP: glMsId=$glMsId"
+}
+
+###########################################
+# Counters
+###########################################
+
+proc Send_BSSAP_AP_LE_PERF_LOC_IND { type1 MsId } {
+	global glBssapDb glCnt_SRES1102
+
+	set usrpid [DbGet $glBssapDb $MsId UserPid]
+	if { $usrpid!="?" } {
+		new BSSAP_AP_LE_PERF_LOC_IND s
+		wr s MsId $MsId
+		wr s type $type1
+
+		send    s $usrpid
+		LogOutputMsg $s
+	}
+}
+
+proc SendApPerfLocInd_Start { msid } {
+	Send_BSSAP_AP_LE_PERF_LOC_IND 2 $msid
+}
+proc SendApPerfLocInd_OK { msid } {
+	global glCnt_SRES1102
+	
+	Send_BSSAP_AP_LE_PERF_LOC_IND 1 $msid
+	
+	incr glCnt_SRES1102 -1
+}
+proc SendApPerfLocInd_KO { msid } {
+	global glCnt_SRES1102
+
+	Send_BSSAP_AP_LE_PERF_LOC_IND 0 $msid
+	
+	incr glCnt_SRES1102 -1
+}
+
+###########################################
+# BSSMAP-LE
+###########################################
+
+
+proc SendLePerfLocRsp { {lcscause 00} } {
+	global glMsId glBssapDb
+	
+	# Sending Le Perform Response
+	new LE_PERF_LOC_RSP s
+
+	# If TA Reset from BSS (loc=0) no location estimate
+	if { $lcscause!="00" } {
+		# Location fail
+		wr s lcs_cause $lcscause 
+	
+		SendApPerfLocInd_KO $glMsId
+	} else {
+		wr s loc_estm 0102
+		wr s posng_data 010203
+		wr s velocity_data 01020304
+		
+		SendApPerfLocInd_OK $glMsId
+	}
+
+	LogOutputMsg $s
+	set spcstkidcid [DbGet $glBssapDb $glMsId SpcStkIdCid]
+	#SendSccpNDataReq $spcstkidcid $s
+	SendSccpNDisconnectReq $spcstkidcid $s
+}
+
+# BSSLAP TA RESPONSE
+proc RcvBssLapTaResponse {} {
+	SendLePerfLocRsp
+	
+	#set spcstkidcid [DbGet $::glBssapDb $::glMsId SpcStkIdCid]
+	#SendSccpNDisconnectReq $spcstkidcid "?"
+	
+	BssapMovInst $::glMsId
+
+	nextstate BssapLeIdle
+}
+
+# BSSLAP TA RESET
+proc RcvBssLapTaReset { apdu } {
+	global glBssapDb glMsId
+
+	set cause [hocts $apdu 12] 
+
+	set spcstkidcid [DbGet $glBssapDb $glMsId SpcStkIdCid]
+
+	set TestType [DbGet $glBssapDb $glMsId TestType]
+	if { $TestType==11 } {
+		InitResetProcedure
+		return
+	}
+
+	log "cause=$cause"
+	if { $cause=="04" } {
+		# Intra-BSS Handover
+
+		if { $TestType==6 } {
+			set lcscause 0a
+			SendLePerfLocRsp $lcscause
+		
+			BssapMovInst $glMsId
+			nextstate BssapLeIdle
+		} else {
+			# Intra-BSS handover -> repeat TA Request
+			SendBssmapLeConOrntInfo $spcstkidcid 0
+			SetTimer_LE_WTARESP
+		}
+	} else {
+		#table 10.13.1 TS 49.031
+		set lcscause 06
+		SendLePerfLocRsp $lcscause
+	
+		#SendSccpNDisconnectReq $spcstkidcid "?"
+	
+		BssapMovInst $glMsId
+		nextstate BssapLeIdle
+	}
+}
+
+# BSSLAP ABORT
+proc RcvBssLapAbort { apdu } {
+	#table 10.13.1 TS 49.031
+	set cause [hocts $apdu 3] 
+
+	if { $cause==06 } {  
+		# inter BSC handover
+		# Wait for TA Response
+		set lcscause 09
+		#return
+	} elseif { $cause==04 } {
+		# intra BSC handover 
+		set lcscause "0a"
+	} else {
+		# general abort
+		set lcscause 07
+	}
+	
+	SendLePerfLocRsp $lcscause
+		
+	BssapMovInst $::glMsId
+		
+	nextstate BssapLeIdle
+}
+
+# BSSLAP REJECT
+proc RcvBssLapReject { apdu } {
+	#table 10.13.1 TS 49.031
+	set cause [hocts $apdu 3] 
+
+	if { $cause==02 } {  
+		# Position procedure not supported
+		set lcscause 05
+	} else {
+		# general abort
+		set lcscause 07
+	}
+	
+	SendLePerfLocRsp $lcscause
+		
+	#set spcstkidcid [DbGet $::glBssapDb $::glMsId SpcStkIdCid]
+	#SendSccpNDisconnectReq $spcstkidcid  "?"
+	
+	BssapMovInst $::glMsId
+	nextstate BssapLeIdle
+}
+
+proc SendProtocolError {} {
+	# cause protocol error (unknow message)
+	SendLePerfLocRsp 02
+		
+	#set spcstkidcid [DbGet $::glBssapDb $::glMsId SpcStkIdCid]
+	#SendSccpNDisconnectReq $spcstkidcid  "?"
+	
+	BssapMovInst $::glMsId
+	nextstate BssapLeIdle
+}
+
+# CONNECT_IND (CONNECTION ORIENTED INFORMATION)
+proc RcvConnOrntdInfo {} {
+
+	# Global Variables
+	global _sig _state _sigpdu glMsId glBssapDb
+
+	LogInputPrim $_sig
+
+	#Reset Timer
+	set tWait [DbGet $glBssapDb $glMsId T_LE_WTARESPid]
+	if { [tmrrunning $tWait] } {
+		tmrstop $tWait
+	}
+	
+	# Get Parameters
+	set apdu [rd _sig apdu]
+	log "apdu $apdu"
+
+	set _sig apdu
+	
+	set disc [hocts $apdu 0 ]
+	if { $disc!="01" } {
+		log "Only BSSLAP ADPU primitives supported"
+		# TODO
+		SendProtocolError
+		return
+	}
+	
+	set msgty [hocts $apdu 1 ]
+	switch -exact $msgty {
+		"02"	{  RcvBssLapTaResponse         }
+		"0b"	{  RcvBssLapTaReset     $apdu  }
+		"0c"	{  RcvBssLapAbort       $apdu  }
+		"0a"	{  RcvBssLapReject      $apdu  }
+		default {  SendProtocolError           }
+	}
+}
+
+proc SetTimer_LE_WTARESP {} {
+	global glBssapDb glMsId
+
+	set timid [DbGet $glBssapDb $glMsId T_LE_WTARESPid]
+	if { $timid!="?" } {
+		tmrstop $timid
+		tmrstart $timid
+	} else {
+		set tWaitTA [tmrnew T_LE_WTARESP 5000]
+		log "Setting TIMER T_LE_WTARESP @@@@ MsId=$glMsId tWaitTA=$tWaitTA "
+		DbSet $glBssapDb $glMsId T_LE_WTARESPid $tWaitTA
+		tmrstart $tWaitTA
+	}
+}
+
+# BSSLAP TA REQUEST ( cc=1 Connect Response )
+proc SendBssmapLeConOrntInfo { spcStkIdCid cc } {
+	global _sig _state glMsId 
+
+	new CONN_ORNTD_INFO s
+	# TA REQUEST
+	wr s apdu 0101
+
+	LogOutputMsg $s
+
+	log "SendBssmapLeConOrntInfo: spcStkIdCid=$spcStkIdCid"
+	#SendSccpNDataReq $spcStkIdCid $s
+	if { $cc } {
+		SendSccpNConnectRes $spcStkIdCid $s 
+	} else {
+		SendSccpNDataReq $spcStkIdCid $s
+	}
+}
+
+proc RcvBssmapLePerfLocRqst {} {
+	# Global Variables
+	global _sig _state glMsId glMsDbOffset glBssapDb glSpcStkIdCid glMsDb
+
+	LogInputPrim $_sig
+
+	# Check id the Cid is already assigned (temporary)
+	if { [DbKeyExists $glBssapDb SpcStkIdCid $glSpcStkIdCid] } {
+		set idx [DbGetIdx $glBssapDb SpcStkIdCid $glSpcStkIdCid]
+		logscr ""	
+		logscr "Warning: Connection ($spcstkidcid) already assigned for MS $idx"
+		logscr ""	
+		exit
+	}
+	
+	set msident [rd _sig imsi]
+	if { $msident!="?" } {
+		set msIdx [GetIdxFromMsIdentity $msident $glBssapDb $glMsDb]
+	} else {
+		SendSccpNConnectRes $glSpcStkIdCid "?"
+		new LE_PERF_LOC_RSP s
+		wr s lcs_cause 06 
+		LogOutputMsg $s
+		SendSccpNDisconnectReq $glSpcStkIdCid $s
+		return
+	}
+	
+	log "imsi=$msident msIdx=$msIdx"
+	if { $msIdx!="" } {
+		set glMsId $msIdx
+		log "Setting MsId=$glMsId"
+	} else { 
+		logscr "Warning: MS not found"	
+		return
+	}
+
+	# Check id the Cid is already assigned (temporary)
+	if { [DbKeyExists $glBssapDb SpcStkIdCid $glSpcStkIdCid] } {
+		set idx [DbGetIdx $glBssapDb SpcStkIdCid $glSpcStkIdCid]
+		logscr ""	
+		logscr "Warning: Connection ($spcstkidcid) already assigned for MS $idx"	
+		logscr ""	
+		exit
+	}
+
+	# Check if MS has already a connection
+	set firstTime 1
+	set spcstkidtmp [DbGet $glBssapDb $glMsId SpcStkIdCid] 
+	if { $spcstkidtmp!="?" } {
+		logscr ""	
+		logscr "Warning: Connection ($spcstkidtmp) already assigned for MS $glMsId"	
+		logscr ""	
+		SendSccpNDisconnectReq $spcstkidtmp "?"
+		set firstTime 0
+	}
+	
+	if { $firstTime } {
+		SendApPerfLocInd_Start $glMsId
+	}
+
+	#set spcstkidcid [DbGet $::glBssapDb $::glMsId SpcStkIdCid]
+	DbSet $glBssapDb $glMsId SpcStkIdCid $glSpcStkIdCid
+	DbSet $glBssapDb $glMsId Spc [GetSpc $glSpcStkIdCid]
+	DbSet $glBssapDb $glMsId StkId [GetStkId $glSpcStkIdCid]
+	#SendSccpNConnectRes $::glSpcStkIdCid ?
+	
+	set TestType [DbGet $glBssapDb $glMsId TestType]
+	log "TestType=$TestType"
+	if { $TestType==5 } {
+		log "Sending CREF - LE Perform Location Response (System Failure)"
+		# Simulate System failure ( CREF, Connection Refuse )
+		SendLePerfLocRsp 01 
+		BssapMovInst $glMsId
+		return
+	} elseif { $TestType==7 } {
+		log "Sending CREF - LE Perform Location Response (Congestion)"
+		# Simulate System failure ( CREF, Connection Refuse )
+		SendLePerfLocRsp "0b" 
+		BssapMovInst $glMsId
+		return
+	} elseif { $TestType==3 } {
+		# If TA Layer 3 with Timing Advance send Le Perf Resp
+		set apdu [rd _sig apdu]
+		if {  $apdu!="?" } {
+			set disc  [hocts $apdu 0 ]
+			set msgty [hocts $apdu 1 ]
+			if { $disc=="01" && $msgty=="0d" } {
+				
+				SendSccpNConnectRes $glSpcStkIdCid "?"
+				
+				set gty [rd _sig ganss_locty]
+				set grq [rd _sig req_ganss_data]
+
+				if { $gty!="?" || $grq!="?" } {
+					# Test LORE_1301
+					new LE_PERF_LOC_RSP s
+
+					wr s loc_estm 0102
+					wr s posng_data 010203
+					wr s ganss_pos 43
+					
+					LogOutputMsg $s
+					set spcstkidcid [DbGet $glBssapDb $glMsId SpcStkIdCid]
+					SendSccpNDisconnectReq $spcstkidcid $s
+					SendApPerfLocInd_OK $glMsId
+				} else {
+					SendLePerfLocRsp
+				}
+				BssapMovInst $glMsId
+				return
+			}
+		}
+	} elseif { $TestType==1 } {
+		# Send LAP MS Position Command
+		new CONN_ORNTD_INFO s
+		wr s apdu 010f19000b000401020304
+		LogOutputMsg $s
+		
+		log "Sending MS POSITION COMMAND"
+		SendSccpNConnectRes $glSpcStkIdCid $s 
+
+		SetTimer_LE_WTARESP
+		nextstate BssapLeConnectActive
+		return
+	} elseif { $TestType==2 } {
+		# Send LAP U-TDOA Request 
+		new CONN_ORNTD_INFO s
+		wr s apdu 0111
+		LogOutputMsg $s
+		
+		log "Sending U-TDOA REQUEST"
+		SendSccpNConnectRes $glSpcStkIdCid $s 
+
+		SetTimer_LE_WTARESP
+		nextstate BssapLeConnectActive
+		return
+	} elseif { $TestType==8 } {
+		log "NO ANSWER"
+		SendSccpNConnectRes $glSpcStkIdCid "?"
+		nextstate BssapLeConnectActive
+		return
+	} elseif { $TestType==19 } {
+		InitResetProcedure
+		return
+	}
+	
+	# Sending TA Request and start Timer for response
+	log "Sending TA REQUEST"
+	SendBssmapLeConOrntInfo $glSpcStkIdCid 1
+
+
+	SetTimer_LE_WTARESP
+
+	nextstate BssapLeConnectActive
+	
+	if { $TestType==9 || $TestType==10 } {
+		log "Sending RESET"
+		InitResetProcedure
+	}
+	
+	if { $TestType==18 } {
+		global glCnt_SRES1102
+
+		incr glCnt_SRES1102
+
+		if {$glCnt_SRES1102==2} {
+			# Two TA Requests ongoing -> Send Reset
+			log "Sending RESET"
+			InitResetProcedure
+		}
+	}
+}
+
+proc T_LeWaitRld {} {
+	set spcStkidCid [DbGet $::glBssapDb $::glMsId SpcStkIdCid]
+
+	# FIXME: release timer
+	SendSccpNDisconnectReq $spcStkidCid "?"
+}
+
+
+proc T_SendPerfLocNResp {} {
+	# Free Timer
+	set tmrid [DbGet $::glBssapDb $::glMsId T_LE_WTARESPid]
+	if { $tmrid != "?" } {
+		log "Releasing timer $tmrid ";
+		if { [tmrrunning $tmrid] } {
+			log "Release timer $tmrid ";
+			tmrstop $tmrid
+			tmrfree $tmrid
+			DbSet $::glBssapDb $::glMsId T_LE_WTARESPid "?"
+		}
+	}
+
+	SendProtocolError
+
+	BssapMovInst $::glMsId
+	nextstate BssapLeIdle
+}
+
+proc RcvPerfLocAbort {} {
+	
+	# Global Variables
+	global _sig _state _sigpdu glMsId glBssapDb
+	
+	LogInputPrim $_sig
+	
+	#Reset Timer
+	set tWait [DbGet $glBssapDb $glMsId T_LE_WTARESPid]
+	if { [tmrrunning $tWait] } {
+		tmrstop $tWait
+	}
+	
+	# Get Parameters
+	set lcscause [rd _sig lcs_cause]
+	log "cause $lcscause"
+
+	SendLePerfLocRsp $lcscause
+	
+	BssapMovInst $glMsId
+	nextstate BssapLeIdle
+}
+
+proc RemoveLeTimers { {msid ?} } {
+	global glMsId glBssapDb
+
+	if { $msid=="?" } {
+		set msid $glMsId
+	}
+
+	set tmrid [DbGet $glBssapDb $msid T_LE_WRLSDid]
+	if { $tmrid != "?" } {
+		log "Releasing timer $tmrid ";
+		if { [tmrrunning $tmrid] } {
+			log "Release timer $tmrid ";
+			tmrstop $tmrid
+			tmrfree $tmrid
+			DbSet $glBssapDb $msid T_LE_WRLSDid "?"
+		}
+	}
+	set tmrid [DbGet $glBssapDb $msid T_LE_WTARESPid]
+	if { $tmrid != "?" } {
+		log "Releasing timer $tmrid ";
+		if { [tmrrunning $tmrid] } {
+			log "Release timer $tmrid ";
+			tmrstop $tmrid
+			tmrfree $tmrid
+			DbSet $glBssapDb $msid T_LE_WTARESPid "?"
+		}
+	}
+}
+
+#------------------------------------------------------------#
+# BSSMAP-LE "Reset" procedure functions
+#------------------------------------------------------------#
+
+proc SendLeResetAck { } {
+	
+	# Global Variables
+	global glNoRstAck
+
+	if { !$glNoRstAck } {
+		new 	LE_RST_ACK s
+
+		LogOutputMsg $s
+		SendSccpNUnitdataReq $s 2
+	} else {
+		logscr "Test BILR_1206"
+	}
+}
+
+proc CompleteLeReset { retVal } {
+	
+	# Global Variables
+	global glInstNull glBssapDb
+
+	log "CompleteReset: retVal=$retVal"
+	if { $retVal == -1 } { 
+		DbSet $glBssapDb $glInstNull CurrResetIndex 0
+		SendLeResetAck
+	} else {
+		# Start Timer for reprocessing LE RST
+		DbSet $glBssapDb $glInstNull CurrResetIndex $retVal
+		tmrstart [tmrnew T_LE_RST 500]
+	}
+}
+
+proc RcvLeReset { } {
+	global _sig glInstNull glBssapDb
+
+	LogInputMsg $_sig
+
+	# Start resetting instances
+	set startIdx [DbGet $glBssapDb $glInstNull CurrResetIndex]
+	log "RcvReset: startIdx=$startIdx"
+	if { $startIdx != 0 } {
+		# a new RST was received, still processing the old one	
+		return
+	} else {
+		CompleteLeReset [BssapPartialReset $startIdx]
+	}
+
+	ResetTimer_T16
+	nextstate BssapLeIdle
+}
+
+proc RcvTLeReset { } {
+
+	# Global Variables
+	global _sig _src glInstNull glBssapDb
+
+	LogInputMsg $_sig
+
+	# Free Timer
+	if { $_src != 0 } {
+		tmrfree $_src
+	}
+
+	# Start resetting instances
+	set startIdx [DbGet $glBssapDb $glInstNull CurrResetIndex]
+	CompleteLeReset [BssapPartialReset $startIdx]
+}
+
+
+proc SendLeReset { bscid { rstTimer ? } } {
+	# Global Variables
+	global _sig glBscDb glBssapDb glMsId
+	
+	set spc 	[DbGet $glBscDb $bscid Opc]
+	set dpc 	[DbGet $glBscDb $bscid Dpc]
+	set stkId 	[DbGet $glBscDb $bscid StkId]
+	
+	log "SendReset bscid=$bscid; spc=$spc; dpc=$dpc stkId=$stkId; glMsId=$glMsId"
+
+	DbSet $glBssapDb $glMsId Spc $spc
+	DbSet $glBssapDb $glMsId Dpc $dpc
+	DbSet $glBssapDb $glMsId StkId $stkId
+	
+	# Cause
+	set cause 20; # "Equipment failure"
+
+	new 	LE_RST s
+	wr      s cause $cause
+	
+	LogOutputMsg $s
+	SendSccpNUnitdataReq $s 2
+}
+
+
+proc RcvLeRstAck {} { 
+	# Global Variables
+	global _HandleRxSignalProc  _sig
+
+	LogInputMsg $_sig
+					
+	# restore handle multi-instance
+	set _HandleRxSignalProc RxSignalProc
+
+	ResetTimer_T16
+
+	nextstate BssapLeIdle
+}
+
+proc ResetTimer_T16 {} {
+	global gT16id
+
+	if { $gT16id!="?" && [tmrrunning $gT16id] } {
+		tmrstop $gT16id
+		tmrfree $gT16id
+		set glCntLeRst 5
+		set gT16id "?"
+	}
+}
+
+
+proc RcvTLeRstAck {} {
+	# T16 expired, resend RST ACK
+	global glCntLeRst _src gT16id
+
+	if { $glCntLeRst } {
+		log "RcvTLeRstAck: glCntLeRst=$glCntLeRst"
+		incr glCntLeRst -1
+	
+		# Send LE RESET
+		SendLeReset 1
+
+		tmrstart $gT16id
+	} else {
+		ResetTimer_T16
+		log "RcvTLeRstAck: free T_LERST glCntLeRst=$glCntLeRst"
+	}
+}
+
+proc RcvTUsrLeRst {} {
+	
+	# Global Variables
+	global tUsrLeRst 
+	global glInstNull glBssapDb glMsId
+
+
+	logscr "Timer User LE RST expired... sending Reset"
+
+	tmrstop $tUsrLeRst
+	tmrfree $tUsrLeRst
+	set tUsrLeRst "?"
+	
+	InitResetProcedure 
+}
+
+proc InitResetProcedure {} {
+	
+	# Global Variables
+	global tUsrLeRst 
+	global _HandleRxSignalProc
+	global glInstNull glBssapDb glMsId
+
+	# TODO: set timer T16(?)
+	# set locale handle multi-instance
+	set _HandleRxSignalProc LeRxSignalProc
+
+	#Send SCCP RLD of all active connections
+	set nidx [DbSize $glBssapDb]
+	
+	# Initial State
+	set nstate BssapIdle
+
+	for { set msId 0 } {$msId<$nidx} {incr msId} {
+		set msSpc [DbGet $glBssapDb $msId Spc]
+		set msStkId [DbGet $glBssapDb $msId StkId]
+		set spcstkidcid [DbGet $glBssapDb $msId SpcStkIdCid]
+		log "RcvTUsrLeRst: msId=$msId Spc=$msSpc, StkId=$msStkId, spcstkidcid=$spcstkidcid"
+		if { $msId != $glInstNull && $spcstkidcid!="?" } {
+			# Relase SCCP Connections
+			SendSccpNDisconnectReq $spcstkidcid "?"
+			
+			RemoveLeTimers $msId
+			
+			# Set State
+			DbSet $glBssapDb $msId State $nstate
+			
+			# Reset all params for this instance
+			BssapResetInst $msId
+
+			# Update counters
+			SendApPerfLocInd_KO $msId
+		}
+	}
+	
+	# Send LE RESET
+	SendLeReset 1
+
+	set TestType [DbGet $glBssapDb $glMsId TestType]
+	if {  $TestType==10 } {
+		log "Sending 3 consecutive RESET"
+		SendLeReset 1
+		SendLeReset 1
+	}
+		
+	
+	# Start Timer for Receiving RST ACK
+	global glCntLeRst _src gT16id
+	if { $glCntLeRst!="0" } {
+		log "RcvTUsrLeRst: Setting timer T_LE_RST_ACK..."
+		set gT16id [tmrnew T_LE_RST_ACK 5000]
+		tmrstart $gT16id
+		log "RcvTUsrLeRst: Start T_LE_RST_ACK"
+		log "RcvTUsrLeRst: glCntLeRst=$glCntLeRst"
+		incr glCntLeRst -1
+	}
+
+	# Reset the Null Instance 
+	DbSet $glBssapDb $glInstNull State $nstate 
+
+	set glMsId $glInstNull 
+
+	nextstate BssapLeWaitRstAck
+}
+
+proc LeDiscardConnectInd {} {
+	global _sig
+	# Spc / StkId / Cid
+	set spcStkidCid [rd _sig Spc]
+	append spcStkidCid "-"
+	append spcStkidCid [rd _sig StkId]
+	append spcStkidCid "-"
+	append spcStkidCid [rd _sig Cid]
+	SendSccpNDisconnectReq $spcStkidCid "?"
+}
+
+
+#------------------------------------------------------------#
+
+# DISCONNECT_IND
+proc RcvLeDisconnectInd {} {
+
+	# Global Variables
+	global _sig glMsId glBssapDb 
+
+	LogInputPrim $_sig
+
+	# Store Pdu in _sig
+	set _sig [rd _sig Pdu]
+	if { ![IsVoid $_sig] } {
+		log "Message $_sig Received in DISCONNECT_IND"
+	}
+
+	set spcstkidcid [DbGet $glBssapDb $glMsId SpcStkIdCid]
+
+	# Stop LE Release Timers 
+	RemoveLeTimers
+
+	# Remove SS7 link for this instance
+	BssapMovInst $glMsId
+	
+	# Send Release Ind to User
+	SendApPerfLocInd_KO $glMsId
+
+	nextstate BssapLeIdle
+}
+
+#------------------------------------------------------------#
+
+proc SetLeUserPid {} {
+    # Declare and Initialize Global Variables
+    global _sig glBssapDb _src
+
+    LogInputMsg $_sig
+
+    #set userPid [lindex $_sig 1]
+    set userPid $_src
+    set listMs [lindex $_sig 2]
+
+	if { ![LbInterfaceActive] } {
+		log "Operation not permitted"
+		return
+	}
+
+	global tUsrLeRst
+	set TestType [rd _sig TestType]
+	if { $TestType=="?" } {
+		set TestType 0
+	}
+		
+
+	if { $TestType==4 } {
+		set rstdelay [rd _sig rstdelay]
+		if { $rstdelay != "?" && $rstdelay != 0 } {
+			logscr "rstdelay=$rstdelay"
+			if { [info exists tUsrLeRst] && ($tUsrLeRst != "?") && [tmrrunning $tUsrLeRst] } {
+				log "Timer tUsrLeRst already running..."
+				return
+			}
+
+			logscr "Setting T_USR_LE_RST "
+
+			set tUsrLeRst [tmrnew T_USR_LE_RST [expr 1000 * $rstdelay]]
+			tmrstart $tUsrLeRst
+		}
+	}
+
+	if { $TestType==12 } {
+		# Do not responde to RESET
+		global glNoRstAck
+		set glNoRstAck 1
+	}
+
+	if { [IsVoid $listMs] } {
+        set firstMS [lindex $_sig 3]
+        set numMS [lindex $_sig 4]
+        set listMs ""
+        for {set i 0} {$i<$numMS} {incr i} {
+            lappend listMs [expr $i + $firstMS]
+        }
+    }
+
+    # Configure Parameters for every DB Index
+    foreach index $listMs {
+
+        # Update Data Base
+        if { [DbEntryExists $glBssapDb $index] } {
+            DbSet $glBssapDb $index UserPid $userPid
+            if { [DbFieldExists $glBssapDb TestType] } {
+                DbSet $glBssapDb $index TestType [rd _sig TestType]
+                logscr "SetUserPid: MS=$index saving TestType = [rd _sig TestType]"
+            }
+        }
+    }
+}
+
+#
+#  SSNM procedures
+#
+
+# Rx Signal to handle Ssnm 
+proc SsnmRxSignalProc { } {
+
+	# Global Variables
+	global _sig glMsId
+
+	switch -exact -- [lindex $_sig 0] {
+
+		"OM_SSNM_CTL_REQ"				{}
+		
+		default 	{ 
+				log "SsnmRxSignalProc: Waiting for USER RESTART..." 
+				log "Message discarded"
+			}
+	}
+	
+	log "LeRxSignalProc: BSSAP: glMsId=$glMsId"
+}
+
+proc LeSsnmStopTraffic {} {
+	
+	# Global Variables
+	global _HandleRxSignalProc
+	global glInstNull glBssapDb glMsId
+
+	# set locale handle multi-instance
+	# set _HandleRxSignalProc LeSsnmRxSignalProc
+
+	#Send SCCP RLD of all active connections
+	set nidx [DbSize $glBssapDb]
+	
+	# Initial State
+	set nstate BssapIdle
+
+	for { set msId 0 } {$msId<$nidx} {incr msId} {
+		set msSpc [DbGet $glBssapDb $msId Spc]
+		set msStkId [DbGet $glBssapDb $msId StkId]
+		set spcstkidcid [DbGet $glBssapDb $msId SpcStkIdCid]
+		log "RcvTUsrLeRst: msId=$msId Spc=$msSpc, StkId=$msStkId, spcstkidcid=$spcstkidcid"
+		if { $msId != $glInstNull && $spcstkidcid!="?" } {
+			# Relase SCCP Connections
+			#SendSccpNDisconnectReq $spcstkidcid "?"
+			
+			RemoveLeTimers $msId
+			
+			# Set State
+			DbSet $glBssapDb $msId State $nstate
+			
+			# Reset all params for this instance
+			BssapResetInst $msId
+
+			# Update counters
+			SendApPerfLocInd_KO $msId
+		}
+	}
+	
+	# Reset the Null Instance 
+	DbSet $glBssapDb $glInstNull State $nstate 
+
+	set glMsId $glInstNull 
+
+}
+
+proc RcvSsnmReq {} {
+	global _ompid _sig
+	global _HandleRxSignalProc
+
+	LeSsnmStopTraffic 
+
+	set ssnmtype  [rd _sig Ssnm]
+	# send ACK to OM
+	new OM_BSSAP_SSNM_ACK s
+	wr s Ssnm  $ssnmtype
+	wr s Bscid [rd _sig Bscid]
+	send s $_ompid
+	
+	if { $ssnmtype == "DUNA" ||  $ssnmtype == "DUPU" } {
+		# Set new signal handler to pause traffic
+		set _HandleRxSignalProc SsnmRxSignalProc
+	} elseif { $ssnmtype == "DAVA" } {	
+		# Reset signal handler
+		set _HandleRxSignalProc RxSignalProc
+		nextstate BssapLeIdle 
+		return
+	} else {
+		log "RcvSsnmReq: $ssnmtype not foreseen"
+	}
+	
+	nextstate BssapLeWaitUsrRestartTraffic
+}
+##############################################################
+# FSM
+##############################################################
+
+
+state BssapLeConnectActive {
+	CONN_ORNTD_INFO				RcvConnOrntdInfo
+	LE_PERF_LOC_ABRT			RcvPerfLocAbort
+	T_LE_WTARESP				T_SendPerfLocNResp
+	BSSAP_AP_DATA_REQ 			RcvApDataReq
+	BSSAP_AP_REL_REQ 			RcvApRelReq
+	BSSAP_AP_ABORT_REQ 			RcvApAbortReqRelease
+	BSSAP_AP_SYNC_REQ 			RcvApSyncReq
+	BSSAP_AP_SET_INST       	RcvApSetInst
+	RST_CIRC					RcvClrReqServing
+	DISCONNECT_IND 				RcvLeDisconnectInd
+	RAB_OPEN_ACK                LogInputSig
+	default 					LeAny
+}
+		
+state BssapLeIdle {
+	CONNECT_IND 				RcvConnectInd
+	LE_PERF_LOC_REQ				RcvBssmapLePerfLocRqst
+	DISCONNECT_IND 				RcvLeDisconnectInd
+	default 					LeAny
+}
+
+state BssapLeWaitRstAck {
+	LE_RST		{
+					# restore handle multi-instance
+					global _HandleRxSignalProc
+					set _HandleRxSignalProc RxSignalProc
+					RcvLeReset
+				}
+	LE_RST_ACK					RcvLeRstAck
+	T_LE_RST_ACK				RcvTLeRstAck
+	default 					Unexpected
+}
+
+state BssapLeWaitUsrRestartTraffic {
+	OM_BSSAP_SSNM_REQ			RcvSsnmReq
+	default 					Unexpected
+}
+
+state LeAny {
+	LE_RST						RcvLeReset
+   	T_LE_RST					RcvTLeReset
+	T_USR_LE_RST				RcvTUsrLeRst
+	BSSAP_OM_PCSTATE_IND		LeSsnmStopTraffic
+	BSSAP_CTL_RESET_RESOURCES   RcvCtlResetResources
+	RESET_RESOURCE              RcvResetResource
+	T_LE_WRLSD					T_LeWaitRld
+	BSSAP_LE_SET_USERPID		SetLeUserPid
+	OM_BSSAP_SSNM_REQ			RcvSsnmReq
+	default 					Unexpected
+}
+	
+#OmPcStateIndHnd

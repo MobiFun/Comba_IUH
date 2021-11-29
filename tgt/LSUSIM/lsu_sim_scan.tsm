@@ -1,0 +1,548 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/tstmUtils/LSUSIM/tags/LSUSIM-1.8.1/scripts/lsu_sim_scan.tsm $
+#
+# $Author: carlom $
+#
+# Description: process to scan LSU SIM boards and find SIM cards available.
+#
+#
+# $Rev: 30052 $
+#
+# $Date: 2010-01-14 18:58:52 +0100 (Thu, 14 Jan 2010) $
+##############################################################
+
+set glMaxSimPosNum 32
+#set glMaxSimPosNum 2
+
+proc Init { dummyDb lsuSimIp login zot {parallelScan TRUE}} {
+
+ 	global __lsu_sim_srv_ip __login_name __lsu_sim_srv_zot
+
+	set __lsu_sim_srv_ip $lsuSimIp
+	set __login_name $login
+	set __lsu_sim_srv_zot $zot
+
+	set lsu_sim_dir [getlsusimdir]
+	set commonUtilsDir [getcommonutilsdir] 
+
+	addpath $commonUtilsDir
+	addpath $lsu_sim_dir
+
+	include "generalUtils.tsm"
+	include "L3Utils.tsm"
+	uplevel #0 include "lsu_sim_defs.tsm"
+
+	global glLsuSimMngPid
+	set glLsuSimMngPid [spawn "$lsu_sim_dir/lsu_sim_mng.tsm"]
+
+	dump_on
+
+	global glParallelScan
+	set glParallelScan $parallelScan
+	log "lsu_sim_scan Init: glParallelScan=$glParallelScan"
+
+	global glSimCardPosL glMaxSimPosNum
+
+	for {set i 1} {$i <= $glMaxSimPosNum} {incr i} {
+		lappend glSimCardPosL $i
+	}
+	log "lsu_sim_scan Init: glSimCardPosL=$glSimCardPosL"
+
+	global _HandleRxSignalProc
+
+	set _HandleRxSignalProc LsuSimScanMultiInstHnd
+
+	global glSimPosKey
+	set glSimPosKey "MAIN_INST"
+
+	CreateLsuSimScanDb
+
+	SetupLsuSimSrv
+
+	typedef {STRUCT {UCHAR BoardId} {UCHAR SimPos} SIM_SCANNED}
+}
+
+##############################################
+# MULTI-INSTANCE MANAGEMENT
+##############################################
+
+proc LsuSimScanMultiInstHnd {} {
+	global _sig  
+
+	switch -exact -- [lindex $_sig 0] {
+		"LSUSIM_LOGIN_ACK"				{}
+		"LSUSIM_ENUM_DEVICE_ACK"		{}
+
+		"LSU_SIM_CONFIG_SIM_ACK"		-
+		"LSU_SIM_READ_ATR_RES"			-
+		"LSU_SIM_PIN_STATUS_CHECK_RES"	-
+		"LSU_SIM_READ_IMSI_RES"			SimClientMsgPrep
+
+		"SIM_SCANNED"					SimScannedPrep
+
+        default 				{
+			exit "LsuSimScanMultiInstHnd: unexpected _sig=$_sig"
+		}
+	}
+
+	global glSimPosKey _state
+	log "lsu_sim_scan: glSimPosKey $glSimPosKey, state $_state"
+}
+
+proc SimClientMsgPrep {} {
+
+	global _sig glSimPosKey
+
+	GetInstance	[CreateSimPosKey [rd _sig BoardId] [rd _sig SimPos]] LsuSimScanDb glSimPosKey
+}
+
+proc SimScannedPrep {} {
+
+	global _sig glSimPosKey
+
+	GetInstance	"MAIN_INST" LsuSimScanDb glSimPosKey
+}
+
+proc CreateLsuSimScanDb {} {
+	lappend dbDescr [list LsuSimPosKey Index]; #see CreateSimPosKey
+	lappend dbDescr State
+	lappend dbDescr SimCondition
+	lappend dbDescr Imsi
+
+	DbCreate LsuSimScanDb $dbDescr
+
+	DbCreateDefEntry LsuSimScanDb "MAIN_INST"
+}
+
+################################################################################
+# STATE MACHINE procedures
+################################################################################
+
+proc SetupLsuSimSrv {} {
+
+	register LSU_SIM_SRV_OM
+
+	SendLsuSimLoginCmd
+
+	nextstate WaitLsuSimLoginAck
+}
+
+proc SendLsuSimLoginCmd {} {
+	global __lsu_sim_srv_ip __login_name
+
+	new LSUSIM_LOGIN s
+	wr s Login		$__login_name
+	wr s SimSrvIp	$__lsu_sim_srv_ip
+
+	global __lsu_sim_srv_port
+	if {[info exists __lsu_sim_srv_port]} {
+		wr s SimSrvPort $__lsu_sim_srv_port
+	}
+
+	global __lsu_sim_srv_zot
+	if {[info exists __lsu_sim_srv_zot]} {
+		wr s SimSrvZot $__lsu_sim_srv_zot
+	}
+
+	LogOutputMsg $s
+	send s
+}
+
+proc LsusimLoginAckHnd {} {
+	LogInputSig
+
+	#
+	log "Connected to the LSU SIM SRV .. waiting for initialization"
+
+	new LSUSIM_ENUM_DEVICE s
+	LogOutputMsg $s
+	send s
+}
+
+proc LsusimEnumDevAckHnd {} {
+	global _sig glLsuSimBoardL
+
+	LogInputSig
+
+	foreach deviceInfo [rd _sig SimRackList] {
+
+		lappend glLsuSimBoardL [rd deviceInfo usbFd]
+
+	}
+
+	log "LsusimEnumDevAckHnd: glLsuSimBoardL=$glLsuSimBoardL"
+	logscr "Available LSU SIM boards: $glLsuSimBoardL"
+
+	global glLsuSimBoard2BScanned
+	set glLsuSimBoard2BScanned $glLsuSimBoardL
+
+	StartBoardScan [lindex $glLsuSimBoard2BScanned 0]
+
+	nextstate WaitScanResult
+}
+
+proc StartBoardScan {boardId} {
+	log "StartBoardScan: boardId=$boardId"
+	logscr ""
+	logscr "START SCANNING OF BOARD $boardId"
+
+	global glSimCardPosL glSimCardPosToBeScannedL
+
+	set glSimCardPosToBeScannedL $glSimCardPosL
+
+	foreach i $glSimCardPosToBeScannedL {
+		set simPosKey [CreateSimPosKey $boardId $i]
+		DbCreateDefEntry LsuSimScanDb $simPosKey
+		DbSet LsuSimScanDb $simPosKey State Idle
+	}
+
+	log "StartBoardScan: glSimCardPosToBeScannedL=$glSimCardPosToBeScannedL"
+
+	global glParallelScan
+	if {$glParallelScan} {
+		StartParalSimSlotCheck $boardId
+	} else {
+		StartSimSlotCheck $boardId [lindex $glSimCardPosToBeScannedL 0]
+	}
+}
+
+proc StartParalSimSlotCheck {boardId} {
+	global glSimCardPosToBeScannedL
+
+	foreach simPos $glSimCardPosToBeScannedL {
+		set simPosKey [CreateSimPosKey $boardId $simPos]
+		DbSet LsuSimScanDb $simPosKey State WaitConfigSimAck
+
+		SendConfigSimReq $boardId $simPos
+	}
+
+	nextstate WaitScanResult
+}
+
+proc StartSimSlotCheck {boardId simPos} {
+	global glSimPosKey
+
+	set simPosKey [CreateSimPosKey $boardId $simPos]
+	DbSet LsuSimScanDb $simPosKey State WaitConfigSimAck
+
+	SendConfigSimReq $boardId $simPos
+}
+
+proc SendConfigSimReq {boardId simPos} {
+	global glLsuSimMngPid
+
+	new LSU_SIM_CONFIG_SIM_REQ s
+	wr s BoardId	$boardId
+	wr s SimPos		$simPos
+	LogOutputMsg $s
+	send s $glLsuSimMngPid
+}
+
+proc LsuSimConfigSimAckHnd { } {
+	global _sig glSimPosKey
+
+	LogInputSig
+
+	set boardId [rd _sig BoardId]
+	set simPos [rd _sig SimPos]
+
+	if {[rd _sig SimPresent]} {
+
+		global glLsuSimMngPid
+		new LSU_SIM_READ_ATR_REQ s
+		wr s BoardId	$boardId
+		wr s SimPos		$simPos
+		LogOutputMsg $s
+		send s $glLsuSimMngPid
+
+		nextstate WaitReadAtrRes
+
+	} else {
+
+		switch [rd _sig Cause] {
+
+			"LOCKED" {
+				logscr "SIM $simPos ALREADY_LOCKED"
+				DbSet LsuSimScanDb $glSimPosKey SimCondition ALREADY_LOCKED
+			}
+
+			"RESPONSE_ERROR"	-
+			"ABSENT"			-
+			default				{
+				logscr "SIM $simPos ABSENT"
+				DbSet LsuSimScanDb $glSimPosKey SimCondition ABSENT
+			}
+		}
+
+		NotifySimScanEnd
+	}
+}
+
+proc LsuSimReadAtrResHnd {} {
+	global _sig
+
+	LogInputSig
+
+	set boardId [rd _sig BoardId]
+	set simPos [rd _sig SimPos]
+
+	global glLsuSimMngPid
+	new LSU_SIM_PIN_STATUS_CHECK_REQ s
+	wr s BoardId	$boardId
+	wr s SimPos		$simPos
+	LogOutputMsg $s
+	send s $glLsuSimMngPid
+
+	nextstate WaitPinStatusCheckRes
+}
+
+proc NotifySimScanEnd {} {
+	global _self glSimPosKey
+
+	new SIM_SCANNED s
+	wr s BoardId	[BoardIdFromSimPosKey $glSimPosKey]
+	wr s SimPos		[SimPosFromSimPosKey $glSimPosKey]
+	LogOutputMsg $s
+	send s $_self
+}
+
+proc LsuSimPinStatusResponse {} {
+	global glLsuSimPinStatus _sig glSimPosKey
+
+	LogInputSig
+
+	set pinStatus [rd _sig PinStatus]
+
+	set simPos [rd _sig SimPos]
+	set boardId [rd _sig BoardId]
+
+	if { $pinStatus == $glLsuSimPinStatus(Enabled)} {
+		logscr "SIM $simPos PRESENT with PIN ENABLED"
+
+		DbSet LsuSimScanDb $glSimPosKey SimCondition PRESENT_PIN_ENABLED
+
+		NotifySimScanEnd
+
+	} elseif {$pinStatus == $glLsuSimPinStatus(Disabled)} {
+		logscr "SIM $simPos PRESENT with PIN DISABLED"
+
+		DbSet LsuSimScanDb $glSimPosKey SimCondition PRESENT_PIN_DISABLED
+
+		# IMSI READING procedure
+		SendReadImsiReq $boardId $simPos
+
+		nextstate WaitReadImsiRes
+
+	} else {
+		log "***** ERROR READING PIN STATUS *****"
+		logscr "SIM $simPos ABSENT"
+
+		DbSet LsuSimScanDb $glSimPosKey SimCondition ABSENT
+
+		NotifySimScanEnd
+	}
+}
+
+proc SendReadImsiReq {boardId simPos} {
+	global glLsuSimMngPid
+
+	new LSU_SIM_READ_IMSI_REQ s
+	wr s BoardId	$boardId
+	wr s SimPos		$simPos
+	LogOutputMsg $s
+	send s $glLsuSimMngPid
+}
+
+proc LsuSimImsiReadingFinished {} {
+	global _sig glSimPosKey
+
+	LogInputSig
+
+	set boardId [rd _sig BoardId]
+	set simPos [rd _sig SimPos]
+
+	if {[IsVoid [rd _sig Error]]} {
+		DbSet LsuSimScanDb $glSimPosKey Imsi [GetImsiFrom24008Format [rd _sig Imsi]]
+	} else {
+		# negative response: IMSI reading failed
+		logscr "LsuSimImsiReadingFinished: IMSI reading failed for boardId=$boardId, simPos=$simPos"
+
+		# overwrite PRESENT_PIN_DISABLED
+		DbSet LsuSimScanDb $glSimPosKey SimCondition PRESENT_WRONG_DATA
+	}
+
+	NotifySimScanEnd
+}
+
+proc SimScannedHnd {} {
+	global glParallelScan _sig
+
+	LogInputSig
+
+	set boardId [rd _sig BoardId]
+
+	if {$glParallelScan} {
+		global glSimCardPosToBeScannedL
+
+		set pos [lsearch $glSimCardPosToBeScannedL [rd _sig SimPos]]
+		if {$pos == -1} {
+			exit "SimScannedHnd: unexpected simPos=[rd _sig SimPos]"
+		}
+
+		lremove glSimCardPosToBeScannedL $pos
+
+		if {![llength $glSimCardPosToBeScannedL]} {
+			# all SIM slots scanned
+
+			NotifyBoardScanData $boardId
+
+			ScanNextBoard
+			return
+		}
+
+	} else {
+		# serial scan
+		TestNextSim $boardId
+	}
+}
+
+# used only for serial scan
+proc TestNextSim {boardId} {
+	global glSimCardPosToBeScannedL
+
+	lremove glSimCardPosToBeScannedL 0
+	log "TestNextSim: glSimCardPosToBeScannedL=$glSimCardPosToBeScannedL"
+
+	if {![llength $glSimCardPosToBeScannedL]} {
+		# all SIM slots scanned
+
+		NotifyBoardScanData $boardId
+
+		ScanNextBoard
+		return
+	}
+
+	StartSimSlotCheck $boardId [lindex $glSimCardPosToBeScannedL 0]
+}
+
+# create and send signal to notify scanning result
+proc NotifyBoardScanData {boardId} {
+
+	global glSimCardPosL glSimInfoL
+
+	#create SIM info part of signal
+
+	lappend glSimInfoL $boardId
+	foreach i $glSimCardPosL {
+
+		lappend glSimInfoL [StateToRespCode [DbGet LsuSimScanDb [CreateSimPosKey $boardId $i] SimCondition]]-
+
+		log "NotifyBoardScanData: ########## glSimInfoL=$glSimInfoL ########"; #cDEBUG
+
+		set imsi [DbGet LsuSimScanDb [CreateSimPosKey $boardId $i] Imsi]
+		if {![IsVoid $imsi]} {
+			append glSimInfoL $imsi
+		}
+	}
+}
+
+proc StateToRespCode {state} {
+	switch $state {
+
+		ABSENT						"return 0"
+		ALREADY_LOCKED				"return 1"
+		PRESENT_PIN_ENABLED			"return 2"
+		PRESENT_PIN_DISABLED		"return 3"
+		PRESENT_WRONG_DATA			"return 4"
+		PIN_ENABLED_NOT_SUPPLIED	"return 5"
+
+		default {
+			logscr "StateToRespCode: unexpected state=$state"
+			exit
+		}
+	}
+}
+
+proc BuildRemoteResponse {Response} {
+	log "BuildRemoteResponse: Response=$Response"
+	set Data  [join $Response ,]
+	return $Data
+}
+
+proc RespondToRemote {Response} {
+	global _parent
+
+	new SPAWN_OK s
+	wr s Data [BuildRemoteResponse $Response]
+
+	LogOutputMsg $s
+	send s $_parent
+}
+
+proc ScanNextBoard {} {
+	global glLsuSimBoard2BScanned glSimInfoL
+
+	lremove glLsuSimBoard2BScanned 0
+
+	if {![llength $glLsuSimBoard2BScanned]} {
+		# all LSU SIM boards scanned
+		logscr "LSU SIM BOARDS' SCANNING COMPLETED"
+
+		RespondToRemote $glSimInfoL
+
+		return
+	}
+
+	StartBoardScan [lindex $glLsuSimBoard2BScanned 0]
+}
+
+##############################################
+# STATE MACHINE
+##############################################
+
+state WaitLsuSimLoginAck {
+
+	LSUSIM_LOGIN_ACK				LsusimLoginAckHnd
+	LSUSIM_ENUM_DEVICE_ACK			LsusimEnumDevAckHnd
+
+	default		Any
+}
+
+state WaitScanResult {
+
+	SIM_SCANNED	SimScannedHnd
+
+	default		Any
+}
+
+state WaitConfigSimAck {
+
+	LSU_SIM_CONFIG_SIM_ACK			LsuSimConfigSimAckHnd
+
+	default		Any
+}
+
+state WaitReadAtrRes {
+
+	LSU_SIM_READ_ATR_RES			LsuSimReadAtrResHnd
+
+	default		Any
+}
+
+state WaitPinStatusCheckRes {
+
+	LSU_SIM_PIN_STATUS_CHECK_RES	LsuSimPinStatusResponse
+
+	default		Any
+}
+
+state WaitReadImsiRes {
+
+	LSU_SIM_READ_IMSI_RES			LsuSimImsiReadingFinished
+
+	default		Any
+}
+
+state Any {
+	default Unexpected
+}

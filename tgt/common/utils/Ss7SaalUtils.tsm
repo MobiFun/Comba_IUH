@@ -1,0 +1,990 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/tstmUtils/scriptUtils/tags/scriptUtils-2.51.6/Ss7SaalUtils.tsm $
+#
+# $Author: roger $
+#
+# Description: Ss7/Saal Utilities
+#
+#
+# $Rev: 43400 $
+#
+# $Date: 2011-07-08 18:07:32 +0200 (Fri, 08 Jul 2011) $
+##############################################################
+
+##############################################################
+#
+# O&M Logging
+#
+##############################################################
+
+proc MsscfReportInd { } {
+
+	global _sig
+    
+	LogInputSig	
+
+	log "Link Id      : [htouc [hocts [rd _sig Data] 0]]"
+	log "Lbc          : [htouc [hocts [rd _sig Data] 1]]"
+	log "Ubc          : [htouc [hocts [rd _sig Data] 2]]"
+	log "Res          : [htouc [hocts [rd _sig Data] 3]]"
+}
+
+proc NPCStateInd { } {
+
+	global _sig
+ 
+	LogInputSig	
+ 
+	log "Spc          : [htoui [hocts [rd _sig Data] 0 3]]"
+	log "SpSts        : [htouc [hocts [rd _sig Data] 4]]"
+	log "RemSts       : [htouc [hocts [rd _sig Data] 5]]"
+}
+
+##############################################################
+#
+# O&M Sub-System Procedures
+#
+##############################################################
+
+proc SendSubSystemStatusTest { stkid spc ssn } {
+
+	logscr "Sending SubSystemStatusTest (Spc=$spc, StkId=$stkid, Ssn=$ssn)"
+
+    # Prepare Message
+	new     OM_N_UNITDATA_REQ s
+
+	# Spc
+	wr  	s Spc $spc
+
+	# StkId
+	wr  	s StkId $stkid
+
+	# Destination Address ( not valid == 0xFFFFFFFF )
+	set     data [uitoh $stkid] 
+
+	# Sub System Number ( Sccp Management )
+	append  data 01 
+	
+	# Address Info ( Bit7:Pad - Bit6:RI - Bit5-2:GTI - Bit1:SSNI - Bit0:PCI )
+	append  data 42 ; # Carlo PB Errore ... waiting for fix
+
+	# Nai
+	append  data 00
+
+	# Np
+	append  data 00
+
+	# Es
+	append  data 00
+
+	# Tt
+	append  data 00
+
+	# Gtai  ( 34 Bytes )
+	for { set i 0 } { $i < 34 } { incr i } {
+		append data 00
+	}	
+
+	# Source Address ( not valid == 0xFFFFFFFF )
+	append  data [uitoh $spc] 
+
+	# Sub System Number ( Sccp Management )
+	append  data 01 
+	
+	# Address Info ( Bit7:Pad - Bit6:RI - Bit5-2:GTI - Bit1:SSNI - Bit0:PCI )
+	append  data 42 ; # Carlo Pb Errore ... waiting for fix
+
+	# Nai
+	append  data 00
+
+	# Np
+	append  data 00
+
+	# Es
+	append  data 00
+
+	# Tt
+	append  data 00
+
+	# Gtai  ( 34 Bytes )
+	for { set i 0 } { $i < 34 } { incr i } {
+		append data 00
+	}
+
+	# Sequence Control
+	append  data ff
+
+	# Return Option
+	append  data 00
+	
+    # Importance
+	append  data ff
+
+	# Data ( Msg Type: Sub System Status Test)
+	append 	data 03
+
+	# Data ( Ranap Sub System: 0x8e, 142(d) )
+	#      ( Bssap Sub System: 0xfe, 254(d) )
+	append  data [uctoh $ssn]
+	
+	# Data ( Affected Signalling Point Code (Source) )
+	append  data [ustoh $stkid]
+
+	# Data ( SubSystem Multiplicity Indicator )
+	append  data 00
+
+	wr      s Data $data
+
+	send  	s
+	LogOutputMsg $s
+}
+
+proc SendSubSystemAllowed { stkid ssn spc } {
+
+	logscr "Sending SubSystemAllowed (Spc=$spc, StkId=$stkid, Ssn=$ssn)"
+
+    # Prepare Message
+	new     OM_N_UNITDATA_REQ s
+
+	# Spc
+	wr      s Spc $spc
+
+	# StkId
+	wr      s StkId $stkid
+
+	# Destination Address ( not valid == 0xFFFFFFFF )
+	set     data [uitoh $stkid] 
+
+	# Sub System Number ( Sccp Management )
+	append  data 01 
+	
+	# Address Info ( Bit7:Pad - Bit6:RI - Bit5-2:GTI - Bit1:SSNI - Bit0:PCI )
+	append  data 42
+
+	# Nai
+	append  data 00
+
+	# Np
+	append  data 00
+
+	# Es
+	append  data 00
+
+	# Tt
+	append  data 00
+
+	# Gtai  ( 34 Bytes )
+	for { set i 0 } { $i < 34 } { incr i } {
+		append data 00
+	}	
+
+	# Source Address ( not valid == 0xFFFFFFFF )
+	append  data [uitoh $spc] 
+
+	# Sub System Number ( Sccp Management )
+	append  data 01 
+	
+	# Address Info ( Bit7:Pad - Bit6:RI - Bit5-2:GTI - Bit1:SSNI - Bit0:PCI )
+	append  data 42
+
+	# Nai
+	append  data 00
+
+	# Np
+	append  data 00
+
+	# Es
+	append  data 00
+
+	# Tt
+	append  data 00
+
+	# Gtai  ( 34 Bytes )
+	for { set i 0 } { $i < 34 } { incr i } {
+		append data 00
+	}
+
+	# Sequence Control
+	append  data ff
+
+	# Return Option
+	append  data 00
+	
+    # Importance
+	append  data ff
+
+	# Data ( Msg Type: Sub System Allowed)
+	append 	data 01
+
+	# Data ( Ranap Sub System: 0x8e, 142(d) )
+	#      ( Bssap Sub System: 0xfe, 254(d) )
+	append  data [uctoh $ssn]
+	
+	# Data ( Affected Signalling Point Code (Source) )
+	append  data [ustoh $spc]
+
+	# Data ( SubSystem Multiplicity Indicator )
+	append  data 00
+
+	wr      s Data $data
+
+	send  	s
+	LogOutputMsg $s
+}
+
+proc SendSubSystemProhibited { stkid ssn spc } {
+
+	logscr "Sending SendSubSystemProhibited (Spc=$spc, StkId=$stkid, Ssn=$ssn)"
+
+    # Prepare Message
+	new     OM_N_UNITDATA_REQ s
+
+	# Spc
+	wr      s Spc $spc
+
+	# StkId
+	wr      s StkId $stkid
+
+	# Destination Address ( not valid == 0xFFFFFFFF )
+	set     data [uitoh $stkid] 
+
+	# Sub System Number ( Sccp Management )
+	append  data 01 
+	
+	# Address Info ( Bit7:Pad - Bit6:RI - Bit5-2:GTI - Bit1:SSNI - Bit0:PCI )
+	append  data 42
+
+	# Nai
+	append  data 00
+
+	# Np
+	append  data 00
+
+	# Es
+	append  data 00
+
+	# Tt
+	append  data 00
+
+	# Gtai  ( 34 Bytes )
+	for { set i 0 } { $i < 34 } { incr i } {
+		append data 00
+	}	
+
+	# Source Address ( not valid == 0xFFFFFFFF )
+	append  data [uitoh $spc] 
+
+	# Sub System Number ( Sccp Management )
+	append  data 01 
+	
+	# Address Info ( Bit7:Pad - Bit6:RI - Bit5-2:GTI - Bit1:SSNI - Bit0:PCI )
+	append  data 42
+
+	# Nai
+	append  data 00
+
+	# Np
+	append  data 00
+
+	# Es
+	append  data 00
+
+	# Tt
+	append  data 00
+
+	# Gtai  ( 34 Bytes )
+	for { set i 0 } { $i < 34 } { incr i } {
+		append data 00
+	}
+
+	# Sequence Control
+	append  data ff
+
+	# Return Option
+	append  data 00
+	
+    # Importance
+	append  data ff
+
+	# Data ( Msg Type: Sub System Prohibited)
+	append 	data 02
+
+	# Data ( Ranap Sub System: 0x8e, 142(d) )
+	#      ( Bssap Sub System: 0xfe, 254(d) )
+	append  data [uctoh $ssn]
+	
+	# Data ( Affected Signalling Point Code (Source) )
+	append  data [ustoh $spc]
+
+	# Data ( SubSystem Multiplicity Indicator )
+	append  data 00
+
+	wr      s Data $data
+
+	send  	s
+	LogOutputMsg $s
+}
+
+proc SendSubSystemStatusTestDpc { stkid ssn spc dpc } {
+
+	logscr "Sending SubSystemStatusTestDpc (Spc=$spc, StkId=$stkid, Ssn=$ssn)"
+
+    # Prepare Message
+	new     OM_N_UNITDATA_REQ s
+
+	# Spc
+	wr  	s Spc $spc
+
+	# StkId
+	wr  	s StkId $stkid
+
+	# Destination Address ( not valid == 0xFFFFFFFF )
+	set     data [uitoh $dpc] 
+
+	# Sub System Number ( Sccp Management )
+	append  data 01 
+	
+	# Address Info ( Bit7:Pad - Bit6:RI - Bit5-2:GTI - Bit1:SSNI - Bit0:PCI )
+	append  data 42
+
+	# Nai
+	append  data 00
+
+	# Np
+	append  data 00
+
+	# Es
+	append  data 00
+
+	# Tt
+	append  data 00
+
+	# Gtai  ( 34 Bytes )
+	for { set i 0 } { $i < 34 } { incr i } {
+		append data 00
+	}	
+
+	# Source Address ( not valid == 0xFFFFFFFF )
+	append  data [uitoh $spc] 
+
+	# Sub System Number ( Sccp Management )
+	append  data 01 
+	
+	# Address Info ( Bit7:Pad - Bit6:RI - Bit5-2:GTI - Bit1:SSNI - Bit0:PCI )
+	append  data 42
+
+	# Nai
+	append  data 00
+
+	# Np
+	append  data 00
+
+	# Es
+	append  data 00
+
+	# Tt
+	append  data 00
+
+	# Gtai  ( 34 Bytes )
+	for { set i 0 } { $i < 34 } { incr i } {
+		append data 00
+	}
+
+	# Sequence Control
+	append  data ff
+
+	# Return Option
+	append  data 00
+	
+    # Importance
+	append  data ff
+
+	# Data ( Msg Type: Sub System Status Test)
+	append 	data 03
+
+	# Data ( Ranap Sub System: 0x8e, 142(d) )
+	#      ( Bssap Sub System: 0xfe, 254(d) )
+	append  data [uctoh $ssn]
+	
+	# Data ( Affected Signalling Point Code (Source) )
+	append  data [ustoh $stkid]
+
+	# Data ( SubSystem Multiplicity Indicator )
+	append  data 00
+
+	wr      s Data $data
+
+	send  	s
+	LogOutputMsg $s
+}
+
+proc SendSubSystemAllowedDpc { stkid ssn spc dpc } {
+
+	logscr "Sending SubSystemAllowedDpc (Spc=$spc, StkId=$stkid, Ssn=$ssn Dpc = $dpc)"
+
+    # Prepare Message
+	new     OM_N_UNITDATA_REQ s
+
+	# Spc
+	wr      s Spc $spc
+
+	# StkId
+	wr      s StkId $stkid
+
+	# Destination Address ( not valid == 0xFFFFFFFF )
+	#it used to be $stkId!!!
+	set     data [uitoh $dpc]
+
+	# Sub System Number ( Sccp Management )
+	append  data 01 
+	
+	# Address Info ( Bit7:Pad - Bit6:RI - Bit5-2:GTI - Bit1:SSNI - Bit0:PCI )
+	append  data 42
+
+	# Nai
+	append  data 00
+
+	# Np
+	append  data 00
+
+	# Es
+	append  data 00
+
+	# Tt
+	append  data 00
+
+	# Gtai  ( 34 Bytes )
+	for { set i 0 } { $i < 34 } { incr i } {
+		append data 00
+	}	
+
+	# Source Address ( not valid == 0xFFFFFFFF )
+	append  data [uitoh $spc] 
+
+	# Sub System Number ( Sccp Management )
+	append  data 01 
+	
+	# Address Info ( Bit7:Pad - Bit6:RI - Bit5-2:GTI - Bit1:SSNI - Bit0:PCI )
+	append  data 42
+
+	# Nai
+	append  data 00
+
+	# Np
+	append  data 00
+
+	# Es
+	append  data 00
+
+	# Tt
+	append  data 00
+
+	# Gtai  ( 34 Bytes )
+	for { set i 0 } { $i < 34 } { incr i } {
+		append data 00
+	}
+
+	# Sequence Control
+	append  data ff
+
+	# Return Option
+	append  data 00
+	
+    # Importance
+	append  data ff
+
+	# Data ( Msg Type: Sub System Allowed)
+	append 	data 01
+
+	# Data ( Ranap Sub System: 0x8e, 142(d) )
+	#      ( Bssap Sub System: 0xfe, 254(d) )
+	append  data [uctoh $ssn]
+	
+	# Data ( Affected Signalling Point Code (Source) )
+	append  data [ustoh $spc]
+
+	# Data ( SubSystem Multiplicity Indicator )
+	append  data 00
+
+	wr      s Data $data
+
+	send  	s
+	LogOutputMsg $s
+}
+
+proc SendSubSystemProhibitedDpc { stkid ssn spc dpc } {
+
+	logscr "Sending SubSystemProhibitedDpc (Spc=$spc, StkId=$stkid, Ssn=$ssn Dpc = $dpc)"
+
+    # Prepare Message
+	new     OM_N_UNITDATA_REQ s
+
+	# Spc
+	wr      s Spc $spc
+
+	# StkId
+	wr      s StkId $stkid
+
+	# Destination Address ( not valid == 0xFFFFFFFF )
+	#it used to be $stkId!!!
+	set     data [uitoh $dpc]
+
+	# Sub System Number ( Sccp Management )
+	append  data 01 
+	
+	# Address Info ( Bit7:Pad - Bit6:RI - Bit5-2:GTI - Bit1:SSNI - Bit0:PCI )
+	append  data 42
+
+	# Nai
+	append  data 00
+
+	# Np
+	append  data 00
+
+	# Es
+	append  data 00
+
+	# Tt
+	append  data 00
+
+	# Gtai  ( 34 Bytes )
+	for { set i 0 } { $i < 34 } { incr i } {
+		append data 00
+	}	
+
+	# Source Address ( not valid == 0xFFFFFFFF )
+	append  data [uitoh $spc] 
+
+	# Sub System Number ( Sccp Management )
+	append  data 01 
+	
+	# Address Info ( Bit7:Pad - Bit6:RI - Bit5-2:GTI - Bit1:SSNI - Bit0:PCI )
+	append  data 42
+
+	# Nai
+	append  data 00
+
+	# Np
+	append  data 00
+
+	# Es
+	append  data 00
+
+	# Tt
+	append  data 00
+
+	# Gtai  ( 34 Bytes )
+	for { set i 0 } { $i < 34 } { incr i } {
+		append data 00
+	}
+
+	# Sequence Control
+	append  data ff
+
+	# Return Option
+	append  data 00
+	
+    # Importance
+	append  data ff
+
+	# Data ( Msg Type: Sub System Prohibited)
+	append 	data 02
+
+	# Data ( Ranap Sub System: 0x8e, 142(d) )
+	#      ( Bssap Sub System: 0xfe, 254(d) )
+	append  data [uctoh $ssn]
+	
+	# Data ( Affected Signalling Point Code (Source) )
+	append  data [ustoh $spc]
+
+	# Data ( SubSystem Multiplicity Indicator )
+	append  data 00
+
+	wr      s Data $data
+
+	send  	s
+	LogOutputMsg $s
+}
+
+
+proc SendSubSystemAllowedIur { stkid ssn spc } {
+
+	logscr "Sending SubSystemAllowed (Spc=$spc, StkId=$stkid, Ssn=$ssn)"
+
+    # Prepare Message
+	new     OM_N_UNITDATA_REQ s
+
+	# Spc
+	wr      s Spc $spc
+
+	# StkId
+	wr      s StkId $stkid
+
+	# Destination Address ( not valid == 0xFFFFFFFF )
+	set     data [uitoh $stkid] 
+
+	# Sub System Number ( Sccp Management )
+	append  data 01 
+	
+	# Address Info ( Bit7:Pad - Bit6:RI - Bit5-2:GTI - Bit1:SSNI - Bit0:PCI )
+	append  data 42
+
+	# Nai
+	append  data 00
+
+	# Np
+	append  data 00
+
+	# Es
+	append  data 00
+
+	# Tt
+	append  data 00
+
+	# Gtai  ( 34 Bytes )
+	for { set i 0 } { $i < 34 } { incr i } {
+		append data 00
+	}	
+
+	# Source Address ( not valid == 0xFFFFFFFF )
+	append  data [uitoh $spc] 
+
+	# Sub System Number ( Sccp Management )
+	append  data 01 
+	
+	# Address Info ( Bit7:Pad - Bit6:RI - Bit5-2:GTI - Bit1:SSNI - Bit0:PCI )
+	append  data 42
+
+	# Nai
+	append  data 00
+
+	# Np
+	append  data 00
+
+	# Es
+	append  data 00
+
+	# Tt
+	append  data 00
+
+	# Gtai  ( 34 Bytes )
+	for { set i 0 } { $i < 34 } { incr i } {
+		append data 00
+	}
+
+	# Sequence Control
+	append  data ff
+
+	# Return Option
+	append  data 00
+	
+    # Importance
+	append  data ff
+
+	# Data ( Msg Type: Sub System Allowed)
+	append 	data 01
+
+	# Data ( Ranap Sub System: 0x8e, 142(d) )
+	#      ( Bssap Sub System: 0xfe, 254(d) )
+	append  data [uctoh $ssn]
+	
+	# Data ( Affected Signalling Point Code (Source) )
+	append  data [ustoh $spc]
+
+	# Data ( SubSystem Multiplicity Indicator )
+	append  data 01
+
+	wr      s Data $data
+
+	send  	s
+	LogOutputMsg $s
+}
+
+##############################################################
+#
+# Spc, Stkid, Cid, Opc and Dpc Management Procedures
+#
+##############################################################
+# Create a SS7/SAAL linkset id
+proc Ss7SaalCreateLsetId {spc stkid} {
+	return $spc-$stkid
+}
+
+# see Ss7SaalCreateLsetId
+proc GetSpc { lsetId } {
+
+	return [lindex [split $lsetId "-"] 0]
+}
+
+# see Ss7SaalCreateLsetId
+proc GetStkId { lsetId } {
+
+	return [lindex [split $lsetId "-"] 1]
+}
+
+proc GetOpc { key } {
+
+	return [lindex [split $key "-"] 0]
+}
+
+proc GetDpc { key } {
+
+	return [lindex [split $key "-"] 1]
+}
+
+proc GetCid { key } {
+
+	return [lindex [split $key "-"] 2]
+}
+
+proc GetOpcByOpcDpcCid { db idx } {
+
+	return [GetOpc [DbGet $db $idx OpcDpcCid]]
+}
+
+proc GetDpcByOpcDpcCid { db idx } {
+
+	return [GetDpc [DbGet $db $idx OpcDpcCid]]
+}
+
+proc GetCidByOpcDpcCid { db idx } {
+
+	return [GetCid [DbGet $db $idx OpcDpcCid]]
+}
+
+proc GetSpcBySpcStkId { db idx } {
+
+	return [GetSpc [DbGet $db $idx Spc-StkId]]
+}
+
+proc GetStkIdBySpcStkId { db idx } {
+
+	return [GetStkId [DbGet $db $idx Spc-StkId]]
+}
+
+proc GetStkList { db } {
+
+	foreach idx [DbGetIndexList $db] {
+		lappend stklist [DbGet $db $idx StkId] 
+	}
+
+	return $stklist
+}
+
+# collect the indexes of db related to different Opc
+proc GetLoginList { db } {
+ 
+	set loginlist ""; set spclist ""
+
+	foreach idx [DbGetIndexList $db] {
+
+		set spc [DbGet $db $idx Opc]
+
+		if { [lsearch -exact $spclist $spc] == "-1" } {
+			lappend spclist $spc; lappend loginlist $idx
+		}
+	}
+
+	return $loginlist
+}
+
+##############################################################
+#
+# Isup Procedures
+#
+##############################################################
+
+proc FormatIsupNumber { num { flag 0 } } {
+
+	# Check Nature Of Address
+	if { [string index $num 0] != 0 } {
+		set nature_of_addr 0000011
+	} elseif { [string index $num 0] == 0 && [string index $num 1] != 0 } {
+		set num [string range $num 1 end]
+		set nature_of_addr 0000011
+	} else {
+		logscr "Unknown Nature of Number"
+		return -1
+	}
+
+	# Length and Parity
+	set numlen [string length $num]
+	if { $numlen == 0 } {
+		logscr "Error in FormatIsupNumber: empty number"
+		return -1
+	}
+
+	# Odd/Even
+	set oddind [expr {$numlen % 2}]
+
+	# First Byte
+	set bitf [expr {! $oddind}]
+	append bitf $nature_of_addr
+	set byte1 [btoh $bitf]
+
+	# Indicators
+	set num_plan 001
+	if { $flag == 0 } {
+		set int_ntw_num 0 
+		set spare 0000
+		set bitf $int_ntw_num
+		append bitf $num_plan
+		append bitf $spare
+	} elseif { $flag == 1 } {
+		set num_incompl 0
+		set pres_restr 00
+		set screen_ind 00
+		set bitf $num_incompl
+		append bitf $num_plan
+		append bitf $pres_restr
+		append bitf $screen_ind
+	}
+	set byte2 [btoh $bitf]
+
+	# Bcd number
+	set len 2
+	for { set i 0 } { $i < $numlen } { incr i 2 } {
+		if { $oddind && [expr {[expr {$i + 1}] == $numlen}] } {
+			append bcdnum f
+			return $byte1$byte2$bcdnum
+		} elseif { [expr {$i + 2}] == $numlen } {
+			append bcdnum [string index $num [expr {$i + 1}]]
+			append bcdnum [string index $num $i]
+			append bcdnum 0f
+			return $byte1$byte2$bcdnum
+		}
+		append bcdnum [string index $num [expr {$i + 1}]]
+		append bcdnum [string index $num $i]
+	}
+
+	# Length
+	set len [uctoh $len]
+	return $byte1$byte2$bcdnum
+}
+
+proc FormatIsupNumber2 { num { flag 0 } } {
+
+	# Check Nature Of Address
+	if { [string index $num 0] != 0 } {
+		set nature_of_addr 0000011
+	} elseif { [string index $num 0] == 0 && [string index $num 1] != 0 } {
+		set num [string range $num 1 end]
+		set nature_of_addr 0000011
+	} else {
+		logscr "Unknown Nature of Number"
+		return -1
+	}
+
+	# Length and Parity
+	set numlen [string length $num]
+	if { $numlen == 0 } {
+		logscr "Error in FormatIsupNumber: empty number"
+		return -1
+	}
+
+	# Odd/Even
+	set oddind [expr {$numlen % 2}]
+
+	# First Byte
+	set bitf $oddind
+	append bitf $nature_of_addr
+	set byte1 [btoh $bitf]
+
+	# Indicators
+	set num_plan 001
+	if { $flag == 0 } {
+		set int_ntw_num 0 
+		set spare 0000
+		set bitf $int_ntw_num
+		append bitf $num_plan
+		append bitf $spare
+	} elseif { $flag == 1 } {
+		set num_incompl 0
+		set pres_restr 00
+		set screen_ind 00
+		set bitf $num_incompl
+		append bitf $num_plan
+		append bitf $pres_restr
+		append bitf $screen_ind
+	}
+	set byte2 [btoh $bitf]
+
+	# Bcd number
+	set len 2
+	for { set i 0 } { $i < $numlen } { incr i 2 } {
+		if { $oddind && [expr {$i + 1}] == $numlen } {
+			append bcdnum f
+		} else {		
+			append bcdnum [string index $num [expr {$i + 1}]]
+		}
+		append bcdnum [string index $num $i]
+		incr len 1
+	}
+
+	# Length
+	set len [uctoh $len]
+	return $byte1$byte2$bcdnum
+}
+
+proc GetBCDNumberFromIsup { isupnum { flag 0 } } {
+
+	# 1st Byte
+	set firstByte [hocts $isupnum 0]
+	set oddind [hbits $firstByte 0]
+	set nature_of_addr [hbits $firstByte 1 7]
+
+	# 2nd Byte
+	set secondByte [hocts $isupnum 1]
+
+	# Number
+	set isupnum [string range $isupnum 4 end]
+	set cnt 0
+	set digit [string index $isupnum 1]
+	set nextdigit [string index $isupnum 0]
+	while { $digit != "" } {
+		if { $oddind && [expr {$digit == "f" || $digit == "F"}] } {
+			if { $nextdigit != 0 } {
+				logscr "Filler is not 0"
+				return -1
+			}
+			return $num
+		} elseif { $nextdigit == "f" || $nextdigit == "F" } {
+			return $num
+		}
+		append num $digit	
+		append num $nextdigit	
+		incr cnt 2
+		set digit [string index $isupnum [expr {$cnt + 1}]]
+		set nextdigit [string index $isupnum $cnt]
+	}
+	
+	logscr "No Number Termination (f) was present"
+	return -1
+}
+
+proc GetCicFirstLast { dbname index range } {
+
+	set valSplit [split [DbGet $dbname $index $range] :]
+	foreach range $valSplit {
+		set rangeSplit [split $range -]
+		set rangeLen [llength $rangeSplit]
+		if { $rangeLen == 1 } {
+			# First Cic
+			lappend firstLastList [expr {[expr {$rangeSplit * 32}] + 1}]
+			# Last Cic
+			lappend firstLastList [expr {[expr {$rangeSplit * 32}] + 30}]
+		} elseif { $rangeLen == 2 } {
+			set first [lindex $rangeSplit 0]
+			set last [lindex $rangeSplit 1]
+			for { set i $first } { $i <= $last } { incr i } {
+				# First Cic
+				lappend firstLastList [expr {[expr {$i * 32}] + 1}]
+				# Last Cic
+				lappend firstLastList [expr {[expr {$i * 32}] + 30}]
+			}
+		} else {
+			logscr "Error in Cic Specifications"
+		}
+		return $firstLastList
+	}
+}

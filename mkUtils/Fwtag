@@ -1,0 +1,66 @@
+#
+# Fwtag  tagname
+#
+
+
+tagname=$1
+tagbase=http://memo.prisma/svn/fw/fw-3
+
+src=fwsrc
+libl=fwlib.linux
+libn=fwlib.nto
+
+########################################################
+
+oe()        { echo -e >&2 "$@"; }
+error()     { oe "\n$@\n"; exit 1; }
+xqt()       { oe "@$@\n"; eval "$@"; }
+
+ckdir()     { [ ! -d $1 ] && error "Cannot find '$1'"; }
+
+version()
+    {
+    typeset sp='[[:blank:]]'
+    sed -n "/^$sp*#$sp*define$sp\+verVERSION$sp\+\"/ {
+                s///; s/\".*$//p }
+              " $1/ver.h
+    }
+
+########################################################
+
+[ -z "$tagname" ] && error "missing tagname"
+
+[ ! -d $src ] && cd ..
+
+ckdir $src
+ckdir $libl
+ckdir $libn
+
+z=$(svn st --ignore-externals -q $src)
+[ ! -z "$z" ] && error "uncommitted $src"
+
+comver=$(version comlib)
+trcver=$(version libtrc)
+vpnver=$(version vpnintf)
+
+vers="
+  comlib-$comver
+  libtrc-$trcver
+  vpnintf-$vpnver"
+
+tag="$tagbase/$tagname"
+
+oe "\nTagging '$(pwd -P)'\nas '$tag' with components\n$vers\n"
+read -n1 -p"okay to proceed (yN)? " r
+oe "\n"
+
+[ "$r" != y ] && exit 1
+
+
+msgsrc=$src-$tagname
+msglibl=$libl-$tagname
+msglibn="$libn-$tagname with components:$vers"
+
+xqt svn cp --parents $src $tag/$src -m"'$msgsrc'" &&
+xqt svn import $libl $tag/$libl -m"'$msglibl'" &&
+xqt svn import $libn $tag/$libn -m"'$msglibn'"

@@ -1,0 +1,120 @@
+#############################################################
+# $URL: http://memo.prisma/svn/tm/IuhCsComba_Tm/tags/IuhCsComba_Tm-1.2.0/tgt/common/localutils/sctp.tsm $
+#
+# $Author: roger $
+#
+# Description: Procedures used to build and send SCTP primitives
+#
+# $Rev: 53536 $
+#
+# $Date: 2012-07-27 15:55:02 +0200 (Fri, 27 Jul 2012) $
+##############################################################
+
+# ==========================================================================
+set SCTP_IPFAMILY(v4)   1
+set SCTP_IPFAMILY(v6)   2
+
+proc sctpTxInitialize { ip port spc stkId} {
+    log "sctpTxInitialize: ip=$ip, port=$port, spc=$spc, stkId=$stkId"
+	new SCTP_INITIALIZE_CMD	s
+	
+	wr	s	Spc					$spc
+	wr	s	StkId				$stkId
+	wr	s	UsrData				0
+	wr	s	LocPort				$port
+	wr	s	LocAddrListSize		1
+	wr	s	LocAddrFamily		$::SCTP_IPFAMILY(v4)		
+	wr	s	LocAddrPort			$port	
+	wr	s	LocAddrHost			[iptoh $ip B]
+
+	send s
+
+	LogOutputMsg $s
+}
+
+proc sctpTxAssociate { ip port spc stkId sctpId } {
+    log "sctpTxAssociate: ip=$ip, port=$port, spc=$spc, stkId=$stkId, sctpId=$sctpId, outStreamCount=$::__sctpCfg(outStreams)"
+	new	SCTP_ASSOCIATE_CMD	s
+
+	wr	s	Spc					$spc
+	wr	s	StkId				$stkId
+	wr	s	SctpId				$sctpId	
+	wr	s	DstAddrFamily		$::SCTP_IPFAMILY(v4)
+	wr	s	DstAddrPort			$port
+	wr	s	DstAddrHost			[iptoh $ip B]
+	wr	s	OutStreamCount		$::__sctpCfg(outStreams)	
+
+	send s
+
+	LogOutputMsg $s	
+}
+
+proc sctpTxHNBAP { ip port spc stkId sctpId } {
+    log "sctpTxAssociate: ip=$ip, port=$port, spc=$spc, stkId=$stkId, sctpId=$sctpId, outStreamCount=$::__sctpCfg(outStreams)"
+	new	SCTP_ASSOCIATE_CMD	s
+
+	wr	s	Spc					$spc
+	wr	s	StkId				$stkId
+	wr	s	SctpId				$sctpId	
+	wr	s	DstAddrFamily		$::SCTP_IPFAMILY(v4)
+	wr	s	DstAddrPort			$port
+	wr	s	DstAddrHost			[iptoh $ip B]
+	wr	s	OutStreamCount		$::__sctpCfg(outStreams)	
+
+	send s
+
+	LogOutputMsg $s	
+}
+
+proc SctpSendDataReq { data streamId } {
+
+	# Global variables
+	global glIdx glRUAPayloadID glHnbapPayloadID
+	set primName [lindex $data 0]
+	switch -glob -- $primName {
+		"HNB_*"			{
+			# Convert Sig to Pdu
+			set dataPdu [HNBAPSigToPdu data]
+			set payloadId $glHnbapPayloadID
+		 }
+		"RUA_*"			{
+			# Convert Sig to Pdu
+			set dataPdu [RUASigToPdu data]
+			set payloadId $glRUAPayloadID
+		}
+		default         {
+			logscr "ERROR: [SctpSendDataReq] Don't know how to encode sig ($data)"
+			return -1
+		}
+	}
+
+		lassign {spc stkId sctpId assId} [dbHnbapAssocInstGetAssocKeyParts]
+		log "SctpSendDataReq: spc=$spc, stkId=$stkId, sctpId=$sctpId, assId=$assId"
+
+		new SCTP_DATA_REQ       s
+		
+		wr  s   Spc             $spc
+		wr  s   StkId           $stkId
+		wr  s   SctpId          $sctpId
+		wr  s   AssId           $assId
+		wr  s   Context         0
+		wr  s   StreamId        $streamId
+		wr  s   LifeTime        0
+		wr  s   DstAddrFamily   0
+		wr  s   DstAddrPort     0
+		wr  s   DstAddrHost     [iptoh 0.0.0.0 B]
+		wr  s   UnorderFlag     0
+		wr  s   NoBundleFlag    0
+		wr  s   PayloadProtocolId   $payloadId
+		if { ![IsVoid $dataPdu] } {
+			wr  s   DataSize        [string length $dataPdu]
+			wr  s   Data            $dataPdu
+		} else {
+			wr  s   DataSize    0
+		}
+
+    	send s
+
+
+	LogOutputMsg $s
+}

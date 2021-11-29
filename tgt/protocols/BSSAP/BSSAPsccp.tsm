@@ -1,0 +1,666 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/BSSAP_COMBA/tags/BSSAP_COMBA-1.2.0/scripts/BSSAPsccp.tsm $
+#
+# $Author: roger $
+#
+# Description: It performs adaptation layer to SCCP 
+#
+# $Rev: 53313 $
+#
+# $Date: 2012-07-19 15:19:13 +0200 (Thu, 19 Jul 2012) $
+##############################################################
+
+# SVN Revision Checking #
+set url "\$URL: http://memo.prisma/svn/tm/scriptProt/BSSAP_COMBA/tags/BSSAP_COMBA-1.2.0/scripts/BSSAPsccp.tsm $"
+set rev "\$Rev: 53313 $"
+logv0 "[GetName $url]: version [Version "script" $url $rev]"
+
+##############################################################
+#-------------------------------------------------------------
+# decoding primitives from lower level
+#-------------------------------------------------------------
+
+# Connect Ack
+proc DecSccpConnectAck { } {
+
+	# Global Variables
+	global _sig glMsId glBssapDb glVGCSBSSAPPid
+
+	set idx [rd _sig ReqRef]
+
+	#Check if the Db contains the entry
+	if { ![DbEntryExists $glBssapDb $idx] } {
+		#Perhaps the ReqRef belongs from VGCSBSSAP
+		send _sig $glVGCSBSSAPPid
+		#Force the calling proc to skip the message
+		skipMsg
+		return
+	} else {
+		# Get Instance
+		GetInstance $idx $glBssapDb glMsId
+
+		set spcStkidCid [rd _sig Spc]
+		append spcStkidCid "-"
+		append spcStkidCid [rd _sig StkId]
+		append spcStkidCid "-"
+		append spcStkidCid [rd _sig Cid]
+		# setting CONNECT_ACK
+		new CONNECT_ACK r
+		wr r MsId $glMsId
+		wr r SpcStkIdCid $spcStkidCid
+		# Store CONNECT_ACK in _sig
+		set _sig $r
+	}
+}
+
+# Connect Ind
+proc DecSccpNConnectInd { } {
+	
+	# Global Variables
+	global _sig _sigpdu _state glMsId glBssapDb glVGCSBSSAPPid
+
+	# Spc / StkId / Cid
+	set spcStkidCid [rd _sig Spc]
+	append spcStkidCid "-"
+	append spcStkidCid [rd _sig StkId]
+	append spcStkidCid "-"
+	append spcStkidCid [rd _sig Cid]
+
+	set src [rd _sig Src]
+	set ssn_src [hocts $src 4]
+	log "ssn_src=$ssn_src"
+	
+	# bssapPdu
+	set bssapPdu [rd _sig Data]
+
+	# decoding BSSAP pdu
+	if { ![IsVoid $bssapPdu] } {
+		if { [GsInterfaceActive] } {
+			if { [IsOpcGsLink [rd _sig StkId]] } {
+				global glBSSAPPLUSPid
+				log "DecSccpNConnectInd: signal forwarded to BSSAP PLUS"
+				send _sig $glBSSAPPLUSPid
+				skipMsg
+				return
+			} else {
+				if { [bssapPduToSig bssapPdu] } {
+					send _sig $glVGCSBSSAPPid
+					skipMsg
+					return
+				}
+			}
+		} else {
+			if { [LbInterfaceActive] } { 
+				if { $ssn_src != "fa" } {
+					log "DecSccpNConnectInd: WARNING, SSN SRC should be 250"
+				}
+				bssaplePduToSig bssapPdu
+			} else { 
+				if { [bssapPduToSig bssapPdu] } {
+					send _sig $glVGCSBSSAPPid
+					skipMsg
+					return
+				}
+			}
+		}
+	} else {
+		set _sigpdu "?"
+	}
+
+	log "_sigpdu=$_sigpdu"
+
+	# setting CONNECT_IND
+	new 	CONNECT_IND r
+	wr 		r SpcStkIdCid $spcStkidCid
+	wr 		r Pdu $_sigpdu
+
+	# Save previous instance's state, if existing 
+	if { [info exists glMsId] } {
+		DbSet $glBssapDb $glMsId State $_state			
+		log "DecSccpNConnectInd: Mobile recognized MS=$glMsId"
+	} else {
+		log "DecSccpNConnectInd: Mobile not recognized"
+	} 
+
+	# Store CONNECT_IND in _sig and set _state (Bssap(Le)Idle)
+	set _sig $r
+	if { [LbInterfaceActive] && [CnSide] } { 
+		set _state BssapLeIdle
+	} else {
+		set _state BssapIdle
+	}
+}
+
+# Connect Cnf
+proc DecSccpNConnectCnf { } {
+	
+	# Global Variables
+	global _sig _sigpdu glMsId
+
+	# Get Instance 
+	if { [GetInstSccp] == "-1" } {
+		skipMsg
+		return
+	}
+
+	# decoding BSSAP pdu
+	set bssapPdu [rd _sig Data]
+	if { ![IsVoid $bssapPdu] } {
+		bssapPduToSig bssapPdu
+	} else {
+		set _sigpdu "?"
+	}
+
+	# setting CONNECT_CNF
+	new CONNECT_CNF r
+	wr r MsId $glMsId
+	wr r Pdu $_sigpdu
+
+	# Store CONNECT_CNF in _sig
+	set _sig $r
+}
+
+# Disconnect Ind
+proc DecSccpNDisconnectInd { } {
+	
+	global _sig _sigpdu glMsId
+
+	# Get Instance 
+	if { [GetInstSccp] == "-1" } {
+		skipMsg
+		return
+	}
+
+	# Cid
+	set cid [rd _sig Cid]
+	# bssapPdu
+	set bssapPdu [rd _sig Data]
+
+	# decoding BSSAP pdu
+	if { ![IsVoid $bssapPdu] } {
+		if { [LbInterfaceActive]} {
+			bssaplePduToSig bssapPdu
+		} else {
+			bssapPduToSig bssapPdu
+		}
+	} else {
+		set _sigpdu "?"
+	}
+
+	# setting DISCONNECT_IND
+	new DISCONNECT_IND r
+	wr r MsId $glMsId
+	wr r Pdu $_sigpdu
+
+	# Store DISCONNECT_IND in _sig
+	set _sig $r
+}
+
+# Data Ind
+proc DecSccpNDataInd { } {
+	
+	global _sig _sigpdu
+
+	# Get Instance 
+	if { [GetInstSccp] == "-1" } {
+		skipMsg
+		return
+	}
+
+	# decoding BSSAP pdu
+	set bssapPdu [rd _sig Data]
+	if { [IsVoid $bssapPdu] } {
+		logscr "Warning: Received Empty Data Indication"
+		skipMsg
+		return
+	}
+
+	# Decode Message
+	if { [LbInterfaceActive] } {
+		bssaplePduToSig bssapPdu
+	} else {
+		bssapPduToSig bssapPdu
+	}
+
+	# Store BSSAP pdu in _sig
+	set _sig $_sigpdu
+}
+
+# Unitdata Ind
+proc DecSccpNUnitdataInd { } {
+	
+	global _sig _sigpdu
+
+	if { [GsInterfaceActive] } {
+		if { [IsOpcGsLink [rd _sig StkId]] } {
+
+			global __dummy_sgsn
+			if { [info exist __dummy_sgsn] && $__dummy_sgsn } {
+			} else {
+				global glBSSAPPLUSPid
+				send _sig $glBSSAPPLUSPid
+				skipMsg
+			}
+			return
+		}
+	}
+
+	# get instance 
+	GetInstSccpConnectionless
+
+	# decoding BSSAP pdu
+	set bssapPdu [rd _sig Data]
+	if { [IsVoid $bssapPdu] } {
+		logscr "WARNING: Received Empty UnitData Indication"
+		skipMsg
+		return
+	}
+
+	set src [rd _sig Src]
+	set ssn_src [hocts $src 4]
+	log "DecSccpNUnitdataInd: ssn_src=$ssn_src"
+	# Decode Message
+	if { [LbInterfaceActive] && ($ssn_src == "fa") } {
+		bssaplePduToSig bssapPdu
+	} else {
+		bssapPduToSig bssapPdu
+	}
+
+	# Store BSSAP pdu in _sig
+	set _sig $_sigpdu
+}
+
+proc DecSccpNNoticeInd { } {
+
+	global _sig _sigpdu
+
+	# get instance 
+	GetInstSccpConnectionless
+
+	# decoding BSSAP pdu
+	set bssapPdu [rd _sig Data]
+	if { [IsVoid $bssapPdu] } {
+		logscr "WARNING: Received Empty UnitData Indication"
+		skipMsg
+		return
+	}
+
+	set src [rd _sig Src]
+	set ssn_src [hocts $src 4]
+	log "DecSccpNNoticeInd: ssn_src=$ssn_src"
+
+	# Decode Message
+	if { [LbInterfaceActive] && ($ssn_src == "fa") } {
+		bssaplePduToSig bssapPdu
+	} else {
+		bssapPduToSig bssapPdu
+	}
+
+	# Reason
+	set reason [rd _sig Reason]
+	log "DecSccpNNoticeInd: Reason=$reason"
+
+	# Store BSSAP pdu in _sig
+	set _sig $_sigpdu
+}
+
+#-------------------------------------------------------------
+# sending primitives to lower level
+#-------------------------------------------------------------
+
+# Ssn handling (SCCP Subsystem number )
+# ssntype:
+# 0		Aint
+# 1		bsc->smlc
+# 2		smlc->bsc
+# 3		sgsn
+
+# Connect Req
+proc SendSccpNConnectReq { bscDb reqRef bscid bssapSig {ssntype 55} } {
+	global ssn
+
+	switch -exact -- $ssntype {
+		"0"		{ 
+			set ssnsrc 254
+			set ssndst 254 
+			}
+		"1"		{ 
+			set ssnsrc 250
+			set ssndst 252
+			}
+		"2"		{ 
+			set ssnsrc 252
+			set ssndst 250
+			}
+		"3"		{ 
+			set ssnsrc 98 
+			set ssndst 98
+			}
+		"55"	{
+			# default use global ssn
+			set ssnsrc $ssn
+			set ssndst $ssn
+			}
+	}
+
+	# Dst
+	set dpc [DbGet $bscDb $bscid Dpc]
+
+	set dst [uitoh $dpc]; ## Dpc
+	append dst [uctoh $ssndst]; ## Ssn
+	append dst 42; ## Ai
+	append dst 00; ## Nai
+	append dst 00; ## Np
+	append dst 00; ## Es
+	append dst 00; ## Tt
+	append dst 0000000000000000000000000000000000\
+               0000000000000000000000000000000000; ## Gtai
+
+	# Src
+	set opc [DbGet $bscDb $bscid Opc]
+	set src [uitoh $opc]; ## Opc
+	append src [uctoh $ssnsrc]; ## Ssn
+	append src 42; ## Ai
+	append src 00; ## Nai
+	append src 00; ## Np
+	append src 00; ## Es
+	append src 00; ## Tt
+	append src 0000000000000000000000000000000000\
+               0000000000000000000000000000000000; ## Gtai 
+
+	# Only protocol class 0 (basic connectionless) 
+	# and protocol class 2 (basic connection-oriented)
+	# are used
+	set class 02; 
+
+	new SCCP_N_CONNECT_REQ s
+
+	# Spc
+	wr s Spc [DbGet $bscDb $bscid Opc]
+	# StkId
+	wr s StkId [DbGet $bscDb $bscid StkId]
+
+	# ReqRef
+	wr s ReqRef $reqRef
+	# Dst
+	wr s Dst $dst
+	# Src
+	wr s Src $src
+	# Class
+	wr s Class $class 
+
+	# Pdu
+	if { ![IsVoid $bssapSig] } {
+		if { [LbInterfaceActive] } {
+			wr s Data [bssapleSigToPdu bssapSig]
+		} else {
+			wr s Data [bssapSigToPdu bssapSig]
+		}
+	}
+
+	send s
+	LogOutputPrim $s
+
+	if { 0 } {
+		global glMsId
+		new BSSAP_SET_SCCP_REQ_REF s
+		wr	s	ReqReq	$reqRef
+		wr	s	MsId	$glMsId
+
+		send s
+		LogOutputPrim $s
+	}
+}
+
+# Connect Res
+proc SendSccpNConnectRes { spcstkidcid bssapSig } {
+
+	# getting Spc/StkId/Cid from database
+	set spc [GetSpc $spcstkidcid]
+	set stkid [GetStkId $spcstkidcid]
+	set cid [GetCid $spcstkidcid]
+
+	global glMsId
+	log "SendSccpNConnectRes: glMsId=$glMsId; spc=$spc; stkid=$stkid"; #cDEBUG
+
+	# Class
+	# Only protocol class 0 (basic connectionless) 
+	# and protocol class 2 (basic connection-oriented)
+	# are used
+	set class 02; 
+
+	new SCCP_N_CONNECT_RES s
+
+	# Spc
+	wr s Spc $spc
+	# StkId
+	wr s StkId $stkid
+
+	# Cid
+	wr s Cid $cid
+	# Class
+	wr s Class $class 
+
+	# Pdu
+	if { ![IsVoid $bssapSig] } {
+		if { [LbInterfaceActive] } {
+			wr s Data [bssapleSigToPdu bssapSig]
+		} else {
+			wr s Data [bssapSigToPdu bssapSig]
+		}
+	}
+
+	send s
+	LogOutputPrim $s
+}
+
+# Disconnect Req
+proc SendSccpNDisconnectReq { spcstkidcid bssapSig } {
+
+	# getting Spc/StkId/Cid from database
+	set spc [GetSpc $spcstkidcid]
+	set stkid [GetStkId $spcstkidcid]
+	set cid [GetCid $spcstkidcid]
+
+	global glMsId
+	log "SendSccpNDisconnectReq: glMsId=$glMsId; spc=$spc; stkid=$stkid"; #cDEBUG
+
+	# Reason
+	set reason 03; 
+
+	new SCCP_N_DISCONNECT_REQ s
+
+	# Spc
+	wr s Spc $spc
+	# StkId
+	wr s StkId $stkid
+
+	# Cid
+	wr s Cid $cid
+	# Reason
+	wr s Reason $reason 
+
+	# Pdu
+	if { ![IsVoid $bssapSig] } {
+		if { [LbInterfaceActive] } {
+			wr s Data [bssapleSigToPdu bssapSig]
+		} else {
+			wr s Data [bssapSigToPdu bssapSig]
+		}
+	}
+
+	send s
+	LogOutputPrim $s
+}
+
+# Data Req
+proc SendSccpNDataReq { spcstkidcid bssapSig } {
+
+	# getting Spc/StkId/Cid from database
+	set spc [GetSpc $spcstkidcid]
+	set stkid [GetStkId $spcstkidcid]
+	set cid [GetCid $spcstkidcid]
+
+	global glMsId
+	log "SendSccpNDataReq: glMsId=$glMsId; spc=$spc; stkid=$stkid; cid=$cid"; #cDEBUG
+
+	new SCCP_N_DATA_REQ s
+
+	# Spc
+	wr s Spc $spc
+
+	# StkId
+	wr s StkId $stkid
+
+	# Cid
+	wr s Cid $cid
+
+	# Pdu
+	if { ![IsVoid $bssapSig] } {
+		if { [LbInterfaceActive] } {
+			wr s Data [bssapleSigToPdu bssapSig]
+		} else {
+			wr s Data [bssapSigToPdu bssapSig]
+		}
+	}
+
+	send s
+	LogOutputPrim $s
+}
+
+# Unitdata Req
+proc SendSccpNUnitdataReq { bssapSig {ssntype 55} } {
+
+	# Global Variables
+	global glBssapDb glMsId ssn
+	
+	switch -exact -- $ssntype {
+		"0"		{ 
+			set ssnsrc 254
+			set ssndst 254 
+			}
+		"1"		{ 
+			set ssnsrc 250
+			set ssndst 252
+			}
+		"2"		{ 
+			set ssnsrc 252
+			set ssndst 250
+			}
+		"3"		{ 
+			set ssnsrc 98 
+			set ssndst 98
+			}
+		"55"	{
+			# default use global ssn
+			set ssnsrc $ssn
+			set ssndst $ssn
+			}
+	}
+
+	log "SendSccpNUnitdataReq: glMsId=$glMsId; ssn=$ssn ssnsrc=$ssnsrc ssndst=$ssndst"
+
+	# Parameters
+	set sequence_control 255
+	set return_option 0
+
+	# getting Spc/StkId from database
+	set spc [DbGet $glBssapDb $glMsId Spc]
+	set stkid [DbGet $glBssapDb $glMsId StkId]
+
+
+	new SCCP_N_UNITDATA_REQ s
+	wr s Spc $spc
+	wr s StkId $stkid
+
+	# Carlo MGW in A-Flex TDM (11/05/10: China Shanghai)
+	# ------------------------------------------------ #
+	# Using stkid it's impossible to manage a configuration with a Media GateWay.
+	# To manage a media gateway, I add the use of Dpc.
+
+	# Dst
+	if {[MsSide]} {
+		set dpc [DbGet $glBssapDb $glMsId Dpc]
+		log "SendSccpNUnitdataReq: dpc=$dpc"
+		if {[IsVoid $dpc]} {
+			exit "SendSccpNUnitdataReq: Unexpected dpc"
+		}
+		set dst [uitoh $dpc]
+
+		logscr "Opc=$spc; stkid=$stkid; dpc=$dpc --> dst=$dst"; #cDEBUG
+
+	} else {
+		set listBssapDb [DbRecordInfo $glBssapDb]
+		foreach fIndex $listBssapDb {
+			set fName [lindex $fIndex 0]
+			append listbssapDb $fName	
+		}
+		#log "SendSccpNUnitdataReq: listbssapDb=$listbssapDb"; #cDEBUG
+
+		set dpc [DbGet $glBssapDb $glMsId Dpc]
+
+		log "SendSccpNUnitdataReq: Dpc=$dpc"
+		if {[IsVoid $dpc]} {
+			if { !$::glAoip || ![CheckMscPcl] } {
+				exit "SendSccpNUnitdataReq: Unexpected dpc"
+			} else {
+				set lac [DbGet $glBssapDb $glMsId LAC]
+				set cellid [DbGet $glBssapDb $glMsId CellId]
+				if { [IsVoid $lac] || [IsVoid $cellid] } {
+					log "SendSccpNUnitdataReq: WARNING: LAC:$lac or/and CellId:$cellid are void !"
+					exit "SendSccpNUnitdataReq: Unexpected dpc !!"
+				} else {
+					set bscid [GetBscIdByCellIdfr $lac $cellid ::glBtsDb]
+					if { $bscid == "-1" } {
+						abort "BSC identity unknown (LAC=$lac, CellId=$cellid)"
+					}
+					set dpc [DbGet $::glBscDb $bscid Dpc]
+					DbSet $glBssapDb $glMsId Dpc $dpc
+					log "SendSccpNUnitdataReq: glMsId=$glMsId; lac=$lac; cellid=$cellid; bscid=$bscid --> Dpc=Spc_BSC=$dpc"; #cDEBUG
+				}
+			}
+		}
+		set dst	[uitoh $dpc]
+		
+		log "SendSccpNUnitdataReq: -network side- dst=$dst"; #cDEBUG
+	}
+
+	append dst [uctoh $ssndst]; ## Ssn
+	append dst 42; ## Ai
+	append dst 00; ## Nai
+	append dst 00; ## Np
+	append dst 00; ## Es
+	append dst 00; ## Tt
+	append dst 0000000000000000000000000000000000\
+               0000000000000000000000000000000000; ## Gtai
+
+	# Src
+	set src [uitoh $spc]; ## Spc
+	append src [uctoh $ssnsrc]; ## Ssn
+	append src 43; ## Ai
+	append src 00; ## Nai
+	append src 00; ## Np
+	append src 00; ## Es
+	append src 00; ## Tt
+	append src 0000000000000000000000000000000000\
+               0000000000000000000000000000000000; ## Gtai 
+
+	wr s Dst $dst
+	wr s Src $src
+	wr s SeqCtl $sequence_control
+	wr s RetOpt $return_option
+
+	# Pdu
+	if { ![IsVoid $bssapSig] } {
+		if { [LbInterfaceActive] } {
+			wr s Data [bssapleSigToPdu bssapSig]
+		} else {
+			wr s Data [bssapSigToPdu bssapSig]
+		}
+	}
+
+	send s
+	#send s 0 1; # send con verbosità 1
+}
+
+#EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE#

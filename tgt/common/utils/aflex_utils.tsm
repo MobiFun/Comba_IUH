@@ -1,0 +1,58 @@
+
+
+
+proc GetMSCByMsId { msId } {
+	global glTstmIndexArray
+	if { [info exist glTstmIndexArray($msId)] } {
+		set tstmIndex $glTstmIndexArray($msId)
+	} else {
+		set tstmIndex -1
+		log "GetMSCByMsId msId=$msId not associated to an MSC"
+	}
+
+	return $tstmIndex
+}
+
+proc StoreMSCIndex { tstmIndex msId } {
+	global glTstmIndexArray
+
+	set glTstmIndexArray($msId) $tstmIndex
+}
+
+proc GetRandomMSC { } {
+
+	global _ompid
+
+	set tstmList [remcmd $_ompid "GetAvailableMSCList"]
+
+	set numMSC [llength $tstmList]
+	
+	if { $numMSC == 0 } {
+		logscr "GetRandomMSC: no more MSC available!"
+		exit
+	}
+	
+	set idx [expr {int($numMSC*rand())}]
+
+	log "GetRandomMSC: rand idx=$idx"
+
+	set idx [lindex $tstmList $idx]
+	
+	log "GetRandomMSC: tstmList=$tstmList tstmIndex idx=$idx"
+
+	return $idx 
+}
+
+proc IsMSCAlive { mscIndex } {
+	global _ompid
+	set mscList [remcmd $_ompid "GetAvailableMSCList"]
+
+	foreach mscIdx $mscList {
+		if { $mscIdx==$mscIndex } {
+			return 1
+		}
+	}
+	return 0
+}
+
+

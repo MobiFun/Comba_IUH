@@ -1,0 +1,121 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/IuhCsComba_Tm/tags/IuhCsComba_Tm-1.2.0/tgt/common/localutils/dbIuh.tsm $
+#
+# $Author: roger $
+#
+# Description: SS7 Operations and Maintainance
+#
+# $Rev: 53167 $
+#
+# $Date: 2012-07-13 18:11:02 +0200 (Fri, 13 Jul 2012) $
+##############################################################
+
+set ::glIuhDb IuhDb
+
+proc dbIuhCreateFromCsv { csv } {
+    log "dbIuhCreateFromCsv: csv=$csv"
+
+    set dbCsv [DbGetName $csv]
+    log "dbIuhCreateFromCsv: dbCsv=$dbCsv"
+    spawn "DbCreate.tsm $csv"
+
+    set idxList [DbRecordInfo $dbCsv]
+    regsub  -all "Read_Only" $idxList "Read/Write" idxList
+    lappend idxList [list CtlSpc                  Normal  Read/Write]
+    lappend idxList [list CtlStkId                Normal  Read/Write]
+
+    DbCreate $::glIuhDb $idxList
+    # IuhIdx ::= 'Iuh_<int>'
+    foreach IuhIdx [DbGetIndexList $dbCsv] {
+        DbCreateDefEntry $::glIuhDb $IuhIdx
+        foreach col [GetDbColumnList $idxList] {
+            if { [DbFieldExists $dbCsv $col] } {
+                DbSet $::glIuhDb $IuhIdx $col [DbGet $dbCsv $IuhIdx $col]
+            } else {
+                log "dbIuhCreateFromCsv: '$col' is not present in db $dbCsv"
+            }
+        }
+        DbSet $::glIuhDb $IuhIdx CtlSpc                  ?
+        DbSet $::glIuhDb $IuhIdx CtlStkId                ?
+    }
+    DbDelete $dbCsv
+}
+
+proc dbEnbDump { txt enbIdxList columnNames } {
+    LogDbFiltered $::glIuhDb "dbEnbDump-${txt}" $enbIdxList $columnNames
+}
+
+
+proc dbEnbScanInt {enbIdx} {
+	return [lindex [split $enbIdx _] end]
+}
+
+proc dbEnbFormatIdx {enbInt} {
+    return "enb_${enbInt}"
+}
+
+proc dbEnbGetIndexList {} {
+    return [DbGetIndexList $::glIuhDb]
+}
+
+proc dbEnbGet {enbIdx fld} {
+    return [DbGet $::glIuhDb $enbIdx $fld]
+}
+
+proc dbEnbSet {enbIdx fld val} {
+    DbSet $::glIuhDb $enbIdx $fld $val
+}
+
+proc dbEnbGetIpPort {enbIdx fld} {
+    return [split [dbEnbGet $enbIdx $fld] /]
+}
+
+proc dbEnbGetPlmnIdHex {enbIdx} {
+    # FIXME: should collect all 'BroadcastPLMNs' of related cells ? 
+    # Get directly the plmnId as is defined into the DB.
+    # Otherwise process the its logical components (MCC+MNC)
+    return [dbEnbGet $enbIdx NodePlmnIdentity]
+}
+
+proc dbEnbGetCSG_IDListHex {enbIdx fld} {
+    return [dbEnbGet $enbIdx $fld]
+}
+
+proc dbEnbAddActivePeer {enbIdx refPoint idx} {
+    if { $refPoint != "S1" && $refPoint != "X2" } {
+        abort "ABORT-dbEnbAddActivePeer: invalid refPoint=$refPoint"
+    }
+    set activePeers [dbEnbGet $enbIdx "${refPoint}ActivePeers"]
+    logscr "dbEnbAddActivePeer: enbIdx=$enbIdx, refPoint=$refPoint, idx=$idx, activePeers={$activePeers}"
+    lappend activePeers $idx
+    dbEnbSet $enbIdx "${refPoint}ActivePeers" $activePeers
+    return $activePeers 
+}
+
+proc dbEnbRemoveActivePeer {enbIdx refPoint idx} {
+    if { $refPoint != "S1" && $refPoint != "X2" } {
+        abort "ABORT-dbEnbRemoveActivePeer: invalid refPoint=$refPoint"
+    }
+    set activePeers [dbEnbGet $enbIdx "${refPoint}ActivePeers"]
+    logscr "dbEnbRemoveActivePeer: enbIdx=$enbIdx, refPoint=$refPoint, idx=$idx, activePeers={$activePeers}"
+    lsearchrem activePeers $idx    
+    dbEnbSet $enbIdx "${refPoint}ActivePeers" $activePeers
+    return $activePeers 
+}
+
+proc dbEnbGetMmeIdx {enbIdx} {
+    set mmeList [dbEnbGet $enbIdx CtlS1PeerMmeList]
+    if { [IsVoid $mmeList] } {
+        abort "ABORT-dbEnbGetMmeIdx: no MME defined for $enbIdx"    
+    }
+    set mme [lindex $mmeList 0]
+    # mme = {mmeIdx [ip/port]}
+    lassign {mmeIdx mmeIpPort} $mme
+    return $mmeIdx
+}
+
+#proc dbEnbGetCtlS1PeerMmeList {enbIdx} {
+##	return [split [dbEnbGet $enbIdx CtlS1PeerMmeIdList] -]
+#	return [dbEnbGet $enbIdx CtlS1PeerMmeList]
+#}
+

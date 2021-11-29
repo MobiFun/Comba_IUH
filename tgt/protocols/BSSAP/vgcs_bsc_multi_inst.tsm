@@ -1,0 +1,153 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/BSSAP_COMBA/tags/BSSAP_COMBA-1.2.0/scripts/vgcs_bsc_multi_inst.tsm $
+#
+# $Author: roger $
+#
+# Description: User Script VGCS Simulator BSS side
+#
+#
+# $Rev: 53313 $
+#
+# $Date: 2012-07-19 15:19:13 +0200 (Thu, 19 Jul 2012) $
+##############################################################
+
+############################################################
+# Multi Instance Handling
+############################################################
+
+proc HandleRxSignalProc { } {
+
+	# Declare Global Variables
+	global _sig  
+
+	set primName [lindex $_sig 0]
+
+	switch -exact -- $primName {
+		"VGCS_CALL_BEGIN" 				{ RecvVgcsCallBegin }
+		"VGCS_JOIN_REQ"					{ RecvVgcsJoinReq }
+		"VGCS_SUBTALKER"				{ RecvVgcsSubTalker }
+		"SCCP_N_CONNECT_IND"    		{ ConnectIndHnd }
+		"T_SENDCLEARCOMMAND"			{ }
+		"T_SETUPMSCAL"					{ }
+		"BSSAP_CTL_SEND_ON_VGCS_LINK"	{ }
+		default                 		{ DefaultHnd }
+	}
+	LogInputSig
+}
+
+proc RecvVgcsCallBegin { } {
+	global _sig glMsBeginCallList
+	set msId [rd _sig MsId]
+	set spcStkIdCid [rd _sig SpcStkIdCid]
+	set newElem [list $msId $spcStkIdCid]
+	lappend glMsBeginCallList $newElem
+	log "RecvVgcsCallBegin: glMsBeginCallList = $glMsBeginCallList"
+	skipMsg
+}
+
+proc RecvVgcsJoinReq1 { } {
+	global _sig glMsBeginCallList
+	set grCallRef [rd _sig GroupCallRef]
+	set spcStkIdcid [rd _sig SpcStkIdCid]
+	set msId [rd _sig MsId]
+	set origMsId [GetOriginator $msId $spcStkIdCid]
+	if { ![IsVoid $origMsId] } {
+	} else {
+        "T_SENDCLEARCOMMAND"            { }
+        "T_SETUPMSCAL"                  { }
+        "BSSAP_CTL_SEND_ON_VGCS_LINK"   { }
+        default                         { DefaultHnd }
+    }
+}
+
+proc RecvVgcsJoinReq { } {
+    global _sig glMsBeginCallList glGrCallRefDb glLinkDb
+    set grCallRef [rd _sig GroupCallRef]
+	set grCallRef [GetGroupCallRefPurePdu $grCallRef]
+    set spcStkIdCid [rd _sig SpcStkIdCid]
+    set msId [rd _sig MsId]
+    set origMsId [GetOriginator $msId $spcStkIdCid origPos]
+    if { ![IsVoid $origMsId] } {
+		log "The talker that joined was the originator grCallRef=$grCallRef"
+		#Remove the originator from the list
+		lreplace $glMsBeginCallList $origPos $origPos
+		#Insert the originator in the Db
+		LogDb $glGrCallRefDb
+		DbSet $glGrCallRefDb $grCallRef OriginatorMsId $msId
+		set listeners [DbGet $glGrCallRefDb $grCallRef ListenersList]
+		lappend listeners $msId
+		DbSet $glGrCallRefDb $grCallRef ListenersList $listeners
+		DbSet $glGrCallRefDb $grCallRef TalkerMsId ?]
+		LogDb $glGrCallRefDb
+		#Send the Uplink release signal
+		new UL_RELSE_IND s
+		wr s cause 0e
+		set mainLink [DbGet $glGrCallRefDb $grCallRef MainLink]
+		SendSccpDataReq $s $mainLink
+    } else {
+		log "The talker that joined was a subtalker"
+		set listeners [DbGet $glGrCallRefDb $grCallRef ListenersList]
+		lappend listeners $msId
+		DbSet $glGrCallRefDb $grCallRef ListenersList $listeners
+		DbSet $glGrCallRefDb $grCallRef TalkerMsId ?]
+		#Send the Uplink release signal
+		new UL_RELSE_IND s
+		wr s cause 0e
+		set mainLink [DbGet $glGrCallRefDb $grCallRef MainLink]
+		SendSccpDataReq $s $mainLink
+
+    }
+	skipMsg
+}
+proc RecvVgcsSubTalker { } {
+	global _sig glGrCallRefDb glCSBSSAPPid
+	set spcStkIdCid [rd _sig SpcStkIdCid]
+	set msId [rd _sig MsId]
+	set grCallRef [GetGroupCallRefByListener $msId]
+	#Check if a talker is present
+	set talker [DbGet $glGrCallRefDb $grCallRef TalkerMsId]
+	if { [IsVoid $talker] } {
+		set spcStkIdCid [DbGet $glGrCallRefDb $grCallRef MainLink]
+		new UL_REQ s
+		SendSccpDataReq $s $spcStkIdCid
+		#Save the talker to avoid other Ms listeners to make this request
+		DbSet $glGrCallRefDb $grCallRef TalkerMsId $msId
+		#inform RR
+		new RR_EST_CNF t
+		wr t MsId $msId
+		new VGCS_FORWARD_TO_MM u
+		wr u Signal $t
+		send u $glCSBSSAPPid
+	} else {
+		logscr "######### ERROR: Received a request for talking while a talker is still present"
+		logscr "MsId = $talker"
+	}
+	skipMsg
+}
+
+proc GetGroupCallRefByListener { listenerMsId } {
+	global glGrCallRefDb
+	set idxList [DbGetIndexList $glGrCallRefDb]
+	foreach idx $idxList {
+		set listenerList [DbGet $glGrCallRefDb $idx ListenersList]
+		set result [lsearch $listenerList $listenerMsId]
+		if { $result != -1 } {	
+			logscr "GetGroupCallRefByListener: found listener in GroupCallRef = $idx"
+			return $idx
+		}
+	}
+	return ?
+}
+
+proc GetGroupCallRefBySpcStkIdCid { spcStkIdCid } {
+	global glGrCallRefDb
+	set idxList [DbGetIndexList $glGrCallRefDb]
+	foreach idx $idxList {
+		set currLink [DbGet $glGrCallRefDb $idx MainLink]
+		if { ![string compare $currLink $spcStkIdCid] } {
+			logscr "GetGroupCallRefBySpcStkIdCid: found group call ref = $idx"
+			return $idx
+		}
+	}
+	return ?
+}

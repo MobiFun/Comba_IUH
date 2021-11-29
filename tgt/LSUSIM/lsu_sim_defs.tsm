@@ -1,0 +1,226 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/tstmUtils/LSUSIM/tags/LSUSIM-1.8.1/scripts/lsu_sim_defs.tsm $
+#
+# $Author: carlom $
+#
+# Description: defines to manage LSU SIM
+#
+#
+# $Rev: 34122 $
+#
+# $Date: 2010-06-16 19:48:41 +0200 (Wed, 16 Jun 2010) $
+##############################################################
+
+
+################ definitions related to LSUSIM firmware ################
+# LSU SIM message types
+set glLsuSimCmdA			0x41
+set glLsuSimCmdS			0x53
+set glLsuSimCmde			0x65
+set glLsuSimCmdSetInterface 0x69
+set glLsuSimCmdm			0x6d
+set glLsuSimCmdr			0x72
+set glLsuSimCmds			0x73
+set glLsuSimCmdTest			0x74
+set glLsuSimCmdSetVoltage	0x76
+set glLsuSimCmdWrite		0x77
+
+#LSU SIM usbPayload len
+set gl_sPayloadLen	10
+
+# Command: "Setting the SIM interface voltage"
+set glLsuSimAvailVoltage [list 5V 3V 1V8]
+
+set glLsuSimVoltage(1V8)	01
+set glLsuSimVoltage(3V)		02
+set glLsuSimVoltage(5V)		03
+
+set gl3GPPVolt(1V8)			3
+set gl3GPPVolt(3V)			1
+set gl3GPPVolt(5V)			0
+
+
+################ definitions related to APDU ################
+
+############### INS CODES ###############
+# name of codes as used in TS 151.011
+set glInsId(SELECT)				"a4"
+set glInsId(STATUS)				"f2"
+set glInsId(RUN_GSM_ALGO)		"88"
+set glInsId(GET_RESP)			"c0"
+
+set glInsId(SEEK)				"a2"
+
+set glInsId(VERIFY_CHV)			"20"
+set glInsId(CHANGE_PIN)			"24"
+set glInsId(DISABLE_PIN)		"26"
+set glInsId(REENABLE_PIN)		"28"
+
+set glInsId(READ_BINARY)		"b0"
+set glInsId(UPDATE_BINARY)		"d6"
+
+set glInsId(READ_RECORD)		"b2"
+set glInsId(UPDATE_RECORD)		"dc"
+
+set glInsId(UNBLOCK_GSM_APPL)	"2c"
+set glInsId(SLEEP)				"fa"
+
+############### FILE IDs ###############
+# see TS 151.011
+set glFileId(Mf)			"3f00"
+
+set glFileId(DfGsm)			"7f20"
+set glFileId(DfTelecom)		"7f10"
+
+set glFileId(EfImsi)		"6f07"
+set glFileId(EfKc)			"6f20"
+set glFileId(EfHpplmn)		"6f31"
+set glFileId(EfKcGprs)		"6f52"
+set glFileId(EfLociGprs)	"6f53"
+set glFileId(EfLoci)		"6f7e"
+set glFileId(EfMmsn)		"6fce"
+
+set glFileId(EfMsisdn)		"6f40"
+set glFileId(EfSmsP)		"6f42"
+
+# UMTS Extension
+set glFileId(ADF)			"7fff"
+set glFileId(EfDir)			"2f00"
+set glFileId(DfUmts)		"5f3b"
+
+############### EF BINARY FIELDS OFFSET, LENGTH ###############
+# EF IMSI
+set glEfFieldOffset(ImsiLen)	0
+set glEfFieldOffset(Imsi)		1
+
+set glEfFieldLen(ImsiLen)		1
+set glEfFieldLen(Imsi)			8
+
+# EF LOCI
+set glEfFieldOffset(Tmsi)			0
+set glEfFieldOffset(Lai)			4
+set glEfFieldOffset(TmsiTime)		9
+set glEfFieldOffset(LocUpStatus)	10
+
+set glEfFieldLen(Tmsi)			4
+set glEfFieldLen(Lai)			5
+set glEfFieldLen(TmsiTime)		1
+set glEfFieldLen(LocUpStatus)	1
+
+# EF LOCIGPRS
+set glEfFieldOffset(Ptmsi)				0
+set glEfFieldOffset(PtmsiSignature)		4
+set glEfFieldOffset(Rai)				7
+set glEfFieldOffset(RoutAreaUpStatus)	13
+
+set glEfFieldLen(Ptmsi)				4
+set glEfFieldLen(PtmsiSignature)	3
+set glEfFieldLen(Rai)				6
+set glEfFieldLen(RoutAreaUpStatus)	1
+
+# EF KC
+set glEfFieldOffset(Kc)				0
+set glEfFieldOffset(CipKeySeqNum)	8
+
+set glEfFieldLen(Kc)				8
+set glEfFieldLen(CipKeySeqNum)		1
+
+# EF KCGPRS
+set glEfFieldOffset(KcGprs)				0
+set glEfFieldOffset(CipKeySeqNumGprs)	8
+
+set glEfFieldLen(KcGprs)				8
+set glEfFieldLen(CipKeySeqNumGprs)		1
+
+
+foreach fld [array names glEfFieldOffset] {
+	set glEfFieldEndOffset($fld) [expr {$glEfFieldOffset($fld)+$glEfFieldLen($fld)-1}]
+}
+
+############### EF BINARY LENGTH ###############
+# length is an HEXSTR
+set glFileBinLen(EfImsi)		[uctoh [expr {$glEfFieldOffset(Imsi) + $glEfFieldLen(Imsi)}]]
+set glFileBinLen(EfKc)			[uctoh [expr {$glEfFieldOffset(CipKeySeqNum) + $glEfFieldLen(CipKeySeqNum)}]]
+set glFileBinLen(EfLoci)		[uctoh [expr {$glEfFieldOffset(LocUpStatus) + $glEfFieldLen(LocUpStatus)}]]
+set glFileBinLen(EfLociGprs)	[uctoh [expr {$glEfFieldOffset(RoutAreaUpStatus) + $glEfFieldLen(RoutAreaUpStatus)}]]
+set glFileBinLen(EfKcGprs)		[uctoh [expr {$glEfFieldOffset(CipKeySeqNumGprs) + $glEfFieldLen(CipKeySeqNumGprs)}]]
+
+
+############### STATUS CODES ###############
+# see ts_102.221 par. 10.2.1
+set glStatusCond(NormalEndOfCmd)	0x9000
+set glStatusCond(Sw1NormalEndOfCmd)	[htouc 90]
+set glStatusCond(Sw2NormalEndOfCmd)	[htouc 00]
+set glStatusCond(RespWithVarLen)	[htouc 9f]
+set glStatusCond(SecurMngmnent)		[htouc 98]
+set glStatusCond(FileNotFound)   	"6A82"
+set glStatusCond(UsimResponseOk1)	[htouc 61]
+set glStatusCond(UsimResponseOk2)	[htouc 6c]
+set glStatusCond(ClassNotSupported)	[htouc 6e]
+set glStatusCond(MACfailure)		"9862"
+
+# INTEGER values
+set glLsuSimDefs(LeStatus) 22
+set glLsuSimDefs(ApduNumOfCtrlBytes) 3; ##INS, SW1, SW2
+set glLsuSimDefs(FileCharactPos) 14; #Position of "File Characteristics" in response to SELECT of MF or DF.
+set glLsuSimDefs(lsusimPrimSIMTIMEOUT) 5; #
+
+# CODES FOR PinStatus
+set glLsuSimPinStatus(Disabled)	0
+set glLsuSimPinStatus(Enabled)	1
+set glLsuSimPinStatus(Error)	2
+
+# usbFd: is the LSU SIM board number (UINT)
+proc CreateSimPosKey {usbFd usbSim} {
+	return ${usbFd}_${usbSim}
+}
+
+#see CreateSimPosKey
+proc BoardIdFromSimPosKey {simPosKey} {
+	return [lindex [split $simPosKey _] 0]
+}
+
+#see CreateSimPosKey
+proc SimPosFromSimPosKey {simPosKey} {
+	return [lindex [split $simPosKey _] 1]
+}
+
+
+############### CLASS TYPE IDs ######################
+set glClassType(USIM) 		"00"
+set glClassType(USIM_SYNC)	"80"
+set glClassType(SIM)  		"A0"
+
+############### SELECT TYPE IDs ######################
+set glSelectType(USIM) 		"04"; #select by UMTS file ID
+set glSelectType(SIM) 		"00"; #select by GSM file ID
+
+############### AID code ######################
+set glAid(TIM_ITALY)		""
+set glAid(VDF_ITALY)		""
+set glAid(TEST_NETWORK)		"A0000000871002FFFFFFFF89060400FF"
+
+############### Ap code ######################
+set glAPid(TIM_ITALY) 		1002
+set glAPid(VDF_ITALY) 		1002  
+set glAPid(TEST_NETWORK) 	1002 ; # Gemalto Usim Milenage
+
+############### Country code ######################
+set glCCid(TIM_ITALY) 		ffff
+set glCCid(VDF_ITALY) 		ffff
+set glCCid(TEST_NETWORK) 	ff47
+
+############### APC code ######################
+set glAPCid(TIM_ITALY) 		ffff89
+set glAPCid(VDF_ITALY) 		ffff89
+set glAPCid(TEST_NETWORK) 	f00189 ; # Gemalto Usim Milenage
+
+############### APF code ######################
+set glAPFid(TIM_ITALY) 060400ff
+set glAPFid(VDF_ITALY) 05060000
+set glAPFid(TEST_NETWORK) 000001ff ; # Gemalto Usim Milenage
+
+############### Check PIN ######################
+set glCheckPin(SIM) 	"01"; # check PIN1
+set glCheckPin(USIM) 	"81"; # check PIN2
+###############################################

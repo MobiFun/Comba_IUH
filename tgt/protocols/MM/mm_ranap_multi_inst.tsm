@@ -1,0 +1,758 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/MM/tags/MM-2.37.13/scripts/mm_ranap_multi_inst.tsm $
+#
+# $Author: sergiol $
+#
+# Description: MM Multi Instance Handler (UMTS Only)
+# It also performs adaptation layer versus RANAP
+#
+# $Rev: 52799 $
+#
+# $Date: 2012-07-06 09:21:02 +0200 (Fri, 06 Jul 2012) $
+##############################################################
+
+##############################################################
+# Type Definitions
+##############################################################
+
+typedef { STRUCT {UINT MsId} {STRING SpcStkIdCid} {STRUCTURE Pdu} AP_EST_IND }
+typedef { STRUCT {UINT MsId} {STRING SpcStkIdCid} {STRUCTURE Pdu} AP_EST_CNF }
+typedef { STRUCT {UINT MsId} {UINT Cause} AP_REL_IND }
+typedef { STRUCT {UINT MsId} {STRUCTURE Pdu} AP_DATA_IND }
+typedef { STRUCT {UINT MsId} {UINT Res} {UINT Cause} AP_SYNC_CNF }
+
+##############################################################
+# Multi-instance Handler
+##############################################################
+
+proc MmMultiInstanceHdl { } {
+
+	# Declare Global Variables
+	global _sig  
+
+	switch -exact -- [lindex $_sig 0] {
+		"RANAP_AP_EST_IND" 		{ DecApEstInd }
+		"RANAP_AP_EST_CNF" 		{ DecApEstCnf }
+		"RANAP_AP_REL_IND" 		{ DecApRelInd }
+		"RANAP_AP_DATA_IND"		{ DecApDataInd }
+		"RANAP_AP_SYNC_CNF"		{ DecApSyncCnf }
+		"T_3250"                -
+		"T_3255"                -
+		"T_3260"                -
+		"T_3270"                -
+		"T_TRIG_AUTH"           -
+		"T_TRIG_SEC"            { DefaultTmrHnd }
+		"T_DBG_GET_STATS"       { GetStatistics }
+		"MM_CONFIG"				{ MmConfigHnd }
+		"MM_SET_USER_PID"		{ }
+        "MM_SET_DB_FIELD"       SetDbFieldHnd
+		default 				{ DefaultHnd }
+	}
+}
+
+##############################################################
+# Statistics
+##############################################################
+
+proc GetStatistics { } {
+
+	log "---------- START OF MM STATISTICS ----------"
+	
+	# Dump Statistics Variable
+	log "[::profiler::print]"
+
+	log "----------  END OF MM STATISTICS  ----------"
+
+	skipMsg
+}
+
+##############################################################
+# Multi Instance Handling
+##############################################################
+
+proc DefaultHnd { } {
+
+	# Global Variables
+	global glMMdb glMsId _sig
+
+	GetInstance	[rd _sig MsId] $glMMdb glMsId
+}
+
+proc DefaultTmrHnd { } {
+
+	# Global Variables
+	global glMMdb glMsId 
+
+	GetInstanceFromTimer $glMMdb glMsId
+}
+
+##############################################################
+# Data Base handling
+##############################################################
+
+proc MmConfigHnd { } {
+
+	# Global Variables
+    global glMsId
+
+	# Settings
+	set glMsId 0
+}
+
+proc CreateDataBase { dbname side} {
+	
+	lappend idxList [list Idx Index Read_Only]
+	lappend idxList [list State Normal Read/Write]
+	lappend idxList [list TMSI Key Read/Write]
+	lappend idxList [list PendingTmsi Normal Read/Write]
+	lappend idxList [list TmsiAssigned Normal Read/Write]
+	lappend idxList [list IMEI Key Read/Write]
+	lappend idxList [list ImeiRetrieved Normal Read/Write] 
+	lappend idxList [list LAI Normal Read/Write]
+	lappend idxList [list SAC Normal Read/Write]
+	lappend idxList [list ClassMark1 Normal Read/Write]
+	lappend idxList [list ClassMark2 Normal Read/Write]
+	lappend idxList [list ClassMark3 Normal Read/Write]
+	lappend idxList [list CipKeySeqNum Normal Read/Write]
+	lappend idxList [list Sqn Normal Read/Write]
+	lappend idxList [list CurrentMMProc Normal Read/Write]
+	lappend idxList [list PendingEstReq Normal Read/Write]
+	lappend idxList [list AuthNeeded Normal Read/Write]
+	lappend idxList [list IdentNeeded Normal Read/Write]
+	lappend idxList [list SecurNeeded Normal Read/Write]
+	lappend idxList [list FollowOnReq Normal Read/Write]
+	lappend idxList [list NumOfMmConnections Normal Read/Write]
+	lappend idxList [list TidBitMap Normal Read/Write]
+	lappend idxList [list SmsTidBitMap Normal Read/Write]
+	lappend idxList [list VgcsTidBitMap Normal Read/Write]
+	lappend idxList [list SsTidBitMap Normal Read/Write]
+	lappend idxList [list MmCcReqBuf Normal Read/Write]
+	lappend idxList [list MmSmsReqBuf Normal Read/Write]
+	lappend idxList [list MmGccReqBuf Normal Read/Write]
+	lappend idxList [list T_3250id Key Read/Write]
+	lappend idxList [list T_3255id Key Read/Write]
+	lappend idxList [list T_3260id Key Read/Write]
+	lappend idxList [list T_3270id Key Read/Write]
+	lappend idxList [list T_TRIG_AUTHid Key Read/Write]
+	lappend idxList [list T_TRIG_SECid Key Read/Write]
+	lappend idxList [list SendSeqNum Normal Read/Write]
+	lappend idxList [list RevLev Normal Read/Write]
+	lappend idxList [list UserPid Normal Read/Write]
+	lappend idxList [list GsLinkReleased Normal Read/Write]
+	lappend idxList [list ProfileName Normal Read/Write]
+	lappend idxList [list Mac Normal Read/Write]
+	lappend idxList [list XRes Normal Read/Write]
+	lappend idxList [list ExtXRes Normal Read/Write]
+	lappend idxList [list AnProtKey Normal Read/Write]
+	lappend idxList [list IntProtKey Normal Read/Write]
+	lappend idxList [list EncProtKey Normal Read/Write]
+	lappend idxList [list AuthCounter Normal Read/Write]
+
+    global __CellNet
+    if { [info exists __CellNet] && $__CellNet} {
+	    lappend idxList [list AuthSynchFailCounter Normal Read/Write]
+		lappend idxList [list GsLinkEstablished Normal Read/Write]
+		lappend idxList [list ImsiReceived Normal Read/Write]
+        lappend idxList [list SubscriptionId Key Read/Write]
+        lappend idxList [list IMEIsec Normal Read/Write]
+        # CAUSE TEST
+        global __RejectCauseTest
+        if { [info exists __RejectCauseTest] && $__RejectCauseTest } {
+            lappend idxList [list TestCause Normal Read/Write]
+            lappend idxList [list TestProc Normal Read/Write]
+        } 
+        #END
+    }
+
+
+	DbCreate $dbname $idxList
+}
+
+##############################################################
+# Primitives from RANAP
+##############################################################
+
+# 1) RANAP_AP_EST_IND
+proc DecApEstInd { } {
+
+	# Declare Global Variables
+	global _sig _sigpdu glMsId glMMdb glCommonDb 
+
+	LogInputPrim $_sig
+
+	# Get Pdu
+	set binpdu [rd _sig Pdu]
+	if { ![IsVoid $binpdu] } {
+		mmPduToSig binpdu
+	} else {
+		logscr "DecApEstInd: Empty Message"
+		skipMsg
+		return
+	}
+
+	# Get Parameters
+	set opc_dpc_cid [rd _sig SpcStkIdCid]
+	set lai [rd _sig LAI]
+	set sai [rd _sig SAI]
+	
+	# Read Ms Identity in MM pdu
+	set msident [rd _sigpdu MsIdentity]
+	set idx [GetIdxFromMsIdentity $msident $glMMdb $glCommonDb]
+
+	log "DecApEstInd: msident=$msident --> msid=$idx"; #cDEBUG
+	
+	# Unknown IMSI or TMSI
+	if { ![string is integer -strict $idx] } {
+		set idx [GetNextTempId]
+		log "DecApEstInd: MS identity not found msid=$idx --> adding entity"; #cDEBUG
+		AddMmEntity $idx "Temp"
+	}
+
+	# LAI
+	if { ![IsVoid $lai] } {
+		DbSet $glMMdb $idx LAI $lai
+	}
+
+	# SAC
+	if { ![IsVoid $sai] } {
+		DbSet $glMMdb $idx SAC [hocts $sai 5 6]
+	}
+
+	# Instance
+	GetInstance	$idx $glMMdb glMsId
+
+	# AP_EST_IND
+	new 	AP_EST_IND s
+	wr		s MsId $idx
+	wr      s SpcStkIdCid $opc_dpc_cid
+	if { ![IsVoid $binpdu] } {
+		wr  s Pdu $_sigpdu
+	}
+	set 	_sig $s
+}
+
+# 2) RANAP_AP_EST_CNF
+proc DecApEstCnf { } {
+
+	# Declare Global Variables
+	global _sig _sigpdu glMMdb glCommonDb glMsId
+
+	LogInputPrim $_sig
+
+	# Get Parameters
+	set opc_dpc_cid [rd _sig SpcStkIdCid]
+	set lai [rd _sig LAI]
+	set sai [rd _sig SAI]
+	set _sigpdu "?"
+
+	# Check if RRC
+	set binpdu [rd _sig Pdu]
+	if { ![IsVoid $binpdu] } {
+		rrPduToSig binpdu
+		set msg [lindex $_sigpdu 0]
+		if { [string compare $msg "RR_PGING_RSP"] } {
+			logscr "DecApEstCnf: Unexpected RRC Message ($msg)"
+			skipMsg
+			return
+		}
+	} else {
+		logscr "DecApEstCnf: Empty Message"
+		skipMsg
+		return
+	}
+
+	# Read Ms Identity in RR pdu
+	set msident [rd _sigpdu mobile_id]
+	set msid [GetIdxFromMsIdentity $msident $glMMdb $glCommonDb]
+	# Unknown Identity
+	if { ![string is integer -strict $msid] } {
+		logscr "DecApEstCnf: Unknown Mobile msid=$msid"
+		return
+	}
+
+	# Revision Level
+	set clmark [rd _sigpdu mobile_station_clsmrk]
+	set revlev [hbits $clmark 1 2]
+	DbSet $glMMdb $msid RevLev $revlev
+
+	# LAI
+	if { ![IsVoid $lai] } {
+		DbSet $glMMdb $msid LAI $lai
+	}
+
+	# SAC
+	if { ![IsVoid $sai] } {
+		DbSet $glMMdb $msid SAC [hocts $sai 5 6]
+	}
+
+	# Instance
+	GetInstance $msid $glMMdb glMsId
+
+	# AP_EST_CNF
+	new 	AP_EST_CNF s
+	wr		s MsId $glMsId
+	wr      s SpcStkIdCid $opc_dpc_cid
+	wr      s Pdu $_sigpdu
+	set 	_sig $s
+}
+
+# 3) RANAP_AP_REL_IND
+proc DecApRelInd { } {
+	
+	# Declare Global Variables
+	global _sig _sigpdu glMMdb glMsId
+
+	LogInputMsg $_sig
+
+	# Instance
+	GetInstance [rd _sig MsId] $glMMdb glMsId
+
+	# AP_REL_IND
+	new 	AP_REL_IND s
+	wr		s MsId [rd _sig MsId]
+	wr      s Cause [rd _sig RelCause]
+	set 	_sig $s
+}
+
+# 4) RANAP_AP_DATA_IND
+proc DecApDataInd { } {
+	 
+	# Declare Global Variables
+	global _sig _sigpdu glMMdb glMsId __l3_sim_on
+
+	LogInputPrim $_sig
+		
+	# Get Parameters
+	set binpdu [rd _sig Pdu]
+	if { ![IsVoid $binpdu] } {
+		if { [info exists __l3_sim_on] && $__l3_sim_on == 2 } {
+			if { [catch {mmPduToSig binpdu}] } {
+				logscr "ATTENTION: pdu with wrong length"
+			}
+		} else {
+			mmPduToSig binpdu
+		}
+	} else {
+		logscr "DecApDataInd: Empty Message"
+		skipMsg
+		return
+	}
+	
+	# Instance
+	GetInstance [rd _sig MsId] $glMMdb glMsId
+
+	set	_sig $_sigpdu
+}
+
+# 5) RANAP_AP_SYNC_CNF
+proc DecApSyncCnf { } {
+	 
+	# Declare Global Variables
+	global _sig glMMdb glMsId
+
+	LogInputMsg $_sig
+
+	# Instance
+	GetInstance [rd _sig MsId] $glMMdb glMsId
+
+	# AP_SYNC_CNF
+	new 	AP_SYNC_CNF s
+	wr		s MsId [rd _sig MsId]
+	wr		s Res [rd _sig Res]
+	wr      s Cause [rd _sig Cause]
+	set 	_sig $s
+}
+
+##############################################################
+# Primitives towards RANAP
+##############################################################
+
+# RANAP_AP_EST_REQ 
+proc SendApEstReq { msId tmsi cmtype } {
+
+	# Global Variables
+	global _ranappid
+
+	new 	RANAP_AP_EST_REQ s
+	wr 		s MsId $msId
+	wr      s TMSI $tmsi
+
+	send s $_ranappid
+	LogOutputMsg $s
+}
+
+# RANAP_AP_EST_ACK - Proprietary
+proc SendApEstAck { msId opc_dpc_cid } {
+
+	# Global Variables
+	global glMMdb _ranappid
+
+	set lai [DbGet $glMMdb $msId LAI]
+	set sac [DbGet $glMMdb $msId SAC]
+	append sai $lai $sac
+
+	new 	RANAP_AP_EST_ACK s
+	wr 		s MsId $msId 
+	wr 		s SpcStkIdCid $opc_dpc_cid
+	wr      s LAI $lai
+	wr      s SAI $sai
+
+	#log "SendApEstAck in mm_ranap_multiistance: SEND RANAP_AP_EST_ACK"
+
+	send s $_ranappid
+	LogOutputMsg $s
+}
+
+# RANAP_AP_REL_REQ 
+proc SendApRelReq { msId cause } {
+
+	# Global Variables
+	global _ranappid
+
+	switch -exact -- $cause {
+		"Normal_Event_MM"	{ set tag 3; set value 83 }
+		"Protocol_Error_MM"	{ set tag 5; set value 115 }
+		"TimerExpired_MM" 	{ set tag 5; set value 115 }
+		"Service_Abort_MM"	{ set tag 5; set value 115 }
+		default		        { logscr "Unexpected Release Cause ($cause)"; return }
+	}
+
+	new 	REL_CAUSE r 
+	wr 		r Tag $tag
+	wr 		r Value $value
+
+	new 	RANAP_AP_REL_REQ s
+	wr 		s MsId $msId 
+	wr 		s RelCause $r
+
+	send s $_ranappid
+	LogOutputMsg $s
+}
+
+# RANAP_AP_DATA_REQ
+proc SendApDataReq { msId sapi binpdu } {
+
+	# Declare Global Variables
+	global _ranappid
+
+	new RANAP_AP_DATA_REQ s
+	wr s MsId $msId
+	wr s Sapi $sapi
+	wr s Pdu $binpdu
+
+	send s $_ranappid
+	LogOutputPrim $s
+}
+
+# RANAP_AP_SYNC_REQ
+proc SendApSyncReq { msId cause } {
+	
+	# Declare Global Variables
+	global glMMdb glCommonDb _ranappid
+
+	set causetag [lindex $cause 0]
+
+	switch -exact -- $causetag {
+
+		"MM_SYNC_CPHR"     { 
+			new		SYNC_CPHR r
+			global __CellNet __CyphEnabled
+			if { [info exists __CellNet] && $__CellNet || [info exists __CyphEnabled] && $__CyphEnabled } {
+				log "CELLNET or __CyphEnabled"
+		    	wr 		r IntProtAlg [DbGet $glCommonDb $msId IntProtAlg]
+		    	wr 		r IntProtKey [DbGet $glMMdb $msId IntProtKey]
+		    	wr 		r EncProtAlg [DbGet $glCommonDb $msId EncProtAlg]
+		    	wr 		r EncProtKey [DbGet $glMMdb $msId EncProtKey] 
+			} else {
+		    	wr 		r IntProtAlg [DbGet $glCommonDb $msId IntProtAlg]
+		    	wr 		r IntProtKey [DbGet $glCommonDb $msId IntProtKey]
+		    	wr 		r EncProtAlg [DbGet $glCommonDb $msId EncProtAlg]
+		    	wr 		r EncProtKey [DbGet $glCommonDb $msId EncProtKey] 
+			}}
+		"MM_SYNC_RES_ASS"  {
+			new 	SYNC_RES_ASS r
+			wr 		r RabId [rd cause StreamId]
+			wr 		r NasSync "?"
+			wr 		r RabType [rd cause CallType] }
+		"MM_SYNC_CONNECT"  {
+			new		SYNC_CONNECT r
+			wr      r MsIdDst [rd cause MsIdDst] }
+		default 	       { 
+			logscr "SendApSyncReq: Unexpected Cause ($cause)"
+			return }
+	}
+	
+	# note: the field 'CN_DomainIndicator' is setting to 0 because we are in Circuit Switched Domain
+	log "EncProtKey=[DbGet $glCommonDb $msId EncProtKey] --- IntProtKey=[DbGet $glCommonDb $msId IntProtKey]"; #Shanghai cDEBUG
+
+	# RANAP_AP_SYNC_REQ
+	new 	RANAP_AP_SYNC_REQ s
+	wr 		s MsId $msId
+	wr 		s CauseVal $r
+	wr 		s CN_DomainIndicator 0
+	
+	send s $_ranappid
+	LogOutputMsg $s
+}
+
+# RANAP_AP_ABORT_REQ
+proc SendApAbortReq { msId cause } {
+
+	# Global Variables
+	global _ranappid
+
+	switch -exact -- $cause {
+		"Normal_Event_MM"	{ set tag 5; set value 115 }
+		default		        { logscr "Unexpected Release Cause ($cause)"; return }
+	}
+
+	#logscr "SendApAbortReq: MsId=$msId -- Cause=$cause -- Tag=$tag -- Value=$value"; #cDEBUG
+
+	new 	REL_CAUSE r 
+	wr 		r Tag $tag
+	wr 		r Value $value
+
+	new 	RANAP_AP_ABORT_REQ s
+	wr 		s MsId $msId 
+	wr 		s Cause $r
+	send    s $_ranappid
+	LogOutputMsg $s
+}
+
+# RANAP_AP_SET_INST
+proc SendApSetInst { idx } {
+
+	# Global Variables
+	global glMsId _ranappid
+
+	# Send to RANAP
+	new 	RANAP_AP_SET_INST s
+	wr		s MsId $glMsId
+	wr      s MsIdDst $idx
+
+	logscr "SendApSetInst"; #cDEBUG
+	
+	send  s $_ranappid
+	LogOutputMsg $s
+
+	# Replace Current Entity
+	set glMsId $idx  
+}
+
+# RANAP_AP_CLSMK1_UPDATE
+proc SendApClassmark1 { clsmark } {
+
+	# Global Variables
+	global glMsId _ranappid
+
+	# Send to BSSAP
+	new 	RANAP_AP_CLSMK1_UPDATE s
+	wr		s MsId $glMsId
+	wr      s ClassMark1 $clsmark
+	
+	send  s $_ranappid
+	LogOutputMsg $s
+}
+
+# RANAP_AP_CLSMK2_UPDATE
+proc SendApClassmark2 { clsmark } {
+
+	# Global Variables
+	global glMsId _ranappid
+
+	# Send to BSSAP
+	new 	RANAP_AP_CLSMK2_UPDATE s
+	wr		s MsId $glMsId
+	wr      s ClassMark2 $clsmark
+	
+	send  s $_ranappid
+	LogOutputMsg $s
+}
+
+# RANAP_AP_CLSMK3_UPDATE
+proc SendApClassmark3 { clsmark } {
+
+	# Global Variables
+	global glMsId _ranappid
+
+	# Send to BSSAP
+	new 	RANAP_AP_CLSMK3_UPDATE s
+	wr		s MsId $glMsId
+	wr      s ClassMark3 $clsmark
+	
+	send  s $_ranappid
+	LogOutputMsg $s
+}
+
+global __CellNet
+if { [info exists __CellNet] && $__CellNet} {
+########## CELLNET 3G
+########## PROVVISORIO: DA RIMUOVERE E METTERE IN UN FILE A PARTE
+##############################################################
+## SUPPORT FOR UNKNOWN MS
+##############################################################
+proc GetNextRealAndUnknownMsId {} {
+
+    global glRealAndUnknownMsId __LAST_MS_REAL_AND_UNKNOWN __FIRST_MS_REAL_AND_UNKNOWN
+
+    if {$glRealAndUnknownMsId == $__LAST_MS_REAL_AND_UNKNOWN} {
+        set glRealAndUnknownMsId $__FIRST_MS_REAL_AND_UNKNOWN
+    } else {
+        set glRealAndUnknownMsId [expr {$glRealAndUnknownMsId + 1}]
+    }
+            return $glRealAndUnknownMsId
+}
+proc CreateRealAndUnknownMsInDb { imsi {msid ?} } {
+
+    global glMMdb glCommonDb glRealAndUnknownMsId
+        global __DEFAULT_MS __SupportUnknownMS __NUM_PREFIX
+
+        if {!$__SupportUnknownMS} {
+          return 0
+        }
+
+        # create an MS of type RealAndUnknown in the Db using the values
+        # defined in the CSV for the Default entry
+    if {[IsVoid $msid]} {
+        set newMsId [GetNextRealAndUnknownMsId]
+        log "newMsId = $newMsId"
+    } else {
+        log "msid unchanged"
+        set newMsId $msid
+        # incr the unknown MS counter
+        set glRealAndUnknownMsId [expr {$glRealAndUnknownMsId + 1}]
+                log "glRealAndUnknownMsId = $glRealAndUnknownMsId"
+                log "next unknown free will be [expr {$glRealAndUnknownMsId + 1}]"
+    }
+    # Create an entry in glCommonDb
+        # copy values from default entry to the new Ms
+        log "__DEFAULT_MS = $__DEFAULT_MS"
+        set defRecord [DbGetRecord $glCommonDb $__DEFAULT_MS]
+        log "defRecord = $defRecord"
+        set defRecord [lreplace $defRecord 0 0 $newMsId]
+        log "defRecord = $defRecord"
+        set defRecord [lreplace $defRecord 1 1 $imsi]
+        log "defRecord = $defRecord"
+
+        #set ownNum "100000$newMsId"
+        set ownNum "$__NUM_PREFIX$newMsId"
+        log "ownNum = $ownNum"
+
+    set pureNum $ownNum
+        set codedNum [Get24008FormatFromNumber $pureNum]
+        logscr "PureNum = $pureNum CodedNum = $codedNum"
+
+        #set defRecord [lreplace $defRecord 7 7 $ownNum]
+        set defRecord [lreplace $defRecord 7 7 $codedNum]
+        # PATCH
+        set newTag "Visitor_${newMsId}"
+        set defRecord [lreplace $defRecord 19 19 $newTag]
+        # CELL
+        DbCreateEntry $glCommonDb $defRecord
+
+        # Create an entry in glMMdb
+    AddMmEntity $newMsId "Regular"
+
+    DbSet $glMMdb $newMsId UserPid [DbGet $glMMdb 0 UserPid]
+
+    # CELLNET RESTYLING
+        global __ExtSupportUnknownMS
+    if { [info exists __ExtSupportUnknownMS] && $__ExtSupportUnknownMS } {
+        set oldTag $newTag
+        log "considering automatically this visitor as a subscribed MS"
+        log "msid = $newMsId oldTag = $oldTag newTag = $newTag ownNum = $ownNum"
+        set s [list MMR_AUTO_ENABLE_VISITOR $oldTag $newTag $ownNum]
+        set upid [DbGet $glMMdb $newMsId UserPid]
+        log "upid = $upid"
+        send s $upid
+    }
+    # END
+
+    return $newMsId
+}
+proc ReplaceWithRealUnknownMs { imsiReceived {type ?} {no_rr_replace ?}} {
+
+        global glMMdb glCommonDb glMsId
+
+        # Create a new MS
+        log "msid = $glMsId ReplaceWithRealUnknownMs: imsiReceived = $imsiReceived"
+        set realMsId [CreateRealAndUnknownMsInDb $imsiReceived]
+        log "msid = $glMsId realMsId = $realMsId"
+
+        # Replace virtual with new
+        CheckTimersAndRelease $realMsId
+        ReplaceMmEntity $realMsId $imsiReceived $no_rr_replace
+
+        # copy values into new instance
+        DbSet $glMMdb $glMsId AuthNeeded [DbGet $glCommonDb $glMsId AuthNeeded]
+        DbSet $glMMdb $glMsId IdentNeeded [DbGet $glCommonDb $glMsId ImeiNeeded]
+        DbSet $glMMdb $glMsId SecurNeeded [DbGet $glCommonDb $glMsId SecurNeeded]
+        # ask for IMEI in next ID_REQ
+        DbSet $glMMdb $glMsId ImeiRetrieved 0
+        DbSet $glMMdb $glMsId TmsiAssigned 0
+
+        # CELLNET RESTYLING
+        DbSet $glMMdb $glMsId SubscriptionId ?
+        # END
+
+        if {![IsVoid $type]} {
+                switch -exact -- $type {
+                        "00"        { DbSet $glMMdb $glMsId CurrentMMProc NormLocUpd }
+                    "01"        { DbSet $glMMdb $glMsId CurrentMMProc PerLocUpd }
+                    "02"        { DbSet $glMMdb $glMsId CurrentMMProc ImsiAttach }
+                default     { logscr "Unexpected Attach Type ($type)"
+                              return }
+                }
+        }
+}
+
+proc IsRealAndUnknownMsId { msid } {
+
+    global __LAST_MS_REAL_AND_UNKNOWN __FIRST_MS_REAL_AND_UNKNOWN
+
+
+    if {$msid <= $__LAST_MS_REAL_AND_UNKNOWN && $msid >= $__FIRST_MS_REAL_AND_UNKNOWN} {
+        return 1
+    }
+    return 0
+}
+
+# SET DB FIELD WITH SIGNAL FROM OUTSIDE
+proc SetDbFieldHnd {} {
+
+    global _sig glMMdb glCommonDb
+        
+    set msidText [lindex $_sig 1]
+    set dbfield [lindex $_sig 2]
+    set dbfieldval [lindex $_sig 3]
+    log "SetDbFieldHnd: msidText = $msidText dbfield = $dbfield dbfieldval = $dbfieldval"
+
+    set msid [DbGetIdx $glCommonDb MsIdText $msidText]
+    if { $msid == "" } {
+        log "SetDbFieldHnd: msidText = $msidText is not present in the DB"
+        skipMsg
+        return
+    }
+
+    if { ![IsVoid $dbfield] && [DbFieldExists $glMMdb $dbfield] } {
+        if { ![IsVoid $msid] && [DbEntryExists $glMMdb $msid] } {
+            DbSet $glMMdb $msid $dbfield $dbfieldval
+        } else {
+            log "SetDbFieldHnd entry = $msid does not exist in glMMdb"
+            skipMsg
+            return
+        }
+    } else {
+        log "SetDbFieldHnd field = $dbfield does not exist in glMMdb"
+        skipMsg
+        return
+    }
+
+    log "SetDbFieldHnd: set completed field = $dbfield value = [DbGet $glMMdb $msid $dbfield]"
+    skipMsg
+}
+
+}
+#### END CELLNET PROVVISORIO
+
+#EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE#

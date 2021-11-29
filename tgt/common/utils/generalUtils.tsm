@@ -1,0 +1,2030 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/tstmUtils/scriptUtils/tags/scriptUtils-2.51.6/generalUtils.tsm $
+#
+# $Author: riccardov $
+#
+# Description: General Common Utilities
+#
+#
+# $Rev: 55947 $
+#
+# $Date: 2012-11-06 14:10:05 +0100 (Tue, 06 Nov 2012) $
+##############################################################
+
+##############################################################
+#
+# Check Dependencies
+#
+##############################################################
+proc GetVer { info } {
+
+	set res "?"
+
+	set url [lindex $info 1]
+	set url_info [split $url "/"]
+
+	if { [lsearch $url_info "trunk"] >= 0 } {
+		set res "trunk"
+	} elseif {  [lsearch $url_info "tags"] >= 0 } {
+		set index [expr [lsearch $url_info "tags"] + 1]
+		set res [lindex $url_info $index]
+	} else {
+		logscr "Unexpected URL '$info' for scriptUtils_ver"
+		exit
+	}
+	return $res
+}
+
+global scriptUtils_ver
+set scriptUtils_ver [GetVer "\$URL: http://memo.prisma/svn/tm/tstmUtils/scriptUtils/tags/scriptUtils-2.51.6/generalUtils.tsm $" ]
+
+proc CheckCompatibility { needed } {
+
+	# Declare Global Variables
+	global scriptUtils_ver
+
+	# Always fine if it is "trunk"
+	if { [string equal $scriptUtils_ver "trunk"] } {
+		return 1
+	} 
+	
+	set curr_tag [lindex [split $scriptUtils_ver "-"] end]
+	set need_tag [lindex [split $needed "-"] end]
+
+	set curr_numbers [split $curr_tag "."]
+	set need_numbers [split $need_tag "."]
+	if { [lindex $curr_numbers 0] > [lindex $need_numbers 0] } {
+		return 1
+	} elseif { [lindex $curr_numbers 0] == [lindex $need_numbers 0] \
+	  && [lindex $curr_numbers 1] > [lindex $need_numbers 1] } {
+		return 1
+	} elseif { [lindex $curr_numbers 0] == [lindex $need_numbers 0] \
+	  && [lindex $curr_numbers 1] == [lindex $need_numbers 1] \
+	  && [lindex $curr_numbers 2] >= [lindex $need_numbers 2] } {
+		return 1
+	} else {
+
+		logscr "Warning: current tag is ($scriptUtils_ver), but ($needed) is needed"
+		return 0
+	}
+}
+
+proc GetName { info { type ? } } {
+
+	set res "?"
+
+	set url [lindex $info 1]
+	set url_info [split $url "/"]
+
+	log "GetName: url=$url; url_info=$url_info; type=$type"
+
+	if { ![IsVoid $type] } {	
+		set res [GetCfgName $url_info]
+	} else {
+		if { [lsearch $url_info "AFlex"] >= 0 } {
+			log "**** AFlex ****"; #cDEBUG
+			if {  [lsearch $url_info "trunk"] >= 0 } {
+				log "**** trunk ****"; #cDEBUG
+				set index [expr [lsearch $url_info "trunk"] + 1]
+				set res [lindex $url_info $index]
+				log "GetName: userscripts_name=$res"; #cDEBUG
+			} elseif { [lsearch $url_info "tags"] >= 0 } {
+				log "**** tags ****"; #cDEBUG
+				set index [expr [lsearch $url_info "tags"] + 1]
+				set res [lindex $url_info $index]
+				log "GetName: userscripts_name=$res"; #cDEBUG
+			} else {
+				log "zzzzzzzzzz"
+			}
+		} elseif { [lsearch $url_info "Mobiles"] >= 0 } {
+			log "**** Mobiles ****"; #cDEBUG
+			if {  [lsearch $url_info "trunk"] >= 0 } {
+				log "**** trunk ****"; #cDEBUG
+				set index [expr [lsearch $url_info "trunk"] + 1]
+				set res [lindex $url_info $index]
+				log "GetName: userscripts_name=$res"; #cDEBUG
+			} elseif { [lsearch $url_info "tags"] >= 0 } {
+				log "**** tags ****"; #cDEBUG
+				set index [expr [lsearch $url_info "tags"] + 1]
+				set res [lindex $url_info $index]
+				log "GetName: userscripts_name=$res"; #cDEBUG
+			} else {
+				log "xxxxxxxxxx"
+			}
+		} elseif {  [lsearch $url_info "MobileNetwork"] >= 0 } {
+			log "**** MobileNetwork ****"; #cDEBUG
+			if {  [lsearch $url_info "trunk"] >= 0 } {
+				log "**** trunk ****"; #cDEBUG
+				set index [expr [lsearch $url_info "trunk"] + 1]
+				set res [lindex $url_info $index]
+				log "GetName: userscripts_name=$res"; #cDEBUG
+			} elseif { [lsearch $url_info "tags"] >= 0 } {
+				log "**** tags ****"; #cDEBUG
+				set index [expr [lsearch $url_info "tags"] + 1]
+				set res [lindex $url_info $index]
+				log "GetName: userscripts_name=$res"; #cDEBUG
+			} else {
+				log "yyyyyy"
+			}
+		} elseif {  [lsearch $url_info "scriptProt"] >= 0 } {
+			log "**** scriptProt ****"; #cDEBUG
+			if {  [lsearch $url_info "trunk"] >= 0 } {
+				log "**** trunk ****"; #cDEBUG
+				set index [expr [lsearch $url_info "trunk"] + 2]
+				set res [lindex $url_info $index]
+				log "GetName: scriptProt_name=$res"; #cDEBUG
+			} elseif { [lsearch $url_info "tags"] >= 0 } {
+				log "**** tags ****"; #cDEBUG
+				set index [expr [lsearch $url_info "tags"] + 2]
+				set res [lindex $url_info $index]
+				log "GetName: scriptProt_name=$res"; #cDEBUG
+			} else {
+				log "wwwwww"
+			}
+		} else {
+			logscr "GetName: Unexpected URL '$info'"
+			exit
+		}
+	}
+	return $res
+}
+
+proc GetCfgName { info } {
+
+	set result "?"
+
+	set url [lindex $info 1]
+	set info [split $url "/"]
+
+	log "GetCfgName: url=$url; info=$info"
+
+	if {  [lsearch $info "trunk"] >= 0 } {
+		log "**** trunk ****"; #cDEBUG
+		if {  [lsearch $info "sample_cfg"] >= 0 } {
+			set index [expr [lsearch $info "sample_cfg"] + 1]
+			set result [lindex $info $index]
+			log "GetCfgName: cfg_name=$result"; #cDEBUG
+		} else {
+			log "GetCfgName: it isn't included in the 'sample_cfg' folder"
+		}
+	} elseif { [lsearch $info "tags"] >= 0 } {
+		log "**** tags ****"; #cDEBUG
+		if {  [lsearch $info "sample_cfg"] >= 0 } {
+			set index [expr [lsearch $info "sample_cfg"] + 1]
+			set result [lindex $info $index]
+			log "GetCfgName: cfg_name=$result"; #cDEBUG
+		} else {
+			log "GetCfgName: it isn't included in the folder 'sample_cfg'"
+		}
+	} else {
+		log "GetCfgName: TO CHECK the cfg file"
+	}
+	return result
+}
+
+proc GetVersion { rev } {
+
+	set res "?"
+	set last ""
+
+	set revision [split $rev :]
+	set revision_info [lindex $revision 1]
+
+	log "GetVersion: revision=$revision --> revision_info=$revision_info"
+
+	while { $last != "$" || $res == "?" } {
+		#log "entered in the while cycle ... last=$last ... res=$res" 
+		if { ![lsearch $revision_info "$"] >= 0 } {
+			set last $revision_info	
+			set res $last
+			log "GetVersion: last=$last --> Rev=$res"
+			break
+		}
+	}
+	if { $res == "?" } {
+		logscr "Unexpected REV '$rev'"
+		exit
+	}
+	return $res
+}
+
+proc Version { type info rev } {
+
+	global glUserscripts_vers glCfg_vers
+
+	log "Version: type=$type; info=$info; rev=rev"
+	
+	set version 0
+
+	if { ![IsVoid $info] } {
+		if { ![IsVoid $type] && $type == "script" } {
+			log "Version: type='scriptUser'; info=$info"; #cDEBUG
+			set scriptName [GetName $info]
+			log "Version: userscripts_name=$scriptName; rev=$rev"; #cDEBUG
+			set version [GetVersion $rev]
+			log "Version: version=$version"; #cDEBUG
+			return $version
+		} elseif { ![IsVoid $type] && $type == "cfg" } {
+			log "Version: type='configuration files'"; #cDEBUG
+			set cfgName [GetName $info $type]
+			log "Version: type='cfg files --> cfg_name=$cfgName'"; #cDEBUG
+			set version [GetVersion $rev]
+			log "Version: Version=$version"; #cDEBUG
+			return $version
+		} else {
+			log "Version: type=$type is void (info=$info)"; #cDEBUG
+			return $version
+		}
+	} else {
+		log "Version: info=$info is void (type=$type)"; #cDEBUG
+		return $version
+	}
+}
+
+if { [info commands "cxtAddCmd"] == "" } {
+
+	# This procedure could be replaced by a callback provided by same module
+	# that defines cxtAddCmd. Obviously, in that case, Tstm should be modified
+	# to use external of context.
+	# Here callbacks of cxtAddCntCmd are not defined.
+	proc ctxAddCmdStub {} {
+
+		logdbg ""
+
+		proc cxtGrDefine {args} {}
+		proc cxtUeSetCurr {args} {}
+		proc cxtUeGetCurr {args} {}
+		proc cxtUeMap {args} {}
+		proc cxtUeLocate {args} {}
+		proc cxtUeGetVar {args} {}
+		proc cxtUeSetVar {args} {}
+		proc cxtUeSetVars {args} {}
+		proc cxtCeGetVar {args} {}
+		proc cxtCeSetVar {args} {}
+		proc cxtCeSetVars {args} {}
+		proc cxtGrGetVar {args} {}
+		proc cxtGrSetVar {args} {}
+		proc cxtGrSetVars {args} {}
+
+	}
+}
+
+##############################################################
+#
+# Logging Facilities
+#
+##############################################################
+
+# logdbg: there is an implementation in case of Tstm that uses UE context
+# and another implementation in case UE context is not used.
+# TODO: when mySQL will be available, I will have to write a logdbg version
+# that replace log with call to function that writes to shared memory.
+
+# check if callback used to add context commands is defined
+if { [info commands "cxtAddCmd"] == "" } {
+	# UE context NOT used
+
+	# resultId is not used
+	# procedure name where logdbg is called is automatically added
+	proc logdbg { text {resultId ?} } {
+
+		log "DEBUG ([lindex [info level -1] 0]): $text"
+	}
+
+} else {
+	# UE context used, mySQL NOT used
+
+	proc logdbg { text {resultId ?} } {
+
+
+		if {[info exists ::__LOG_VERBOSITY] && ($::__LOG_VERBOSITY < 4)} {
+		} else {
+			log "DEBUG UE [cxtUeGetCurr], CELL [cxtUeLocate], PROC [pprocname], RES $resultId: $text"
+		}
+	}
+
+}
+
+# logdbgscr: there is an implementation in case of Tstm that uses UE context
+# and another implementation in case UE context is not used.
+# TODO: when mySQL will be available, I will have to write a logdbg version
+# that replace log with call to function that writes to shared memory.
+
+# check if callback used to add context commands is defined
+if { [info commands "cxtAddCmd"] == "" } {
+	# UE context NOT used
+
+	# resultId is not used
+	# procedure name where logdbgscr is called is automatically added
+	proc logdbgscr { text {resultId ?} } {
+
+		logscr "DEBUG ([lindex [info level -1] 0]): $text"
+	}
+
+} else {
+	# UE context used, mySQL NOT used
+
+	proc logdbgscr { text {resultId ?} } {
+
+		logscr "DEBUG UE [cxtUeGetCurr], CELL [cxtUeLocate], PROC [pprocname], RES $resultId: $text"
+	}
+
+}
+
+# logerr: there is an implementation in case of Tstm that uses UE context
+# and another implementation in case UE context is not used.
+# TODO: when mySQL will be available, I will have to write a logerr version
+# that replace log with call to function that writes to shared memory.
+
+if { [info commands "cxtAddCmd"] == "" } {
+	# UE context NOT used
+
+	# resultId is not used
+	# procedure name where logerr is called is automatically added
+	proc logerr { text {resultId ?} } {
+
+		logscr "ERROR ([lindex [info level -1] 0]): $text"
+	}
+
+} else {
+	# UE context used, mySQL NOT used
+
+	proc logerr { text {resultId ?} } {
+
+		logscr "ERROR UE [cxtUeGetCurr], CELL [cxtUeLocate], PROC [pprocname], RES $resultId: $text"
+	}
+}
+
+if { [info commands "cxtAddCmd"] == "" } {
+	# UE context NOT used
+
+	proc LogInputSig { } {
+
+		global _sig _state
+
+		log "<------ Signal $_sig Received in state $_state"
+		if { [lindex _sig 0] == "INTERNAL_HO_RQD" } {
+			logv1 "<------ Signal [lindex _sig 0] received in state $_state"
+		}
+	}
+} else {
+	proc LogInputSig { } {
+
+		global _sig _state
+
+		if {[info exists ::__LOG_VERBOSITY] && ($::__LOG_VERBOSITY < 3)} {
+		} else {
+			log "<------ Signal $_sig Received in state $_state"
+		}
+	}
+}
+
+proc LogInputSigv0 { } {
+
+	logvl "<------ Signal $::_sig Received in state $::_state" 0
+}
+
+proc LogscrInputSig { } {
+
+    global _sig _state
+
+	logscr "<------ Signal $_sig Received in state $_state"
+}
+
+proc LogInSigState { state } {
+
+    global _sig
+
+	log "<------ Signal $_sig Received in state $state"
+}
+
+proc LogInputMsg { msg } {
+
+    global _state
+
+	log "<------ Message $msg Received in state $_state" 
+}
+
+proc LogInputMsgv0 { msg } {
+
+	logvl "<------ Message $msg Received in state $::_state" 0
+}
+
+proc LogInputMsgExt { sig prot {ue -1} {cell -1} {ext ?} } {
+
+	if {[IsVoid $ue]} {set ue -1}
+	if {[IsVoid $cell]} {set cell -1}
+
+	if { [IsVoid $ext] } {
+		log "<-- UE=$ue CELL=$cell MSG_IN=[lindex $sig 0] ST=$::_state PROT=$prot"
+	} else {
+		log "<-- UE=$ue CELL=$cell MSG_IN=[lindex $sig 0] ($ext) ST=$::_state PROT=$prot"
+	}
+}
+
+proc LogInputSigExt { sig prot {ue -1} {cell -1} {ext ?} } {
+
+	if {[IsVoid $ue]} {set ue -1}
+	if {[IsVoid $cell]} {set cell -1}
+
+	if { [IsVoid $ext] } {
+		log "<-- UE=$ue CELL=$cell SIG_IN=[lindex $sig 0] ST=$::_state PROT=$prot"
+	} else {
+		log "<-- UE=$ue CELL=$cell SIG_IN=[lindex $sig 0] ($ext) ST=$::_state PROT=$prot"
+	}
+}
+
+proc ErrorInputSig { } {
+
+    global _sig _state
+
+	logscr "<------ ERROR: signal $_sig received in state $_state"
+}
+
+proc WarnInputSig { } {
+
+	logscr "<------ WARNING: signal $::_sig received in state $::_state"
+}
+
+if { [info commands "cxtAddCmd"] == "" } {
+	# UE context NOT used
+
+	proc LogOutputMsg { sig } {
+
+		log "------> Sending Message $sig "
+	}
+} else {
+	proc LogOutputMsg { sig } {
+
+		if {[info exists ::__LOG_VERBOSITY] && ($::__LOG_VERBOSITY < 3)} {
+		} else {
+			log "------> Sending Message $sig "
+		}
+	}
+}
+
+proc LogOutputMsgv0 { sig } {
+	logvl "------> Sending Message $sig" 0
+}
+
+proc LogscrOutputMsg { sig } {
+
+	logscr "------> Sending Message $sig "
+}
+
+proc LogOutputMsgExt { sig prot {ue -1} {cell -1} {ext ?} } {
+
+	if {[IsVoid $ue]} {set ue -1}
+	if {[IsVoid $cell]} {set cell -1}
+
+	if { [IsVoid $ext] } {
+		log "--> UE=$ue CELL=$cell MSG_OUT=[lindex $sig 0] PROT=$prot"
+	} else {
+		log "--> UE=$ue CELL=$cell MSG_OUT=[lindex $sig 0] ($ext) PROT=$prot"
+	}
+}
+
+proc LogOutputSigExt { sig prot {ue -1} {cell -1} {ext ?} } {
+
+	if {[IsVoid $ue]} {set ue -1}
+	if {[IsVoid $cell]} {set cell -1}
+
+	if { [IsVoid $ext] } {
+		log "--> UE=$ue CELL=$cell SIG_OUT=[lindex $sig 0] PROT=$prot"
+	} else {
+		log "--> UE=$ue CELL=$cell SIG_OUT=[lindex $sig 0] ($ext) PROT=$prot"
+	}
+}
+
+proc Unexpected { } {
+
+    global _sig _state
+
+	set tag [lindex $_sig 0]
+    logscr "Unexpected Signal $tag Received in state $_state"
+}
+
+proc LogUnexpected { } {
+
+    global _sig _state
+
+	set tag [lindex $_sig 0]
+    log "Unexpected Signal $tag Received in state $_state"
+}
+
+proc SkippedMsg { } {
+
+	LogInputSig
+
+	skipMsg
+}
+
+proc LogDebug { debug file procedure info } {
+
+	global _state  
+
+	if { $debug == 1 } {
+    	log "$procedure: $info"
+	} elseif { $debug == 2 } {
+    	log "$file: $procedure _state=$_state $info"
+	}
+}
+
+proc LogInputPrimMsg { sig } {
+
+	# Last Field is Binary Data and is not dumped
+	lset sig end "..."
+
+	log "<------ Message $sig" 
+}
+
+proc LogInputPrim { sig } {
+
+    global _state
+
+	# Last Field is Binary Data, must not be dumped
+	lset sig end "..."
+
+	log "<------ Message $sig Received in state $_state" 
+}
+
+proc LogscrInputPrim { sig } {
+
+    global _state
+
+	# Last Field is Binary Data, must not be dumped
+	lset sig end "..."
+
+	logscr "<------ Message $sig Received in state $_state" 
+}
+
+proc LogOutputPrim { sig } {
+
+	# Last Field is Binary Data, must not be dumped
+	lset sig end "..."
+
+	log "------> Sending Primitive $sig "
+}
+
+proc LogscrOutputPrim { sig } {
+
+	# Last Field is Binary Data, must not be dumped
+	lset sig end "..."
+
+	logscr "------> Sending Primitive $sig "
+}
+
+
+#Log the database content
+
+proc LogDbFiltered { dbName txt idxList columnNames } {
+    if { [info exists ::__logVerbosity] && $::__logVerbosity < 4 } {
+        return
+    }
+    log "LogDbFiltered (begin): $txt ---------------------------------------"
+    if { [IsVoid $idxList] } {
+        set idxList [DbGetIndexList $dbName]                
+    }
+    if { ![IsVoid idxList] } {
+        if { [IsVoid $columnNames] } {
+            set columnHeader [DbRecordInfo $dbName]
+            set columnNames [GetDbColumnList $columnHeader]
+        }
+        foreach idx $idxList {
+            log "idx=$idx"
+            foreach col $columnNames {
+                log "    $col={[DbGet $dbName $idx $col]}"
+            }
+        }
+    }
+    log "LogDbFiltered (end): $txt ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
+}
+
+proc LogDb { dbName } {
+	set size [DbSize $dbName]
+
+	if { $size >= 100 } {
+		return
+	}
+
+    log "#@#@#@#@ LOGGING DB : $dbName  #@#@#@#@"
+    foreach idx [lsort [DbGetIndexList ${dbName}]] {
+      log "$idx: [DbGetRecord ${dbName} $idx]"
+    }
+    log "#@#@#@#@ LOGGING DB : $dbName  #@#@#@#@"
+}
+
+proc LogDbField { dbName fieldName } {
+	log "#*#*#*#* LOGGING DB FIELD: $dbName Field: $fieldName #*#*#*#*"
+	foreach idx [DbGetIndexList ${dbName}] {
+		set val [DbGet ${dbName} $idx ${fieldName}]
+		if { ![IsVoid $val] && ![IsEmpty $val] } {
+			log "$idx: $val"
+		}
+	}
+	log "#*#*#*#* LOGGING DB FIELD: $dbName Field: $fieldName #*#*#*#*"
+}
+
+proc DebugLogDbRecord {dbName idx} {
+	set recInfo [DbRecordInfo $dbName]
+
+	foreach fInfo $recInfo {
+		set fName [lindex $fInfo 0]
+		log "$fName [DbGet $dbName $idx $fName]"
+	}
+}
+
+proc LogDbRecordsFromFieldValue { dbname FieldName FieldValue } {
+	logscr "WARNING!"
+	logscr "WARNING! LogDbRecordsFromFieldValue function in use. The TestManager performace could be affected. Use in debug test only"
+	logscr "WARNING!"
+
+	log "*#*#*#* LOGGING DB RECORD: $dbname Field_Name=$FieldName Field_Value=$FieldValue *#*#*#*"
+	if {[DbFieldExists $dbname $FieldName] } {
+		foreach index [DbGetIndexList $dbname] {
+			if { [DbGet $dbname $index $FieldName] == $FieldValue } {
+				set record [DbGetRecord $dbname $index]
+				log "$index: $record"
+			}				
+		}
+	} else {
+		log "LogDbRecordsFromFieldValue: WARNING: the field $FieldName doesn't exist for the $dbname"
+	}
+	log "*#*#*#* LOGGING DB RECORD: $dbname Field_Name=$FieldName Field_Value=$FieldValue *#*#*#*"
+}
+
+# dump in alphabetical order name and value of variables defined in cfgFile.
+# ATTENTION: only local variables are considered.
+proc DumpCfgFile { cfgFile } {
+
+	# Add here all global for variables to be used in cfg file
+	# (for example set __login_name $env(USER) )
+	global env
+
+	include $cfgFile
+
+	set varsL [info locals]
+
+	foreach var [lsort -dictionary $varsL] {
+		# avoid print of cfgFile variable
+		if { ![string eq $var "cfgFile"] } {
+
+			# Cfg file can set simple variables or array variables.
+
+			if { ![array exists $var] } {
+				# var is a scalar variable
+				append variables "\n" "$var = [set $var]"
+
+			} else {
+				# var is an array variable
+				append variables "\n" "(array) $var = [array get $var]"
+
+			}
+		}
+	}
+
+	log "DumpCfgFile ---> START log of variables of CFG $cfgFile"
+	log "---------------------------------------------------------"
+	log "---------------------------------------------------------$variables"
+	log "---------------------------------------------------------"
+	log "---------------------------------------------------------"
+	log "DumpCfgFile ---> STOP log of CFG variables"
+	log "---------------------------------------------------------"
+	log "---------------------------------------------------------"
+}
+
+##########################################################################
+# The following procedure are used to log/logscr with a specified verbosity level
+# ('logvl/logscrvl' callback is used)
+proc logv0 { str } {
+    logvl $str 0
+}
+
+proc logv1 { str } {
+    logvl $str 1
+}
+
+proc logv2 { str } {
+    logvl $str 2
+}
+
+proc logv3 { str } {
+    logvl $str 3
+}
+
+proc logv4 { str } {
+    logvl $str 4
+}
+
+proc logscrv0 { str } {
+    logscrvl $str 0
+}
+
+proc logscrv1 { str } {
+    logscrvl $str 1
+}
+
+proc logscrv2 { str } {
+    logscrvl $str 2
+}
+
+proc logscrv3 { str } {
+    logscrvl $str 3
+}
+
+proc logscrv4 { str } {
+    logscrvl $str 4
+}
+
+##########################################################################
+# return a log if typeTrace="log" or return a logscr if typeTrace="logscr"
+proc Trace { typeTrace cfgVar nameProc traceInfo } {
+
+	# TODO: why is "info exists" used?
+	if { [info exists cfgVar] && $cfgVar } {
+		$typeTrace "§§§ $nameProc: $traceInfo"
+	}
+}
+
+##########################################################################
+#
+# Timer Handling
+#
+##############################################################
+
+proc TmrExpired { } {
+
+	global _sig _state
+	
+	logscr "Warning: Timer [lindex $_sig 0] Expired in state $_state"
+}
+
+proc StartTimer { tag msec } {
+
+	# Set Timer 
+    # Start Timer
+	tmrstart [tmrnew $tag $msec]
+}
+
+##############################################################
+#
+# Multi Instance Facilities
+#
+##############################################################
+
+proc GetInstanceFromTimer { dbname curr_idx } {
+
+	global _sig _src 
+
+	set tmr_name "[lindex $_sig 0]id"
+
+	# Get msid from Timer Id (if key exists)
+	if { [DbKeyExists $dbname $tmr_name $_src] } {
+		set index [DbGetIdx $dbname $tmr_name $_src]
+
+		# Get Instance
+		upvar 1 $curr_idx var
+
+		GetInstance $index $dbname var
+
+	} else {
+		logscr "WARNING: skipMsg. dbname=$dbname, GetInstanceFromTimer"
+		skipMsg
+		return -1
+	}
+}
+
+proc GetInstanceFromTimerNoSwap { dbname curr_idx } {
+
+    global _sig _src 
+
+    set tmr_name "[lindex $_sig 0]id"
+
+    # Get msid from Timer Id (if key exists)
+    if { [DbKeyExists $dbname $tmr_name $_src] } {
+        set index [DbGetIdx $dbname $tmr_name $_src]
+
+        # Get Instance
+        upvar 1 $curr_idx var
+
+        GetInstanceNoSwap $index $dbname var
+
+    } else {
+        logscr "WARNING: skipMsg. dbname=$dbname, GetInstanceFromTimerNoSwap"
+        skipMsg
+        return -1
+    }
+}
+
+#like GetInstanceFromTimer, but it saves the current state in oldDb
+# and activates the new instance from dbname
+proc GetInstanceFromTimerDoubleDb { dbname dbnameold curr_idx } {
+
+	global _sig _src 
+
+	set tmr_name "[lindex $_sig 0]id"
+
+	# Get msid from Timer Id (if key exists)
+	if { [DbKeyExists $dbname $tmr_name $_src] } {
+		set index [DbGetIdx $dbname $tmr_name $_src]
+
+		# Get Instance
+		upvar 1 $curr_idx var
+
+		GetInstanceDoubleDb $index $dbname $dbnameold var
+
+	} else {
+		logscr "WARNING: skipMsg. GetInstanceFromTimerDoubleDb"
+		skipMsg
+		return -1
+	}
+}
+
+#like GetInstanceFromTimerDoubleDb, but it saves the current state in oldDb
+# in the entry with curr_idx and activates the new instance from dbname with
+# the entry with new_idx_name
+proc GetInstanceFromTimerDoubleDbIndex { dbname dbnameold curr_idx new_idx_name} {
+
+	global _sig _src 
+
+	set tmr_name "[lindex $_sig 0]id"
+
+	# Get msid from Timer Id (if key exists)
+	if { [DbKeyExists $dbname $tmr_name $_src] } {
+		set index [DbGetIdx $dbname $tmr_name $_src]
+
+		# Get Instance
+		upvar 1 $new_idx_name var
+
+		GetInstanceDoubleDbIndex $index $dbname $dbnameold $curr_idx var
+
+	} else {
+		logscr "WARNING: skipMsg. GetInstanceFromTimerDoubleDbIndex"
+		skipMsg
+		return -1
+	}
+}
+
+# like GetInstanceFromTimerDoubleDbIndex, but also instance 0 is managed
+proc GetInstanceFromTimerDoubleDbIndex2 { dbname dbnameold curr_idx new_idx_name} {
+
+	global _sig _src 
+
+	set tmr_name "[lindex $_sig 0]id"
+
+	# Get msid from Timer Id (if key exists)
+	if { [DbKeyExists $dbname $tmr_name $_src] } {
+		set index [DbGetIdx $dbname $tmr_name $_src]
+
+		# Get Instance
+		upvar 1 $new_idx_name var
+
+		GetInstanceDoubleDbIndex2 $index $dbname $dbnameold $curr_idx var
+
+	} else {
+		logscr "WARNING: skipMsg. GetInstanceFromTimerDoubleDbIndex2"
+		skipMsg
+		return -1
+	}
+}
+
+proc GetInstanceFromTimerDoubleDbIndex2WithSave { dbname dbnameold curr_idx new_idx_name} {
+
+	global _sig _src
+
+	set tmr_name "[lindex $_sig 0]id"
+
+	# Get msid from Timer Id (if key exists)
+	if { [DbKeyExists $dbname $tmr_name $_src] } {
+		set index [DbGetIdx $dbname $tmr_name $_src]
+
+		# Get Instance
+		upvar 1 $new_idx_name var
+
+		GetInstanceDoubleDbIndex2WithSave $index $dbname $dbnameold $curr_idx var
+
+	} else {
+		logscr "WARNING: skipMsg. GetInstanceFromTimerDoubleDbIndex2"
+		skipMsg
+		return -1
+	}
+}
+
+#like GetInstanceFromTimer, with also SaveQue management
+proc GetInstFromTmrWithSave { dbname curr_idx } {
+
+	global _sig _src 
+
+	set tmr_name "[lindex $_sig 0]id"
+
+	# Get msid from Timer Id (if key exists)
+	if { [DbKeyExists $dbname $tmr_name $_src] } {
+		set index [DbGetIdx $dbname $tmr_name $_src]
+
+		# Get Instance
+		upvar 1 $curr_idx var
+
+		GetInstWithSave $index $dbname var
+
+	} else {
+		logscr "WARNING: skipMsg. GetInstFromTmrWithSave"
+		skipMsg
+		return -1
+	}
+}
+
+#like GetInstanceFromTimer, but also instance 0 is managed
+proc GetInstanceFromTimer2 { dbname curr_idx } {
+	global _sig _src 
+
+	# Set Timer Name
+	set tmr_name "[lindex $_sig 0]id"
+
+	# Get msid from Timer Id (if key exists)
+	if { [DbKeyExists $dbname $tmr_name $_src] } {
+		set index [DbGetIdx $dbname $tmr_name $_src]
+
+		# Get Instance
+		upvar 1 $curr_idx var
+
+		GetInstance2 $index $dbname var
+	} else {
+		logscr "WARNING: skipMsg. GetInstanceFromTimer2"
+		skipMsg
+		return -1
+	}
+}
+
+#like GetInstanceFromTimer2 but with also SaveQue management
+proc GetInstFromTimer2WithSave { dbname curr_idx } {
+	global _sig _src 
+
+	# Set Timer Name
+	set tmr_name "[lindex $_sig 0]id"
+
+	# Get msid from Timer Id (if key exists)
+	if { [DbKeyExists $dbname $tmr_name $_src] } {
+		set index [DbGetIdx $dbname $tmr_name $_src]
+
+		# Get Instance
+		upvar 1 $curr_idx var
+
+		GetInst2WithSave $index $dbname var
+	} else {
+		logscr "WARNING: skipMsg. GetInstFromTimer2WithSave"
+		skipMsg
+		return -1
+	}
+}
+
+#Used to change the state of a process
+#when the instance index changes.
+#The current instance's state is saved only if
+#the instance index is different from 0.
+#Parameters:
+#new_idx: index of the new instance
+#dbname
+#curr_idx: index of the current instance
+#The existance of the new instance has to be tested
+#before the call of this procedure.
+#If the new instance doesn't exist, there is a TCL error.
+proc GetInstance { new_idx dbname curr_idx } {
+
+	upvar 1 $curr_idx var 
+
+	if { $new_idx != $var } {
+		global _state 
+		
+		if { $var != 0 && [DbEntryExists $dbname $var] } {
+			# save the state of the previous instance
+			DbSet $dbname $var State $_state
+		}
+		# get the state of the new instance
+		set _state [DbGet $dbname $new_idx State]
+		set var $new_idx
+	} 
+	return $var
+}
+
+proc GetInstWithSave { new_idx dbname curr_idx } {
+
+	upvar 1 $curr_idx var 
+
+	if { $new_idx != $var } {
+		global _state 
+		
+		if { $var != 0 && [DbEntryExists $dbname $var] } {
+			# save the state of the previous instance
+			DbSet $dbname $var State $_state
+		}
+		# get the state of the new instance
+		set _state [DbGet $dbname $new_idx State]
+		sdlSetSaveQue [DbGet $dbname $new_idx SaveQue]
+
+		set var $new_idx
+	} 
+	return $var
+}
+
+#like GetInstance, but also instance 0 is managed
+#No check on presence of instance to be saved
+proc GetInstance2 { new_idx dbname idx_name } {
+
+	upvar 1 $idx_name var 
+
+	if { $new_idx != $var } {
+		global _state 
+
+		# save the state of the previous instance
+		DbSet $dbname $var State $_state
+
+		# get the state of the new instance
+		set _state [DbGet $dbname $new_idx State]
+		set var $new_idx
+	} 
+}
+
+#like GetInstance2, but also check if previous instance exists
+proc GetInstance2Ck { new_idx dbname idx_name } {
+
+	upvar 1 $idx_name var
+
+	if { $new_idx != $var } {
+		global _state
+
+		if { [DbEntryExists $dbname $var] } {
+			# save the state of the previous instance
+			DbSet $dbname $var State $_state
+		}
+
+		# get the state of the new instance
+		set _state [DbGet $dbname $new_idx State]
+		set var $new_idx
+	}
+}
+
+proc GetInstanceNoSwap { new_idx dbname idx_name } {
+    # Used when many multi-instance DBs are used within the same .tsm
+    # DO NOT save the state of the previous instance because it is not known
+    # the name of the DB where to save the current _state
+    upvar 1 $idx_name var
+    set ::_state [DbGet $dbname $new_idx State]
+    set var $new_idx
+}
+
+#like GetInstance2 but with also SaveQue management
+#No check on presence of instance to be saved
+proc GetInst2WithSave { new_idx dbname curr_idx } {
+
+	upvar 1 $curr_idx var 
+
+	if { $new_idx != $var } {
+		global _state
+
+		# save the state of the previous instance
+		DbSet $dbname $var State $_state
+
+		# get the state of the new instance
+		set _state [DbGet $dbname $new_idx State]
+
+		set saveQue [DbGet $dbname $new_idx SaveQue]
+		if { ![IsVoid $saveQue] } {
+			sdlSetSaveQue $saveQue
+		} else { 
+			logscr "ERROR (GetInst2WithSave): Invalid SaveQue field"
+			exit
+		}
+
+		set var $new_idx
+	} 
+}
+
+#like GetInstance2 but with also SaveQue management
+#and check on presence of instance to be saved
+proc GetInst2CkWithSave { new_idx dbname curr_idx } {
+
+	upvar 1 $curr_idx var 
+
+	if { $new_idx != $var } {
+		global _state
+
+		if { [DbEntryExists $dbname $var] } {
+			# save the state of the previous instance
+			DbSet $dbname $var State $_state
+		}
+
+		# get the state of the new instance
+		set _state [DbGet $dbname $new_idx State]
+
+		sdlSetSaveQue [DbGet $dbname $new_idx SaveQue]
+
+		set var $new_idx
+	} 
+}
+
+#like GetInstance, but it saves the current state in oldDb
+# and activates the new instance from dbname
+proc GetInstanceDoubleDb { new_idx dbname dbnameold curr_idx } {
+
+    upvar 1 $curr_idx var
+
+	#log "GetInstanceDoubleDb new_idx = $new_idx dbname = $dbname dbnameold = $dbnameold curr_idx = $var"
+    if { $new_idx != $var || $dbname != $dbnameold} {
+        global _state
+
+        if { $var != 0 && [DbEntryExists $dbnameold $var] } {
+            # save the state of the previous instance
+			#log "currentstate = [DbGet $dbnameold $var State] _state = $_state"
+            DbSet $dbnameold $var State $_state
+        }
+        # get the state of the new instance
+        set _state [DbGet $dbname $new_idx State]
+        set var $new_idx
+    }
+    return $var
+}
+
+#like GetInstanceDoubleDb, but also instance 0 is managed
+#No check on presence of instance to be saved
+proc GetInstanceDoubleDb1 { new_idx dbname dbnameold curr_idx } {
+
+    upvar 1 $curr_idx var
+
+    if { $new_idx != $var || $dbname != $dbnameold} {
+        global _state
+
+		# save the state of the previous instance
+		DbSet $dbnameold $var State $_state
+        
+		# get the state of the new instance
+        set _state [DbGet $dbname $new_idx State]
+        set var $new_idx
+    }
+}
+
+#like GetInstanceDoubleDb, but also instance 0 is managed
+proc GetInstanceDoubleDb2 { new_idx dbname dbnameold curr_idx } {
+
+    upvar 1 $curr_idx var
+
+	#log "GetInstanceDoubleDb new_idx = $new_idx dbname = $dbname dbnameold = $dbnameold curr_idx = $var"
+    if { $new_idx != $var || $dbname != $dbnameold} {
+        global _state
+
+        if { [DbEntryExists $dbnameold $var] } {
+            # save the state of the previous instance
+			#log "currentstate = [DbGet $dbnameold $var State] _state = $_state"
+            DbSet $dbnameold $var State $_state
+        }
+        # get the state of the new instance
+        set _state [DbGet $dbname $new_idx State]
+        set var $new_idx
+    }
+}
+
+#like GetInstanceDoubleDb, but it manages current and new idx even if they are different
+proc GetInstanceDoubleDbIndex { new_idx_val dbname dbnameold curr_idx_val new_idx_name } {
+
+    upvar 1 $new_idx_name var
+
+	#log "GetInstanceDoubleDbIndex new_idx_val = $new_idx_val dbname = $dbname dbnameold = $dbnameold curr_idx_val = $curr_idx_val new_idx_name = $new_idx_name"
+    if { $new_idx_val != $var || $dbname != $dbnameold} {
+        global _state
+
+        if { $curr_idx_val != 0 && [DbEntryExists $dbnameold $curr_idx_val] } {
+            # save the state of the previous instance
+			#log "currentstate = [DbGet $dbnameold $curr_idx_val State] _state = $_state"
+            DbSet $dbnameold $curr_idx_val State $_state
+        }
+        # get the state of the new instance
+        set _state [DbGet $dbname $new_idx_val State]
+        set var $new_idx_val
+    }
+
+    return $var
+}
+
+#like GetInstanceDoubleDbIndex, but also instance 0 is managed
+proc GetInstanceDoubleDbIndex2 { new_idx_val dbname dbnameold curr_idx_val new_idx_name } {
+
+    upvar 1 $new_idx_name var
+
+	#log "GetInstanceDoubleDbIndex2 new_idx_val = $new_idx_val dbname = $dbname dbnameold = $dbnameold curr_idx_val = $curr_idx_val new_idx_name = $new_idx_name"
+    if { $new_idx_val != $var || $dbname != $dbnameold} {
+        global _state
+
+        if { [DbEntryExists $dbnameold $curr_idx_val] } {
+            # save the state of the previous instance
+			#log "currentstate = [DbGet $dbnameold $curr_idx_val State] _state = $_state"
+            DbSet $dbnameold $curr_idx_val State $_state
+        }
+        # get the state of the new instance
+        set _state [DbGet $dbname $new_idx_val State]
+        set var $new_idx_val
+    }
+
+    return $var
+}
+
+proc GetInstanceDoubleDbIndex2WithSave { new_idx_val dbname dbnameold curr_idx_val new_idx_name } {
+
+    upvar 1 $new_idx_name var
+
+	#log "GetInstanceDoubleDbIndex2 new_idx_val = $new_idx_val dbname = $dbname dbnameold = $dbnameold curr_idx_val = $curr_idx_val new_idx_name = $new_idx_name"
+    if { $new_idx_val != $var || $dbname != $dbnameold} {
+        global _state
+
+        if { [DbEntryExists $dbnameold $curr_idx_val] } {
+            # save the state of the previous instance
+			#log "currentstate = [DbGet $dbnameold $curr_idx_val State] _state = $_state"
+            DbSet $dbnameold $curr_idx_val State $_state
+        }
+        # get the state of the new instance
+        set _state [DbGet $dbname $new_idx_val State]
+		sdlSetSaveQue [DbGet $dbname $new_idx_val SaveQue]
+
+        set var $new_idx_val
+    }
+
+    return $var
+}
+
+##############################################################
+#
+# Parsing Facilities
+#
+##############################################################
+
+proc GetDbNameFromPath { dbpath } {
+
+	return [file tail $dbpath]
+}
+
+proc GetDbDirFromPath { dbpath } {
+
+	set index [string last "/" $dbpath]
+	set dirname [string range $dbpath 0 $index]
+
+	return $dirname
+}
+
+##############################################################
+#
+# List handling Utilities
+#
+##############################################################
+
+#-------------------------------------------------------------------------------
+# lassign
+# This procedure is invoked for assigning list elements to several variables
+#
+# Arguments:
+# - variables = list of variables to be assigned
+# - values    = list of values to assign to variables
+
+proc lassign {variables values} {
+    uplevel 1 [list foreach $variables $values {break}]
+}
+
+#-------------------------------------------------------------------------------
+# lremove
+# This procedure removes the element at position "elemPosition" from list "listRef"
+#
+# Arguments:
+# - listRef = name of the list. The list is modified directly by the procedure.
+# - elemPosition = index of element in the list. Index starts from 0, as usual.
+# Return:
+# final list is returned. It becomes also the value of variable whose name is listRef.
+proc lremove {listRef elemPosition} {
+	upvar $listRef l
+
+	return [set l [lreplace $l $elemPosition $elemPosition]]
+}
+
+#-------------------------------------------------------------------------------
+# lsearchrem
+# This procedure removes from variable pointed by "listRef" the element whose value is equal to "elemVal"
+#
+# Arguments:
+# - listRef = name of the list. The list is modified directly by the procedure.
+# - elemVal = value to be found in the list.
+# Return:
+# final list is returned. It becomes also the value of variable whose name is listRef.
+proc lsearchrem {listRef elemVal} {
+	upvar $listRef l
+
+	set idx [lsearch $l $elemVal]
+	if {$idx != -1} {
+		return [lremove l $idx]
+	} else {
+		# only to return a value
+		return [set l]
+	}
+}
+
+#-------------------------------------------------------------------------------
+# parray
+# This procedure is invoked for printing any 'array' variable
+#
+# Arguments:
+# - a       = array variable to be dumped
+# - pattern = pattern used for filtering
+
+proc parray {a {pattern *}} {
+    upvar 1 $a array
+    if {![array exists array]} {
+    	error "\"$a\" isn't an array"
+    }
+    set maxl 0
+    foreach name [lsort [array names array $pattern]] {
+	    if {[string length $name] > $maxl} {
+    	        set maxl [string length $name]
+	    }
+    }
+    set maxl [expr {$maxl + [string length $a] + 2}]
+    foreach name [lsort [array names array $pattern]] {
+	    set nameString [format %s(%s) $a $name]
+	    logscr [format "%-*s = %s" $maxl $nameString $array($name)]
+    }
+}
+
+#-------------------------------------------------------------------------------
+# log_array
+# This procedure is invoked for printing any 'array' variable
+#
+# Arguments:
+# - a       = array variable to be dumped
+# - pattern = pattern used for filtering
+
+proc log_array {a {pattern *}} {
+    upvar 1 $a array
+    if {![array exists array]} {
+    	error "\"$a\" isn't an array"
+    }
+    set maxl 0
+    foreach name [lsort [array names array $pattern]] {
+	    if {[string length $name] > $maxl} {
+    	        set maxl [string length $name]
+	    }
+    }
+    set maxl [expr {$maxl + [string length $a] + 2}]
+    foreach name [lsort [array names array $pattern]] {
+	    set nameString [format %s(%s) $a $name]
+	    log [format "%-*s = %s" $maxl $nameString $array($name)]
+    }
+}
+
+#-------------------------------------------------------------------------------
+# lfisrt
+# This procedure is invoked to get first "hole" in an increasing list
+# starting with 1; ex.: l="1 2 4", this proc return 3
+#
+# Arguments:
+# - l = list of values
+
+proc NextFree { l } {
+
+	set l [lsort -decreasing -integer $l]
+	set num [llength $l]
+	set max [lindex $l 0]
+
+	# List has no holes
+	if { $num == [expr {$max + 1}] } {
+		return $num
+	} 
+
+	# Find a hole
+	for { set i 0 } { $i < [expr {$num - 1}] } { incr i } {
+		set val [lindex $l $i]
+		set next_val [lindex $l [expr {$i + 1}]]
+		if { [expr {$val - $next_val}] != 1 } {
+			return [expr {$val - 1}]
+		}
+	}
+
+	# Nothing was found
+	return -1
+}
+
+#-------------------------------------------------------------------------------
+# RevStrBytes
+# This procedure is invoked to revert a string of bytes 
+# ex.: str="010abbcd", this proc returns "cdbb0a01"
+#
+# Arguments:
+# - str = string 
+
+proc RevStrBytes { str }  {
+    set res {}
+    set i [string length $str]
+
+    if [expr [ expr {$i%2} != 0 ]] {
+		return -1
+    }
+
+    while   {$i > 1} {
+        append res [string range $str [expr $i - 2] [expr $i - 1] ]
+        incr i -2
+    }
+	return $res
+}
+
+#-------------------------------------------------------------------------------
+# RevDecimalBits
+# This procedure gets as input a decimal value and returns a decimal value
+# with reversed bits
+# ex.: val=10 (1010) --> retuned value: 5 (0101)
+#
+# Arguments
+# - val = decimal value to which bit reverse is applied
+# - n_bits = number of bits to be reverted
+
+proc RevDecimalBits { val n_bits } {
+
+	# Init output variables
+	set outVar 0
+	for {set count 0} {$count < $n_bits} {incr count} {
+		# Check if first bit is 1
+		set bitCheck [expr {$val & 1}]
+		if { $bitCheck } {
+			incr outVar
+		}
+
+		# Shift right old variable
+		set val [expr {$val >> 1}]
+
+		# Shift left new variable
+		set outVar [expr {$outVar << 1}]
+	}
+
+	set outVar [expr {$outVar >> 1}]
+	return $outVar
+}
+
+# search an element in a string where the elements are separated from spaces
+# compare each th-i element of 'stringa' with 'elem' and return true if elem is found or false otherwise
+proc StringExistsElem { stringa elem } {
+
+	set result 0
+
+	set listLength [string length $stringa]
+
+	for {set i 0} {$i <= $listLength} {incr i} {
+		set elem_i [string index $stringa $i]
+		if { $elem_i == " " } {
+			continue
+		}
+		incr i
+		for {set j $i} {$j < $listLength} {incr j} {
+			set listElem_j_th [string index $stringa $j]
+			#log "StringExistsElem: debugging phase --> listElem_j_th=$listElem_j_th"
+			if { $listElem_j_th != " " } {
+				append elem_i $listElem_j_th
+			} else {
+				set i $j
+				#log "i=$i"
+				break
+			}
+		}
+		#log "StringExistsElem: elem_i=$elem_i; elem=$elem"
+		if { $elem_i == $elem } {
+			set result 1
+			#log "StringExistsElem: --> result=$result"
+			break
+		}
+	}
+	log "StringExistsElem: i=$i; result=$result; elem_i=$elem_i"; #cDEBUG
+	return $result
+}
+
+#-------------------------------------------------------------------------------
+#returns the scripts directory, stored in the envVar environment variable
+proc GetScriptsDir {envVar} {
+	#the scripts directory is the last path
+	global env
+	lindex [split $env($envVar) :] end
+}
+##############################################################
+#
+# Network Side Facilities
+#
+##############################################################
+
+#glNetSide will be cn or ms, otherwise fatal error.
+#In this way, CnSide and MsSide procedures don't have to check
+#for a wrong value in glNetSide.
+#N.B. This proc has to be called after the inclusion of configuration file.
+proc SetNetside {} {
+	global __net_side __mode glNetSide
+
+	if { ![info exists __net_side] } {
+		log "SetNetside: __net_side absent: using __mode"
+		set __net_side $__mode
+	}
+
+	if {[string equal $__net_side "cn"] ||
+		[string equal $__net_side "mgw"] ||
+		[string equal $__net_side "rnc"] ||
+		[string equal $__net_side "sgsn"] ||
+		[string equal $__net_side "epc"] ||
+		[string equal $__net_side "bsc"] || 
+		[string equal $__net_side "net"] || 
+		[string equal $__net_side "bs"]  || 
+		[string equal $__net_side "GW"]} {
+		set glNetSide cn
+	} elseif {	[string equal $__net_side "utran"] ||
+				[string equal $__net_side "bss"] ||
+				[string equal $__net_side "nodeb"] ||
+				[string equal $__net_side "bts"] ||
+				[string equal $__net_side "eutran"] ||
+				[string equal $__net_side "ms"] ||
+				[string equal $__net_side "ue"] ||
+				[string equal $__net_side "ss"] ||
+				[string equal $__net_side "AP"]} {
+		set glNetSide ms
+	} else {
+		logscr "SetNetside: unexpected net side $__net_side"
+		exit
+	}
+}
+
+proc CnSide {} {
+	global glNetSide
+	return [string eq $glNetSide cn]
+}
+
+proc MsSide {} {
+	global glNetSide
+	return [string eq $glNetSide ms]
+}
+
+proc UeSide { } {
+
+	# Global variables
+	global __net_side
+
+	if { [string equal $__net_side "ue"] } {
+		return 1
+	} else {
+		return 0
+	}
+}
+
+proc GetNetside {} {
+	global glNetSide
+
+	return $glNetSide
+}
+
+proc GetPLMN { mcc mnc } {
+    set plmn [string range $mcc 1 1]
+    append plmn [string range $mcc 0 0]
+    if { [string length $mnc] == 2 } {
+        append plmn f
+    } else {
+        append plmn [string range $mnc 2 2]
+    }
+    append plmn [string range $mcc 2 2]
+    append plmn [string range $mnc 1 1]
+    append plmn [string range $mnc 0 0]
+
+    return $plmn
+}
+
+#dbDesc: list used for the scription of a DB.
+#The format is the same of the parameter of DbCreate
+proc GetDbColumnList {dbDesc} {
+	foreach elem $dbDesc {
+		if {([llength $elem] == 1) || (![string eq [lindex $elem 1] "Index"])} {
+			#add to colList only fields that aren't index
+			#log "GetDbColumnList: elem=$elem"; #debug
+			lappend colList [lindex $elem 0]
+		}
+	}
+	return $colList
+}
+
+# Return the first element of a list (if available) and remove it
+
+proc ltop { listName } {
+	upvar 1 $listName listVar
+	
+	set top [lindex $listVar 0]
+
+	if { [llength $listVar] >= 1 } {
+		set listVar [lrange $listVar 1 [llength $listVar]]
+	} else {
+		set listVar ""
+	}
+
+	return $top
+}
+
+#Return the number of bits needed to store num.
+#num format can be any format supported by "expr" command.
+proc bitLen {num} {
+    log "bitLen: num=$num"
+    set iNum [expr $num]
+    log "bitLen: iNum=$iNum"
+
+    set len 1
+    while {$iNum > 1} {
+        set iNum [expr {$iNum / 2}]
+        incr len
+    }
+	log "bitLen: result=$len"
+    return $len
+}
+
+# Return the number of bytes needed to contain an HEXSTR, that is the byte 
+# len of the HEXSTR.
+proc hByteLen {hexstr} {
+	return [expr {([string length $hexstr] / 2) + ([string length $hexstr] % 2)}]
+}
+
+#Return list containing all elements of a range of the form "a-b".
+#E.g. "1-3" will return "1 2 3".
+#E.g. "1-3 5 7-9" will return "1 2 3 5 7 8 9".
+proc ExpandRange { str } {
+
+	set builtList ""
+
+	foreach el $str {
+		if { [string match {[0-9]*-[0-9]*} $el] } {
+			#We have a range, expand it.
+			set rangeList [split $el -]
+			
+			set pad [string length [lindex $rangeList 0]]
+			set x0 [scan [lindex $rangeList 0] "%Lu"]
+			set x1 [scan [lindex $rangeList 1] "%Lu"]
+			log "DEBUG (ExpandRange): pad=$pad, x0='$x0', x1='$x1'"
+
+			for {set x $x0} {$x <= $x1} {incr x} {
+				set y [format "%0${pad}s" $x]
+				lappend builtList $y
+			}
+		} else {
+			lappend builtList $el
+		}
+	}
+	
+	log "DEBUG (ExpandRange): builtList='$builtList'"
+	return $builtList
+}
+
+##############################################################
+#
+# SIM Card Check
+#
+##############################################################
+
+proc CheckSimcard { dbname } {
+
+	if { [IsVoid $dbname] || ![DbFieldExists $dbname LsuSimCardPos]} {
+		return 0
+	}
+
+	foreach msid [DbGetIndexList $dbname] {
+		if { [DbFieldExists $dbname LsuSimCardPos] \
+		&& [string is integer [DbGet $dbname $msid LsuSimCardPos]] } {
+			return 1
+		}
+	}
+
+	return 0
+}
+
+##############################################################
+#
+# Edge Check
+#
+##############################################################
+
+proc CheckEdgeEnable { dbname } {
+	
+	# debug
+	#log "DEBUG (CheckEdgeEnable): dbname=$dbname"
+
+	if { [IsVoid $dbname] || ![DbFieldExists $dbname EdgeEnable] } {
+		return 0
+	}
+
+	foreach msid [DbGetIndexList $dbname] {
+
+		set ms_edge_enabled [DbGet $dbname $msid EdgeEnable]
+
+		if { ![IsVoid $ms_edge_enabled] && $ms_edge_enabled == 1 } {
+			return 1
+		}
+	}
+
+	return 0
+}
+
+##############################################################
+#
+# AUoIP Check
+#
+##############################################################
+
+proc IpUpSupported { } {
+	
+	global __aoip_ip_up_supported
+
+	if { [info exists __aoip_ip_up_supported] && $__aoip_ip_up_supported } {
+		return 1
+	} else {
+		# Pure IP Signalling Mode
+		return 0
+	}
+}
+
+##############################################################
+#
+# Profile Parsing Arguments
+#
+##############################################################
+
+proc GetPar { plist tag {presence "mandatory"} } {
+
+	set pos [lsearch $plist $tag*] 
+	if { $pos >= 0 } {
+		set el [lindex $plist $pos]
+
+		# Parameter is a list of parameters itself
+		set val [ProfGetParVal $el]
+		#set val [lrange [split $el "="] 1 end]
+		#set val [join $val "="]
+	}
+	if { $pos == -1 || [string length $val] == 0 } {
+		if { [string eq $presence "optional"] } {
+			log "WARNING (GetPar): tag=$tag"
+			return "?"
+		} else {
+			exit "ERROR (GetPar): plist=$plist, tag=$tag"
+		}
+	}
+	# debug
+	#log "DEBUG (GetPar): plist=plist, tag=$tag, el=$el, val=$val"
+	return $val
+}
+
+proc SetPar { value tag } {
+
+	set element ""
+    append element "{" $tag "=" $value "}"
+
+    return $element
+}
+
+# get value before first "="
+proc ProfGetParName {par} {
+	string range $par 0 [expr {[string first "=" $par] - 1}]
+}
+
+# get value after first "="
+proc ProfGetParVal {par} {
+	string range $par [expr {[string first "=" $par] + 1}] end
+}
+
+# removes parameter parToBeRem from a list of parameters
+proc ProfRemParFromList {parList parToBeRem} {
+
+	set retParams ""; #init
+
+	foreach par $parList {
+
+		set parName [ProfGetParName $par]
+		if {![string eq $parName $parToBeRem]} {
+			lappend retParams $par
+		}
+	}
+
+	return $retParams
+}
+
+# multiParName is a parameter with multiple values (i.e. a list of values)
+# List of values is replaced with element at idx'th position of the list.
+proc ProfReplaceMultiPar {origParRef multiParName idx {pres "mandatory"}} {
+
+	upvar $origParRef origPar
+
+	# read multi parameter, before replacing it
+	set multiPar [GetPar $origPar $multiParName $pres]
+
+	if {![IsVoid $multiPar]} {
+		set dedPar [SetPar [lindex $multiPar $idx] $multiParName]
+
+		# removed parameter to replace it with value for a single bearer
+		set origPar [ProfRemParFromList $origPar $multiParName]
+		append origPar " $dedPar"
+	}
+
+}
+
+
+proc ProfReplaceParm {origParRef multiParName newVal {pres "mandatory"}} {
+
+	upvar $origParRef origPar
+
+	# read multi parameter, before replacing it
+	set multiPar [GetPar $origPar $multiParName $pres]
+
+	if {![IsVoid $multiPar]} {
+
+		# removed parameter to replace it with value for a single bearer
+		set origPar [ProfRemParFromList $origPar $multiParName]
+	}
+
+	set dedPar [SetPar $newVal $multiParName]
+	append origPar " $dedPar"
+}
+
+
+
+proc ChgPar { plist new_value tag } {
+
+	set pos [lsearch $plist $tag*]
+
+	if { $pos >= 0 } {
+		set el [lindex $plist $pos]
+		# Parameter is a list of parameters itself
+		set elList [split $el "="]
+		# set new value
+		set elList [lreplace $elList 1 1 $new_value]
+		set newEl [join $elList "="]
+		# insert the element
+		set plist [lreplace $plist $pos $pos $newEl]
+		
+		# debug
+		#log "DEBUG (ChgPar): plist=$plist"
+		return $plist
+	}
+	if { $pos == -1 || [string length $val] == 0 } {
+		log "ERROR (ChgPar): parameter $tag not present - plist=$plist"
+		exit
+	}
+}
+
+##############################################################
+#
+# Math Utilities
+#
+##############################################################
+
+proc GetAverage { oldAvr base val } {
+
+	set newAvr [expr {$oldAvr * ($base - 1)}]
+	set newAvr [expr {$newAvr + $val}]
+	set newAvr [expr {$newAvr / $base}]
+
+	return $newAvr
+}
+
+proc GetMsInPool { db poolId } {
+
+	set msList [list]
+
+	foreach ms [DbGetIndexList $db] {
+		set pollIdx [DbGet $db $ms PoolId]
+		if { $poolId == $pollIdx } {
+			lappend msList $ms
+		}
+	}
+	#logscr "DEBUG (GetMsInPool): msList=$msList ##"
+	return $msList
+}
+
+
+proc GetTotalPool { db poolId statName } {
+
+	set res 0
+	foreach ms [GetMsInPool $db $poolId] {
+		incr res [DbGet $db $ms $statName]
+	}
+	#logscr "DEBUG (GetTotalPool): res=$res ##"
+	return $res
+}
+
+proc GetAveragePool { db poolId statName } {
+
+	set res 0
+	set base 0
+	#logscr "DEBUG (GetAveragePool): x=[GetMsInPool $db $poolId] ##"
+	foreach ms [GetMsInPool $db $poolId] {
+		set val [DbGet $db $ms $statName]
+		#logscr "DEBUG (GetAveragePool): val=$val ##"
+		if { $val > 0 } {
+			incr res [DbGet $db $ms $statName]
+			incr base
+		}
+	}
+	if { $base > 0 } {
+		set res [expr {$res / $base}]
+	}
+	#logscr "DEBUG (GetAveragePool): res=$res ##"
+	
+	return $res
+}
+
+##############################################################
+# To do a matching between two Hex String and return 1
+# if at least a Byte is common between the two lists.
+proc MatchHexStr { strn1 strn2 } {
+
+	set result 0
+
+	if { [string length $strn1] != [string length $strn2] } {
+		log "MatchHexStr: WARNING: the two strings (strn1=$strn1; strn2=$strn2) have different length"
+	}
+	for {set nibble1 0} {$nibble1 <= [string length $strn1]} {incr nibble1} {
+		set bt1 [string index $strn1 $nibble1]
+		set nibble1 [expr $nibble1 + 1]
+		append bt1 [string index $strn1 $nibble1] 
+		#log "nibble1=$nibble1"; #cDEBUG
+		for {set nibble2 0} {$nibble2 <= [string length $strn2]} {incr nibble2} {
+			set bt2 [string index $strn2 $nibble2]
+			set nibble2 [expr $nibble2 + 1]
+			append bt2 [string index $strn2 $nibble2]
+			#log "nibble2=$nibble2"; #cDEBUG
+			if { [string equal $bt1 $bt2] && $bt1 != 00 && ![IsVoid $bt1] && ![IsEmpty $bt1] } {
+				log "MatchHexStr: bt1=$bt1 is equal to bt2=$bt2 then at least a byte in the first string $strn1 matchs a byte in the second string $strn2"
+				set result 1
+				break
+			}
+		}
+	}
+	return $result
+}
+
+# -----------------------------------------------------------------------
+# forEachDbTimer:
+# executes 'cmd' for each timer present ad 'idx'
+# e.g.: forEachDbTimer $::gldb_S1Ue $s1UeIdx t { tmrfree $t }
+
+proc forEachDbTimer {db idx var cmd} {
+    set recordInfo [DbRecordInfo $db]
+    foreach fieldInfo $recordInfo {
+        set fieldName [lindex $fieldInfo 0]
+        if { [string equal -length 2 $fieldName "T_"] } {
+            set tmrId [DbGet $db $idx $fieldName]
+            if { ![IsVoid $tmrId] } {
+                proc forEachDbTimerWrapper $var "$cmd"
+                forEachDbTimerWrapper $tmrId
+            }
+        }
+    }
+}
+# -----------------------------------------------------------------------
+
+################################################################################
+#   IP utilities
+################################################################################
+# input: 1) IP address (string, ex: 192.168.3.3)
+#        2) Netmask (string, ex: 255.255.255.0)
+# output: Subnet (string, ex: 192.168.3.0)
+proc GetSubnetFromIpNetMask { ip_string netmask_string } {
+    
+    set ipDec [htoui [iptoh $ip_string] L]
+    set netmaskDec [htoui [iptoh $netmask_string] L]
+    set subNet [htoip [uitoh [expr {$ipDec & $netmaskDec}] L]]
+    
+    #log "IP: $ip_string - NetMask: $netmask_string --> SubNet: $subNet"
+    
+    return $subNet
+}
+# -----------------------------------------------------------------------
+
+################################################################################
+proc assert {xpr msg} {
+    set res [uplevel expr $xpr]
+    if { ! $res } {
+        abort "ABORT- assert failed. $xpr is FALSE: $msg"
+    }
+}
+
+proc AbortUnexpectedSig { txt } {
+    set tag [lindex $::_sig 0]
+    abort "ABORT-$txt: unexpected $tag received in $::_state"
+}
+
+proc dbEmptyToVoid {v} {
+    if { [IsEmpty $v] } {
+        set v ?
+    }
+    return $v
+}
+
+# Check if Ue belongs to this multi processor slave istance
+proc IsMyUeId { ue } {
+	
+	if { [llength [info commands isMyMsId]] } {
+		return [isMyMsId $ue]
+	} else {
+		# command not found -> no MP
+		return 1
+	}
+}
+
+### end of file ##############################################
+##############################################################

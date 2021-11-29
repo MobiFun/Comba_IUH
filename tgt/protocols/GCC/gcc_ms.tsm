@@ -1,0 +1,876 @@
+#**********************************************************************
+# Title:
+#----------------------------------------------------------------------
+# $URL$
+#
+# $Author$
+# $Date$
+#
+# $Rev$
+#**********************************************************************
+
+# GCC Mobile Station simulation script
+proc Init { args } {
+    # Declare and Initialize Global Variables
+    global _self _HandleRxSignalProc __net_side glGCCDb glCommonDb
+	global glCurrentMsId glDebugPduCodec
+	global glTnochannel glTMMest glTterm glTconnreq glCurrentMsId
+	global Visible
+
+    # Includes
+    include "protocols/GCC/gcc_utils.tsm"
+    include "common/utils/generalUtils.tsm"
+    include "common/utils/L3Utils.tsm"
+	include "sched/global.tcl"
+
+	set glDebugPduCodec 0
+	set glCurrentMsId 0
+
+	set Visible 1
+
+    # Uplevel Configuration File
+    set cfgfile [lindex $args 0]
+    uplevel #0 include $cfgfile
+
+	# Set Net Side
+	SetNetside
+	
+	#Store the MsDb name
+	set glCommonDb [lindex $args 1]
+	#Gcc adaptation layer
+	set al [lindex $args 2]
+
+	include "$al"
+	#Register SAPI#
+	register GCC
+    # Handle Multi-Instance
+    set _HandleRxSignalProc RxSignalProc
+	#Create Internal Db
+	set glGCCDb GccMsDb
+	#Set all the length of Timers
+	set glTnochannel 3000
+	set glTMMest 5000
+	set glTterm 10000
+	set glTconnreq 30000
+
+	CreateDatabase $glGCCDb
+	FillMsDb $glCommonDb
+
+	set glCurrentMsId 0
+
+	logscr "GCC MS Simulation started"
+
+	nextstate WaitForConfig	
+}
+
+proc RcvMnMsGccSetupReq { } {
+	global _sig _mmpid glCurrentMsId glGCCDb _src
+	#Select the mobile
+	#GetInstance [rd _sig MsId] $glGCCDb $glCurrentMsId
+	set grId [rd _sig GroupId]
+	#Check if the GroupId is a valid one for this Ms
+
+	#set grCallAreaId [DbGet $glGCCDb $glCurrentMsId GroupCallAreaId]
+	#set grCallReference [GetGroupCallRef $grCallAreaId $grId]
+	#DbSet $glGCCDb $glCurrentMsId GroupCallReference $grCallReference
+	set prio [rd _sig Priority]
+	DbSet $glGCCDb $glCurrentMsId Priority $prio
+	set origToDispInfo [rd _sig OrigToDispInfo]
+	DbSet $glGCCDb $glCurrentMsId OrigToDispInfo $origToDispInfo
+	DbSet $glGCCDb $glCurrentMsId UserPid $_src
+	DbSet $glGCCDb $glCurrentMsId VGCSCallGroupId $grId
+
+	#Check if the call is not already in place
+	#Send the Request for a connection to MM
+	new MM_GCC_EST_REQ s
+	wr s MsId $glCurrentMsId
+	wr s CmServType 9
+	#TODO: implement tio calculation
+	wr s Tio 0 
+	
+	send s $_mmpid
+	DbSet  $glGCCDb $glCurrentMsId ORIG 1 	
+	#Start the timer for 
+	set tmrpid [DbGet $glGCCDb $glCurrentMsId TMMestid]
+	tmrstart $tmrpid
+	log "RcvMnMsGccSetupReq: glCurrentMsId = $glCurrentMsId tmrpid = $tmrpid"
+	nextstate MM_ConnectionPending_U0p
+}
+
+proc RecvMmEstConf { } {
+	global _sig _sigpdu _mmpid glGCCDb glCurrentMsId
+
+	#Stop the timer!
+	set tmrpid [DbGet $glGCCDb $glCurrentMsId TMMestid]
+	tmrstop $tmrpid
+	set prio [DbGet $glGCCDb $glCurrentMsId Priority]
+	# TODO - Patch - TODO !!!!!!!
+	set cellid [DbGet $glGCCDb $glCurrentMsId CellId]
+	set groupCallReference $cellid
+	append groupCallReference "1234"
+	#Send the SETUP msg to the network
+	new GCC_SETUP s
+	wr s TIFlag 0
+	wr s TI0 0
+	wr s SeqNum 0
+	set callIdentity [DbGet $glGCCDb $glCurrentMsId VGCSCallGroupId]
+	wr s GroupCallReference $callIdentity
+	wr s Priority [DbGet $glGCCDb $glCurrentMsId Priority]
+	wr s OrigToDispInfo [DbGet $glGCCDb $glCurrentMsId OrigToDispInfo]
+	new MM_GCC_DATA_REQ t
+	wr t Pdu [gccSigToPdu s]
+	wr t MsId $glCurrentMsId
+	#wr t SeqNum 0
+
+	send t $_mmpid
+
+	DbSet $glGCCDb $glCurrentMsId COMM 1
+
+	nextstate GC_Initiated
+}
+
+proc RecvMmGccDataInd { } {
+	global _sig _sigpdu glGCCDb glCurrentMsId
+	
+	set pdu [rd _sig Pdu]
+	gccPduToSig pdu
+	set sigName [lindex $_sigpdu 0]
+	if { ![string compare $sigName "GCC_CONNECT"] } {
+		#Received the connect message, the GruopCall is in place
+		logscr "Received the CONNECT msg! The call is in place."	
+		DbSet $glGCCDb $glCurrentMsId D_ATT 1
+		DbSet $glGCCDb $glCurrentMsId U_ATT 1
+		DbSet $glGCCDb $glCurrentMsId GroupCallReference [rd _sigpdu GroupCallReference]
+		DbSet $glGCCDb $glCurrentMsId pduGroupCallReference ?
+		binary scan $pdu H* hexpdu
+		log "GroupCallReference = [rd _sigpdu GroupCallReference] hexpdu = $hexpdu"
+
+		new MN_GCC_MS_SETUP_CNF s
+		set usrPid [DbGet $glGCCDb $glCurrentMsId UserPid]
+		set res [DbGet $glGCCDb $glCurrentMsId Res]
+		wr s MsId $glCurrentMsId
+		send s $usrPid
+		if { $res == 1 } {
+			nextstate GC_Active_U2sl
+		} elseif { $res == 2 } {
+			nextstate GC_Active_U2sr
+		} else {
+			logscr "### ERROR ### Invalid Res value = $res"
+			exit
+		}
+	} elseif { ![string compare $sigName "GCC_TERMINATION"] } {
+		global _sig
+		set cause [rd _sigpdu Cause]
+		SendTermIndToUser $glGCCDb $glCurrentMsId [GetCauseStringByValue $cause]
+		SendMmRelReq $glCurrentMsId 
+		#SendMmAbortReq $glCurrentMsId "?"
+		nextstate Null_U0
+	} else {
+		logscr "Unexpected GCC pdu: $sigName"
+	}
+}
+
+proc GetDecCallRefByPdu { pdu } {
+	set grCallRef [string range $pdu 0 7]
+	set grCallRef [htoui $grCallRef B]
+	#Remove leading zeroes
+	set grCallRef [string trimleft $grCallRef 0]
+	set grCallRef [expr $grCallRef & 4294967279]
+	set grCallRef [expr $grCallRef / 32]
+	log "Receive a call grCallRef = $grCallRef"
+	return $grCallRef
+}
+
+proc GetMostMachingGroupId { grIdList grCallRef } {
+	set maxMatch 0
+	set grId 0
+	foreach idx $grIdList {
+		if { [string match *$idx $grCallRef] } {
+			log "find match: $idx $grCallRef"
+			set len [string length $idx]
+			if { $maxMatch < $len } {
+				set maxMatch $len
+				set grId $idx
+				log "found matching grId = $grId"
+			}
+		}
+	}
+	if { $grId != 0 } {
+		return $grId
+	} else {
+		return 0
+	}
+}
+
+proc RcvMmGccSetupIndDuringCall { } {
+	global glGCCDb glCurrentMsId _sig
+	set pduGrCallRef [rd _sig GroupCallRef]
+	set oldpdu [DbGet $glGCCDb $glCurrentMsId pduGroupCallReference]
+	if { [IsVoid $oldpdu] } {
+		#Fill it with the value assigned from BSC
+		DbSet $glGCCDb $glCurrentMsId pduGroupCallReference $pduGrCallRef
+	} else {
+		if { [string compare -length 7 $oldpdu $pduGrCallRef] } {
+			#Something wrong: the grcall ref differs!
+			log "RcvMmGccSetupIndDuringCall: GroupCallReference differs:"
+			log "oldpdu = $oldpdu"
+			log "Received pdu = $pduGrCallRef"
+		}
+	}
+}
+
+proc RcvMmGccSetupInd { } {
+	global _sig glCurrentMsId glGCCDb
+	log "RcvMmGccSetupInd: glCurrentMsId = $glCurrentMsId"
+	#LogDb $glGCCDb
+	#TODO: Check priority
+	set pduGrCallRef [rd _sig GroupCallRef]
+	set grCallRef [GetDecCallRefByPdu $pduGrCallRef]
+	set grIdList [DbGet $glGCCDb $glCurrentMsId GroupIdList]
+	set grId [GetMostMachingGroupId $grIdList $grCallRef ]
+	if { $grId == 0 } {
+		log "Call Unaccepted"
+	} else {
+		log "Call accepted."
+		log "Received a call grCallRef = $grCallRef"
+		#Save in the Db the pdu of the Group call ref, it will not be 
+		#necessary to calculate it another time
+		DbSet $glGCCDb $glCurrentMsId pduGroupCallReference $pduGrCallRef
+		#Send a notification to the user script
+		new MN_GCC_SETUP_IND s
+		wr s GroupId $grId
+		wr s Priority [rd _sig Priority]
+		wr s MsId $glCurrentMsId
+		#Store the group call reference
+		DbSet $glGCCDb $glCurrentMsId GroupCallReference $grCallRef
+
+		set usrPid [DbGet $glGCCDb $glCurrentMsId UserPid]
+		send s $usrPid
+	
+		nextstate GC_Present_U3
+	}
+}
+
+proc RecvMnGccJoinGcReq { } {
+	global glCurrentMsId glGCCDb
+
+	set pduGrCallRef [DbGet $glGCCDb $glCurrentMsId pduGroupCallReference]
+
+	logscr "The User script has decide to accept the incoming voice group call"	
+	new MM_GCC_JOIN_GC_REQ s
+	wr s GroupCallRef $pduGrCallRef
+	wr s MsId $glCurrentMsId
+
+	send s
+
+	nextstate GC_ConnectionRequested_U4
+}
+
+proc RecvAbortReq { } {
+	global glGCCDb glCurrentMsId
+
+	DbSet $glGCCDb $glCurrentMsId ORIG 0
+	DbSet $glGCCDb $glCurrentMsId COMM 0
+	DbSet $glGCCDb $glCurrentMsId D_ATT 0
+	DbSet $glGCCDb $glCurrentMsId U_ATT 0
+
+	nextstate Null_U0
+}
+
+proc RecvMmGccJoinGcConf { } {
+	global glGCCDb glCurrentMsId
+
+	set usrPid [DbGet $glGCCDb $glCurrentMsId UserPid]
+	logscr "Joining the group call"
+	new MN_GCC_JOIN_GC_CNF s
+	wr s MsId $glCurrentMsId
+
+	send s $usrPid
+
+	nextstate GC_Active_U2r
+}
+
+proc TimerNoChannelExpired { } {
+	global _sig glGCCDb glCurrentMsId _src
+	#Inform script that the timer has expired
+	set usrPid [GetUserPid $glGCCDb $glCurrentMsId]
+	new MN_GCC_T_NOCHANNEL_EXPIRED s
+	wr s MsId $glCurrentMsId
+	tmrstop $_src
+	logscr "Tnochannel expired, no more channel available"
+	send s $usrPid
+	#Inform the lower layers
+	SendMmAbortReq $glCurrentMsId "?"
+	SendTermIndToUser $glGCCDb $glCurrentMsId VGCHLost
+
+	nextstate Null_U0
+}
+
+proc SendMMAbortReq { msId } {
+	new MM_GCC_ABORT_REQ t
+	wr t MsId $msId
+	send t 
+}
+proc GetGroupCallAreaIdByMs { ms } {
+	global glGCCDb
+	set cellId [DbGet $glGCCDb $ms SysInfoCellId]
+}
+
+proc RecvMmGccSyncInd { } {
+	global glCurrentMsId _sig glGCCDb
+	set res [rd _sig Res]
+	if { $res >=0 } {
+		#Save the res value for after...
+		DbSet $glGCCDb $glCurrentMsId Res $res
+		log "RecvMmGccSyncInd: Saving the res value: $res for MsId: $glCurrentMsId"
+	} else {
+		set cause [rd _sig Cause]
+		log "RecvMmGccSyncInd: Invalid res= $res cause = $cause"
+	}
+	
+}
+
+proc RecvMnGccJoinReq { } {
+	global glCurrentMsId glGCCDb
+
+	log "RecvMnGccJoinReq: Talker decided to stop talking and listen only"	
+	set pduGrCallRef [DbGet $glGCCDb $glCurrentMsId pduGroupCallReference]
+	log "RecvMnGccJoinReq: pduGrCallRef = $pduGrCallRef"
+	if { [IsVoid $pduGrCallRef] } {
+		set	grCallRef [DbGet $glGCCDb $glCurrentMsId GroupCallReference]
+		set callPriority [DbGet $glGCCDb $glCurrentMsId Priority] 
+		set pduGrCallRef [GetDescriptiveGroupCallReferencePdu $grCallRef $callPriority 0 1]
+		log "RecvMnJoinGccReq: calculated pdu = $pduGrCallRef GroupCallRef = $grCallRef"
+		DbSet $glGCCDb $glCurrentMsId pduGroupCallReference $pduGrCallRef
+	}
+	new MM_GCC_JOIN_GC_REQ s
+	wr s GroupCallRef $pduGrCallRef
+	wr s MsId $glCurrentMsId
+
+	send s
+
+	nextstate GC_Active_U2wr
+}
+
+proc SendEstablishRequest { msId } {
+	new MM_GCC_EST_REQ s
+	wr s MsId $msId
+	wr s CmServType 9
+	#TODO: implement tio calculation
+	wr s Tio 0
+	send s
+}
+
+proc IsTerminatingRequested { gccDb msId } {
+	return [DbGet $gccDb $msId TerminationRequired]
+}
+
+proc GetTerminationRequestPdu { gccDb msId } {
+	new GCC_TERMINATION_REQUEST s
+	wr s TIFlag 0 
+	wr s TI0 0
+	wr s SeqNum 0
+	set reference [DbGet $gccDb $msId GroupCallReference]
+	wr s GroupCallReference $reference
+	set priority [DbGet $gccDb $msId Priority]
+	wr s Priority $priority
+	set pdu [gccSigToPdu s]
+
+	return $pdu
+}
+
+proc GetUserPid { gccDb msId } {
+	return [DbGet $gccDb $msId UserPid]	
+}
+
+proc IsOwnPduGroupCallRef { gccDb msId receivedPduGroupCallRef } {
+	set	grCallRef [GetDecCallRefByPdu $receivedPduGroupCallRef]
+	set ownGrCallRef [DbGet $gccDb $msId GroupCallReference]
+	if { ![string compare $ownGrCallRef $grCallRef] } {
+		return 1
+	} else {
+		return 0
+	}
+}
+
+proc SendJoinGcCnf { gccDb msId } {
+	global glCurrentMsId glGCCDb
+	new MN_GCC_JOIN_GC_CNF s
+	wr s MsId $glCurrentMsId
+	send s [GetUserPid $glGCCDb $glCurrentMsId]
+}
+
+proc SendMmRelReq { msId } {
+	global _mmpid
+	new MM_GCC_REL_REQ t
+	wr t MsId $msId
+	wr t Tio 0 
+	wr t Cause ?
+	send t $_mmpid
+}
+
+proc SendTermIndToUser { gccdb msid cause } {
+	new MN_GCC_TERM_IND s
+	wr s MsId $msid
+	wr s Cause $cause
+	send s [GetUserPid $gccdb $msid]	
+}
+
+proc SendRelIndToUser { gccdb msid cause } {
+	new MN_GCC_REL_IND s
+	wr s MsId $msid
+	wr s Cause $cause
+	send s [GetUserPid $gccdb $msid]
+}
+
+proc IsCurrentCallPdu { gccdb msid } {
+	global _sig 
+	set pduGrCallRef [rd _sig GroupCallRef]
+	set grCallRef [GetDecCallRefByPdu $pduGrCallRef]
+	set ownGrCallRef [DbGet $gccdb $msid GroupCallReference]
+	log "IsCurrentCallPdu: grCallRef = $grCallRef ownGrCallRef = $ownGrCallRef"
+	if { $grCallRef == $ownGrCallRef } {
+		return 1
+	} else {
+		return 0
+	}
+}
+
+proc SendTalkerRejToUser { gccdb currentMsId } {
+	new MN_GCC_TALKER_REJ s
+	wr s MsId $currentMsId
+
+	send s [DbGet $gccdb $currentMsId UserPid]
+}
+
+proc IsChannelMMConnectionLost { cause } {
+	switch -exact -- $cause {
+		"e0ef33323330" { return 1 }
+		"e0af" { return 0 }
+		default {
+			logscr "######### ERROR: Received MM_GCC_REL_IND with invalid cause!"
+			return 1
+		}
+	}
+}
+
+proc SendMmAbortReq { msId cause } {
+	new MM_GCC_ABORT_REQ s
+	wr s MsId $msId
+	wr s Cause $cause
+	wr s Tio 0
+	send s
+}
+
+proc GetCauseStringByValue { causeId } {
+	switch -exact -- $causeId {
+	"20" { return "Busy" }
+	"17" { return "NetworkFailure" }
+	"10" { return "NormalCallClearing" }
+	default { return "UnknownCause" }
+	}
+}
+
+proc SendJoinIndToUser { gccdb msId } {
+	new MN_GCC_JOIN_GC_IND s
+	wr s MsId $msId
+
+	send s [DbGet $gccdb $msId UserPid]
+}
+
+##########
+# STATES #
+##########
+
+state WaitForConfig {
+	GCC_CONFIG { RcvConfig }
+	default	Unexpected
+}
+
+state Null_U0 {
+	MN_GCC_MS_SETUP_REQ {
+		global _sig glCurrentMsId glGCCDb _src
+		set grId [rd _sig GroupId]
+		set prio [rd _sig Priority]
+		DbSet $glGCCDb $glCurrentMsId Priority $prio
+		set origToDispInfo [rd _sig OrigToDispInfo]
+		DbSet $glGCCDb $glCurrentMsId OrigToDispInfo $origToDispInfo
+		DbSet $glGCCDb $glCurrentMsId UserPid $_src
+		DbSet $glGCCDb $glCurrentMsId VGCSCallGroupId $grId
+		#TODO: Check if the call is not already in place
+		#Send the Request for a connection to MM
+		SendEstablishRequest $glCurrentMsId
+		DbSet  $glGCCDb $glCurrentMsId ORIG 1 	
+		set tmrpid [DbGet $glGCCDb $glCurrentMsId TMMestid]
+		tmrstart $tmrpid
+		nextstate MM_ConnectionPending_U0p
+	}
+	MM_GCC_SETUP_IND	RcvMmGccSetupInd
+	MM_GCC_TERM_IND		{
+		global _sig glGCCDb glCurrentMsId
+		set pduGrCallRef [rd _sig GroupCallRef]
+		set grCallRef [GetDecCallRefByPdu $pduGrCallRef]
+		set grIdList [DbGet $glGCCDb $glCurrentMsId GroupIdList]
+		set grId [GetMostMachingGroupId $grIdList $grCallRef ]
+		if { $grId != 0 } {
+			LogReceivedSig
+			logscr "A Term Ind has been received, but the MS wasn't listening that call"
+		}
+	}
+	default Unexpected
+}
+
+state MM_ConnectionPending_U0p {
+	MM_GCC_EST_CNF { RecvMmEstConf }
+	T_MMEST { 
+		global glGCCDb glCurrentMsId
+		logscr "Waiting too much time while waiting for MM connection establish!"
+		SendTermIndToUser $glGCCDb $glCurrentMsId "CannotConnect"
+		SendMmRelReq $glCurrentMsId
+		nextstate Null_U0
+	}
+	default Unexpected
+}
+
+state GC_Initiated {
+	MM_GCC_DATA_IND RecvMmGccDataInd
+	MM_GCC_SYNC_IND RecvMmGccSyncInd
+	MM_GCC_REL_IND {
+		global glGCCDb glCurrentMsId
+		SendRelIndToUser $glGCCDb $glCurrentMsId "?"
+		nextstate Null_U0
+	}
+	default Unexpected
+}
+
+state GC_Active_U2sr {
+	default { Unexpected }
+}
+
+state GC_Active_U2sl {
+	MN_GCC_JOIN_GC_REQ { RecvMnGccJoinReq }
+	MN_GCC_TERM_REQ {
+		global _mmpid glCurrentMsId glGCCDb
+		new MM_GCC_DATA_REQ t
+		wr t MsId $glCurrentMsId
+		wr t Pdu [GetTerminationRequestPdu $glGCCDb $glCurrentMsId]
+		send t $_mmpid
+
+		nextstate GC_TerminationRequested_U5
+	}
+	MM_GCC_DATA_IND {
+		global _sig _sigpdu glGCCDb glCurrentMsId
+		set pdu [rd _sig Pdu]
+		gccPduToSig pdu
+		set sigName [lindex $_sigpdu 0]
+		switch -exact -- $sigName {
+			"GCC_TERMINATION" {
+				global _sig
+				set cause [rd _sigpdu Cause]
+				logscr "The network has required the call to stop."
+				SendMmRelReq $glCurrentMsId
+				SendTermIndToUser $glGCCDb $glCurrentMsId [GetCauseStringByValue $cause]
+
+				nextstate Null_U0
+			}
+			default { Unexpected }
+		}
+	}
+	MM_GCC_TERM_IND {
+		log "The cell where the talker is has no more the VGCH."
+	}
+	MM_GCC_JOIN_GC_IND {
+		global glGCCDb _sig glCurrentMsId
+		set mode [rd _sig Mode]
+		if { ![string compare $mode "no_channel"] } {
+			DbSet $glGCCDb $glCurrentMsId COMM 0
+			DbSet $glGCCDb $glCurrentMsId D_ATT 1
+			DbSet $glGCCDb $glCurrentMsId U_ATT 1
+			ActivateNoChannelTimer $glGCCDb $glCurrentMsId
+			# Remember that the dedicated has been lost, it will be used during the nochannel state
+			DbSet $glGCCDb $glCurrentMsId DedicatedChannelLost 1
+			SendJoinIndToUser $glGCCDb $glCurrentMsId
+			nextstate GC_Active_U2nc
+		} else {
+			DbSet $glGCCDb $glCurrentMsId COMM 0
+			DbSet $glGCCDb $glCurrentMsId D_ATT 1
+			DbSet $glGCCDb $glCurrentMsId U_ATT 0
+			SendJoinIndToUser $glGCCDb $glCurrentMsId
+			nextstate GC_Active_U2r
+		}
+	}
+	MM_GCC_REL_IND {
+		global glGCCDb _sig glCurrentMsId
+		if { [IsOwnPduGroupCallRef $glGCCDb $glCurrentMsId [rd _sig GroupCallRef] ] } {
+			log "The termination has been received, the dedicated channel is lost and the common \
+				is not available"
+			SendRelIndToUser $glGCCDb $glCurrentMsId "DedicatedLostCommonNotAvail"
+			nextstate Null_U0
+		}
+	}
+	default Unexpected
+}
+
+state GC_Active_U2r {
+	MN_GCC_TALKER_REQ {
+		global glCurrentMsId glGCCDb
+		SendEstablishRequest $glCurrentMsId
+		DbSet $glGCCDb $glCurrentMsId TerminationRequired 0
+		nextstate GC_Active_U2ws
+	}
+	MN_GCC_TERM_REQ {	
+		global _mmpid glCurrentMsId glGCCDb
+		SendEstablishRequest $glCurrentMsId
+		DbSet $glGCCDb $glCurrentMsId TerminationRequired 1
+		nextstate GC_Active_U2ws
+	}
+	MM_GCC_SETUP_IND {
+	}
+	MM_GCC_TERM_IND { 
+		global _sig glCurrentMsId glGCCDb
+		if { [IsOwnPduGroupCallRef $glGCCDb $glCurrentMsId [rd _sig GroupCallRef] ] } {
+			SendTermIndToUser $glGCCDb $glCurrentMsId "VGCHLost"
+			nextstate Null_U0
+		}
+	}
+	MM_GCC_REL_IND {
+		global glCurrentMsId glGCCDb
+		SendRelIndToUser $glGCCDb $glCurrentMsId "?"
+		nextstate Null_U0
+	}
+	MN_GCC_ABORT_REQ {
+		global glCurrentMsId
+		SendMmAbortReq $glCurrentMsId "?" 
+		nextstate Null_U0
+	} 
+	default Unexpected
+}
+
+state GC_Active_U2ws {
+	MM_GCC_EST_CNF {
+		global glCurrentMsId glGCCDb
+		nextstate GC_Active_U2_sr
+	}
+	MM_GCC_TERM_IND { 
+		global glCurrentMsId glGCCDb
+		if { [IsCurrentCallPdu $glGCCDb $glCurrentMsId] } {
+		 	SendTermIndToUser $glGCCDb $glCurrentMsId VGCHLost
+			nextstate Null_U0
+		}
+	} 
+	MM_GCC_REL_IND {
+		global glCurrentMsId glGCCDb _sig
+		if { [IsChannelMMConnectionLost [rd _sig Cause]] } {
+			#The channel has been, lost tell it to the user
+			SendTermIndToUser $glGCCDb $glCurrentMsId VGCHLost
+			nextstate Null_U0
+		} else {
+			SendTalkerRejToUser $glGCCDb $glCurrentMsId
+			#SendRelIndToUser $glGCCDb $glCurrentMsId "?"
+			#It is not possible to talk, Group Call Channel not free
+			nextstate GC_Active_U2r
+		}
+	}
+	MM_GCC_SETUP_IND {
+	}
+	default { Unexpected }
+}
+
+state GC_Active_U2_sr {
+	MM_GCC_SYNC_IND {
+		global _mmpid _sigpdu glCurrentMsId glGCCDb
+		if { [IsTerminatingRequested $glGCCDb $glCurrentMsId] } {
+			#The dedicated link has been received, sending the Termination Request
+			new MM_GCC_DATA_REQ t
+			wr t MsId $glCurrentMsId
+			wr t Pdu [GetTerminationRequestPdu $glGCCDb $glCurrentMsId]
+			send t $_mmpid
+
+			nextstate GC_TerminationRequested_U5
+		} else {
+			#Inform the user script that the dedicated connection is available
+			global glCurrentMsId glGCCDb
+			set usrPid [DbGet $glGCCDb $glCurrentMsId UserPid]
+			new MN_GCC_TALKER_CNF s
+			wr s MsId $glCurrentMsId
+			send s $usrPid
+
+			nextstate GC_Active_U2sl
+		}
+	}
+	MN_GCC_TERM_REQ {
+		global glCurrentMsId _mmpid glGCCDb
+		new MM_GCC_DATA_REQ t
+		wr t Pdu [GetTerminationRequestPdu $glGCCDb $glCurrentMsId]
+		wr t MsId $glCurrentMsId
+
+		send t $_mmpid
+
+		nextstate GC_TerminationRequested_U5 		
+	}
+	MM_GCC_TERM_IND {
+		global glCurrentMsId glGCCDb
+		if { [IsCurrentCallPdu $glGCCDb $glCurrentMsId] } {
+			SendTermIndToUser $glGCCDb $glCurrentMsId VGCHLost
+			nextstate Null_U0
+		}
+	}
+	MM_GCC_REL_IND {
+		global glCurrentMsId glGCCDb _sig
+		if { [IsChannelMMConnectionLost [rd _sig Cause]] } {
+			#The channel has been, lost tell it to the user
+			SendTermIndToUser $glGCCDb $glCurrentMsId VGCHLost
+			nextstate Null_U0
+		} else {
+			SendRelIndToUser $glGCCDb $glCurrentMsId "?"
+			#It is not possible to talk, Group Call Channel not free
+			nextstate GC_Active_U2r
+		}
+	} 
+	default { Unexpected }
+}
+
+state GC_TerminationRequested_U5 {
+	MM_GCC_DATA_IND {
+		global _sig _sigpdu glCurrentMsId glGCCDb _mmpid
+		set binpdu [rd _sig Pdu]
+		gccPduToSig binpdu
+		set sigName [lindex $_sigpdu 0]
+		if { ![string compare $sigName "GCC_TERMINATION"] } {
+			#Tell to the user script that the call is terminated
+			set usrPid [DbGet $glGCCDb $glCurrentMsId UserPid]
+			new MN_GCC_TERM_CNF s
+			wr s MsId $glCurrentMsId
+			send s $usrPid
+			SendMmRelReq $glCurrentMsId
+			nextstate Null_U0
+		} elseif { ![string compare $sigName "GCC_TERMINATION_REJECT"]} {
+			logscr "TERMINATION REJECTED"
+			nextstate GC_Active_U2sl
+		} else {
+			logscr "##### GCC_TERMINATION SIGNAL NOT RECEIVED #####"
+			logscr "$sigName"
+		}
+	}
+	MM_GCC_REL_IND {
+		global glGCCDb glCurrentMsId
+		SendTermIndToUser $glGCCDb $glCurrentMsId VGCHLost
+		nextstate Null_U0
+	}
+	MM_GCC_TERM_IND {
+		global _sig glCurrentMsId glGCCDb
+		if { [IsOwnPduGroupCallRef $glGCCDb $glCurrentMsId [rd _sig GroupCallRef] ] } {
+			log "The VCGH for this call is down, but the MS $glCurrentMsId has the dedicated link"
+		}
+	}
+	default { Unexpected }
+}
+
+state GC_Active_U2nc {
+	T_NOCHANNEL { TimerNoChannelExpired }
+	MM_GCC_JOIN_GC_CNF {
+		global glGCCDb glCurrentMsId
+		if { [DbGet $glGCCDb $glCurrentMsId DedicatedChannelLost] } {
+			SendJoinGcCnf $glGCCDb $glCurrentMsId
+		} else {
+			SendJoinIndToUser $glGCCDb $glCurrentMsId
+		}
+		nextstate GC_Active_U2r
+	}
+	MM_GCC_SETUP_IND {
+		global glGCCDb glCurrentMsId
+		set pduGrCallRef [rd _sig GroupCallRef]
+		if { ![string compare $pduGrCallRef [DbGet $glGCCDb $glCurrentMsId pduGroupCallReference]] } {
+			tmrstop [DbGet $glGCCDb $glCurrentMsId Tnochannelid]
+			new MM_GCC_JOIN_GC_REQ s
+			wr s MsId $glCurrentMsId
+			wr s GroupCallRef $pduGrCallRef
+			send s
+		} 
+	}
+	default Unexpected
+}
+
+state GC_Active_U2wr {
+	MM_GCC_JOIN_GC_CNF {
+		global glCurrentMsId glGCCDb _sig
+		set mode [rd _sig Mode]
+		if { ![string compare $mode "no_channel"] } {
+			logscr "The VGCH channel is not yet available"
+			#Try to get again the VGCH: REMOVE WHILE:
+			#The GCC waits for the SYSINFO to find if there is the VGCS call
+			#new MM_GCC_JOIN_GC_REQ s
+			#wr s MsId $glCurrentMsId
+			#wr s GroupCallRef [DbGet $glGCCDb $glCurrentMsId GroupCallReference]
+			#send s
+			ActivateNoChannelTimer $glGCCDb $glCurrentMsId
+			DbSet $glGCCDb $glCurrentMsId DedicatedChannelLost 0
+			nextstate GC_Active_U2nc
+		} else {
+			logscr "Received confirm for Group Call join (VGCH available)"
+			SendJoinGcCnf $glGCCDb $glCurrentMsId
+			#Go to the receive only mode	
+			nextstate GC_Active_U2r
+		}
+	}
+	MM_GCC_REL_IND {
+		global glGCCDb glCurrentMsId
+		logscr "Received release indication for the dedicated channel"
+		ActivateNoChannelTimer $glGCCDb $glCurrentMsId
+		#Retry to get the VGCH channel
+		#set callRef [DbGet $glGCCDb $glCurrentMsId GroupCallReference]
+		set pduCallRef [DbGet $glGCCDb $glCurrentMsId pduGroupCallReference]
+		new MM_GCC_JOIN_GC_REQ s
+		wr s GroupCallRef $pduCallRef
+		wr s MsId $glCurrentMsId
+		send s
+		DbSet $glGCCDb $glCurrentMsId DedicatedChannelLost 0
+
+		nextstate GC_Active_U2nc
+	}
+	MM_GCC_TERM_IND {
+		global glCurrentMsId glGCCDb
+		if { [IsCurrentCallPdu $glGCCDb $glCurrentMsId] } {
+			SendTermIndToUser $glGCCDb $glCurrentMsId VGCHLost
+			nextstate Null_U0
+		}		
+	}
+	MM_GCC_SETUP_IND RcvMmGccSetupIndDuringCall
+	default Unexpected
+}
+
+state GC_Present_U3 {
+	MN_GCC_JOIN_GC_REQ 		{ RecvMnGccJoinGcReq }
+	MN_GCC_ABORT_REQ		{ 
+		nextstate Null_U0
+	}
+	MN_GCC_ABORT_REQ 		{ RecvAbortReq }
+	MM_GCC_TERM_IND 		{
+		global glGCCDb glCurrentMsId
+		SendTermIndToUser $glGCCDb $glCurrentMsId VGCHLost
+		nextstate Null_U0
+	}
+	default Unexpected
+}
+state GC_ConnectionRequested_U4 {
+	MN_GCC_ABORT_REQ { RecvAbortReq }
+	MM_GCC_JOIN_GC_CNF { RecvMmGccJoinGcConf }
+	MM_GCC_SETUP_IND {
+	}
+	default Unexpected
+}
+
+################
+# DEBUG STATES #
+################
+
+state WaitForTestMessage {
+	GCC_CONNECT {
+		global _sig
+		log "_sig=$_sig"
+	}
+	GCC_SET_STATUS {
+		global _sig
+		log "_sig=$_sig"
+	}
+}

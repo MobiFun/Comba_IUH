@@ -1,0 +1,276 @@
+
+       ___
+     /_\_/_\    PRISMA Engineering S.r.l.
+    |\ /_\ /|   Telecom testing solutions
+    | |   | |   Via Petrocchi, 4 - 20127 Milano (Italy)
+    |/|___|\|   Tel. +39 02 26113507 - Fax +39 02 26113597
+     \|/_\|/    info@prisma-eng.com - http://www.prisma-eng.com
+
+
+
+/*+ O&M +*/
+typedef VOID GCC_CONFIG;
+
+typedef VOID GCC_CONFIG_ACK;
+
+typedef {
+UINT UserPid
+LIST_OF UINT ListMs 
+} GCC_SET_USER_PID;
+
+/*+ CORE PROTOCOL +*/
+typedef {
+BIT TIFlag
+UCHAR TI0
+BIT SeqNum
+UINT GroupCallReference
+UINT Priority
+HEXSTR OriginatorIndication
+} GCC_CONNECT;
+
+typedef {
+BIT TIFlag
+UCHAR TI0
+BIT SeqNum
+HEXSTR MsIdentity
+} GCC_GET_STATUS;
+
+typedef {
+BIT TIFlag
+UCHAR TI0
+BIT SeqNum
+UCHAR CipKeySeqNum
+HEXSTR MsClassMark2
+HEXSTR MsIdentity
+UINT GroupCallReference
+UINT Priority
+} GCC_IMMEDIATE_SETUP;
+
+typedef {
+BIT TIFlag
+UCHAR TI0
+BIT SeqNum
+UCHAR CipKeySeqNum
+HEXSTR MsClassMark2
+HEXSTR TMSI
+UINT GroupCallReference
+UINT Priority
+HEXSTR CompressedOdti
+} GCC_IMMEDIATE_SETUP2;
+
+typedef {
+BIT TIFlag
+UCHAR TI0
+BIT SeqNum
+BIT DA
+BIT UA
+BIT COMM
+BIT OI
+} GCC_SET_PARAMETER;
+
+typedef {
+BIT TIFlag
+UCHAR TI0
+BIT SeqNum
+UINT GroupCallReference
+UINT Priority
+HEXSTR OrigToDispInfo
+} GCC_SETUP;
+
+typedef {
+BIT TIFlag
+UCHAR TI0
+BIT SeqNum
+HEXSTR Cause
+HEXSTR CallState
+HEXSTR StateAttributes
+} GCC_STATUS;
+
+typedef {
+BIT TIFlag
+UCHAR TI0
+BIT SeqNum
+HEXSTR Cause
+} GCC_TERMINATION;
+
+typedef {
+BIT TIFlag
+UCHAR TI0
+BIT SeqNum
+HEXSTR RejectCause
+} GCC_TERMINATION_REJECT;
+
+typedef {
+BIT TIFlag
+UCHAR TI0
+BIT SeqNum
+UINT GroupCallReference
+UINT Priority
+} GCC_TERMINATION_REQUEST;
+
+/*+ GCC MANAGEMENT (MMI) +*/
+typedef {
+UINT GroupId
+UINT GroupCallAreaId
+HEXSTR eMLPPriority
+HEXSTR Priority
+HEXSTR MsIdentity
+HEXSTR DisId
+UINT BssapAsgReqWaitTime
+HEXSTR TalkerAsgReq
+HEXSTR TalkerPriority 
+} MN_GCC_NET_ACT_REQ;
+
+typedef {
+HEXSTR DisId
+HEXSTR GroupId
+HEXSTR GroupCallAreaId 
+} MN_GCC_NET_ACT_CNF;
+
+typedef {
+HEXSTR DisId
+} MN_GCC_NET_CMPLTE_IND;
+
+typedef {
+HEXSTR GroupId
+HEXSTR GroupCallAreaId
+HEXSTR DisId
+} MN_GCC_NET_REL_REQ;
+
+typedef {
+HEXSTR DisId
+HEXSTR GroupId
+HEXSTR GroupCallAreaId
+HEXSTR GroupCallReference 
+} MN_GCC_NET_REL_CNF;
+
+typedef {
+HEXSTR BscId
+HEXSTR GroupId
+HEXSTR GroupCallAreaId
+HEXSTR Cause
+HEXSTR DisId
+} MN_GCC_NET_FAIL_IND;
+
+typedef {
+HEXSTR MsId
+UINT GroupId
+UCHAR Priority
+HEXSTR OrigToDispInfo 
+} MN_GCC_MS_SETUP_REQ;
+
+typedef {
+HEXSTR MsId 
+} MN_GCC_MS_SETUP_ACK;
+
+typedef {
+HEXSTR MsId 
+} MN_GCC_MS_ERROR_IND;
+
+typedef {
+HEXSTR MsId
+HEXSTR GroupId
+HEXSTR GroupCallAreaId
+UCHAR Priority 
+} MN_GCC_SETUP_IND;
+
+typedef {
+HEXSTR MsId 
+} MN_GCC_JOIN_GC_REQ;
+
+typedef {
+HEXSTR MsId 
+} MN_GCC_JOIN_GC_CNF;
+
+typedef {
+HEXSTR MsId 
+} MN_GCC_JOIN_GC_IND;
+
+typedef {
+HEXSTR MsId 
+} MN_GCC_ABORT_REQ;
+
+typedef {
+HEXSTR MsId 
+} MN_GCC_MS_SETUP_CNF;
+
+typedef {
+HEXSTR MsId 
+} MN_GCC_T_NOCHANNEL_EXPIRED;
+
+typedef {
+HEXSTR BscId 
+} MN_GCC_NET_BSC_CLR_CMPLT;
+
+typedef {
+HEXSTR MsId
+HEXSTR GroupId
+HEXSTR GroupCallAreaId 
+} MN_GCC_NET_SETUP_IND;
+
+typedef {
+HEXSTR GroupId
+HEXSTR GroupCallAreaId 
+} MN_GCC_NET_SYNC_IND;
+
+typedef {
+HEXSTR GroupId
+HEXSTR GroupCallAreaId
+HEXSTR Cause 
+} MN_GCC_NET_ERROR_IND;
+
+typedef {
+HEXSTR MsId 
+} MN_GCC_TALKER_REQ;
+
+typedef {
+HEXSTR MsId 
+} MN_GCC_TALKER_CNF;
+
+typedef {
+HEXSTR MsId 
+} MN_GCC_TALKER_REJ;
+
+typedef {
+HEXSTR MsId
+HEXSTR GroupCallReference 
+} MN_GCC_TALKER_IND;
+
+typedef {
+HEXSTR MsId 
+} MN_GCC_TERM_REQ;
+
+typedef {
+HEXSTR MsId 
+} MN_GCC_TERM_CNF;
+
+typedef {
+HEXSTR MsId
+HEXSTR Cause 
+} MN_GCC_REL_IND;
+
+typedef {
+HEXSTR MsId
+HEXSTR GroupCallReference 
+} MN_GCC_SYNC_REQ;
+
+typedef {
+HEXSTR MsId 
+} MN_GCC_SYNC_CNF;
+
+typedef {
+HEXSTR GroupId
+HEXSTR GroupCallAreaId 
+} MN_GCC_UPLINK_REL;
+
+typedef {
+HEXSTR GroupId
+HEXSTR GroupCallAreaId
+HEXSTR NewTalkerMsId 
+} MN_GCC_UPLINK_BUSY;
+
+typedef {
+HEXSTR MsId
+HEXSTR Cause   
+} MN_GCC_TERM_IND;
+

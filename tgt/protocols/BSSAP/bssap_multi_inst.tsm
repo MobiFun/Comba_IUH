@@ -1,0 +1,850 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/BSSAP_COMBA/tags/BSSAP_COMBA-1.2.0/scripts/bssap_multi_inst.tsm $
+#
+# $Author: roger $
+#
+# Description: BSSAP Multi Instance Handler 
+#
+# $Rev: 53539 $
+#
+# $Date: 2012-07-27 15:56:11 +0200 (Fri, 27 Jul 2012) $
+##############################################################
+
+# SVN Revision Checking #
+set url "\$URL: http://memo.prisma/svn/tm/scriptProt/BSSAP_COMBA/tags/BSSAP_COMBA-1.2.0/scripts/bssap_multi_inst.tsm $"
+set rev "\$Rev: 53539 $"
+logv0 "[GetName $url]: version [Version "script" $url $rev]"
+
+##############################################################
+# Type Definitions
+##############################################################
+
+typedef { STRUCT {UINT MsId} {STRING ApIdContextId} CONNECT_ACK }
+typedef { STRUCT {STRING ApIdContextId} {STRUCTURE Pdu } CONNECT_IND }
+typedef { STRUCT {UINT MsId} {STRUCTURE Pdu} CONNECT_CNF }
+typedef { STRUCT {UINT MsId} {STRUCTURE Pdu} DISCONNECT_IND }
+typedef { STRUCT {UINT MsId} {STRUCTURE Pdu} DATA_IND }
+typedef { STRUCT {UINT MsId} {STRUCTURE Pdu} UNITDATA_IND }
+typedef { STRUCT {UINT MsId} {HEXSTR Cause} BSSAPGS_AP_ABORT_REQ }
+## used to inform bssap related context id
+typedef { STRUCT {UINT MsId} {UINT CnDomain} {UINT ContextId} {STRING ApId} RUA_CONNECT_ACK }
+typedef { STRUCT {UINT CnDomain} {UINT ContextId} {STRING ApId} RUA_DISCONNECT_ACK }
+typedef { STRUCT {UINT CnDomain} {UINT ContextId} {STRING ApId} { STRUCTURE Pdu } RUA_NET_CONNECT }
+typedef { STRUCT {UINT MsId} {UINT CnDomain} {UINT ContextId} {STRING ApId} RUA_NET_CONNECT_ACK }
+typedef { VOID HNBAP_BSSAP_SAP }
+##############################################################
+# MULTI-INSTANCE Handler
+##############################################################
+
+proc RxSignalProc { } {
+
+	# Global Variables
+	global _sig
+
+	switch -glob -- [lindex $_sig 0] {
+		"BSSAP_OM_CFG"					{ BssapConfigHnd }
+		"BSSAP_OM_PCSTATE_IND"			{ GetInstPcStateInd }
+		"BSSAP_CTL_RESET"				-
+		"BSSAP_CTL_RESET_RESOURCES"     -
+		"BSSAP_CTL_MSC_TRACE_INVOKE"	-
+		"BSSAP_CTL_SEND_OVERLOAD"		-
+		"BSSAP_CTL_RESET_CIRC"	        -
+		"T_2"           				-
+		"T_4"           				-
+		"T_13"           				-
+		"T_16"           				{ GetInstGlob }
+		"T_25"							-
+		"T_RMSC"						-
+		"T_RESET_GLOBAL"				-
+		"T_RESET_TDMCIRCUIT"			-
+		"T_RESET_IPRESOURCE"			-
+		"T_RST"           				{ GetInstGlob }
+		"T_LE_RST"         				{ GetInstGlob }
+		"T_USR_LE_RST"     				{ GetInstGlob }
+		"T_CLEARCOMPLETE"				{ GetTClrCmplteInst }
+		"SCCP_N_CONNECT_IND"			{ DecSccpNConnectInd }
+		"SCCP_CONNECT_ACK"				{ DecSccpConnectAck }
+		"SCCP_N_CONNECT_CNF"			{ DecSccpNConnectCnf }
+		"SCCP_N_DISCONNECT_IND"			{ DecSccpNDisconnectInd }
+		"SCCP_N_DATA_IND"				{ DecSccpNDataInd }
+		"SCCP_N_UNITDATA_IND"			{ DecSccpNUnitdataInd }
+		"SCCP_N_NOTICE_IND"				{ DecSccpNNoticeInd }
+		"BSSAP_AP_EST_ACK"  			{ ApEstAckHdl }
+		"BSSAP_AP_EST_NACK"  	        { ApEstNackHdl }
+		"T_PAG"           				{ DefaultTmrMs }
+		"T_CIPHR"    					{ DefaultTmrMs }
+		"T_RG_TRR2"						{ DefaultTmrMs }
+		"T_DBG_GET_STATS"      			{ GetStatistics }
+		"T_PLAYER"						{ }
+		"T_FIRSTPLAYER"					{ }
+		"T_SECONDPLAYER"				{ }
+		"BSSAPPLUS_OM_CFG_ACK"			{ }
+		"BSSAP_CTL_VGCS_SETUP_REQ"		{ RedirectToVGCSBSSAP }
+		"BSSAP_CTL_VGCS_RELEASE_REQ"	{ RedirectToVGCSBSSAP }
+		"UL_RELSE_IND"					{ RedirectToVGCSBSSAP }
+		"BSSAPVGCS_GCCPID_ASSIGNMENT"	{ RedirectToVGCSBSSAP }
+		"BSSAP_CTL_VGCS_SEND_UPL_REL"	{ RedirectToVGCSBSSAP }
+		"BSSAP_CTL_VGCS_HOV_PERFD_IND"	{ RedirectToVGCSBSSAP }
+		"BSSAP_AP_TALKER_IND"			{ RedirectToMM }
+		"VGCS_FORWARD_TO_MM"			{ VgcsForwardToMm }
+		"RTP_OPEN_ACK"                  { GetInstRtp }
+		"RTP_OPEN_NAK"                  { GetInstRtp }
+		"RAB_OPEN_ACK"                  { GetInstCsUdg }
+		"RAB_OPEN_NAK"                  { GetInstCsUdg }
+		"PLAY_OPEN_ACK"                 { GetInstCsUdg }
+		"PLAY_OPEN_NAK"                 { GetInstCsUdg }
+		"START_ACK"                     { GetInstCsUdg }
+		"START_NAK"                     { GetInstCsUdg }
+		"TERMINATE_ACK"                 { GetInstCsUdg }
+		"TERMINATE_NAK"                 { GetInstCsUdg }
+		"PLAY_CLOSE_ACK"                { GetInstCsUdg }
+		"PLAY_CLOSE_NAK"                { GetInstCsUdg }
+		"RAB_CLOSE_ACK"                 { GetInstCsUdg }
+		"RAB_CLOSE_NAK"                 { GetInstCsUdg }
+		"RTP_CLOSE_ACK"                 { GetInstRtpClose }
+		"RTP_CLOSE_NAK"                 { GetInstRtpClose }
+		"BSSAP_TRAFFIC_DATA_IND"		{ GetInstTrafficData }
+		"T_PERFLOCRESP"    				{ DefaultTmrMs }
+		"T_LE_WRLSD"    				{ DefaultTmrMs }
+		"T_LE_WTARESP"    				{ DefaultTmrMs }
+		"T_LE_T1"	    				{ DefaultTmrMs }
+		"BSSAP_LE_SET_USERPID"			{  }
+		"BSSAP_AP_LE_PERF_LOC_CMD"		{ GetInstBssapLe }
+		"BSSAP_RESET_RESOURCE_REQ"		-
+		"BSSAP_RESET_TDMCIRCUIT_REQ"	-
+		"OM_BSSAP_SSNM_REQ"				{ GetInstGlob }
+		"BSSAP_CTL_INT_HOV_ENQUIRY"		{ BssapCtlIntHoEnqHnd }
+		"BSSAP_SET_CC_PID"				{ }
+		"RUA_*"					{ RuaSapHnd }
+		default 						{ GetInstBssap }
+	}
+
+	global glMsId
+
+	log "RxSignalProc: BSSAP: glMsId=$glMsId"
+}
+
+proc RuaSapHnd {} {
+	# Global Variables
+	global _sig glIdx 
+
+	set primName [lindex $_sig 0]
+	log "RuaSapHnd: RUA message $primName is sent to BSSAP"
+	switch -exact -- $primName {
+		"RUA_CONNECT"    				{ if { [DecRUA_CONNECT] == "-1" } { skipMsg } }
+		"RUA_DIRECTTRANSFER"			{ if { [DecRUA_DIRECTTRANSFER] == "-1" } { skipMsg } }
+		"RUA_DISCONNECT"				{ if { [DecRUA_DISCONNECT] == "-1" } { skipMsg } }
+		"RUA_CONNECTIONLESSTRANSFER"	{ if { [DecRUA_CONNECTIONLESSTRANSFER] == "-1" } { skipMsg } }
+		"RUA_NET_CONNECT_ACK"			-
+		"RUA_CONNECT_ACK"               { if { [DecRuaConnectAck] == "-1" } { skipMsg} }
+		"RUA_DISCONNECT_ACK"			{ if { [DecRUA_DISCONNECT_ACK] == "-1" } { skipMsg } }
+		"RUA_ERRORINDICATION"			- 
+		"RUA_PRIVATEMESSAGE"	  		{ 
+			LogInputSig
+			skipMsg
+		}
+	}
+
+}
+
+##############################################################
+# Statistics
+##############################################################
+
+proc GetStatistics { } {
+
+	log "---------- START OF BSSAP STATISTICS ----------"
+	
+	# Dump Statistics Variable
+	log "[::profiler::print]"
+
+	log "----------  END OF BSSAP STATISTICS  ----------"
+
+	skipMsg
+}
+
+##############################################################
+# VGCS Handling
+##############################################################
+
+proc RedirectToVGCSBSSAP { } {
+	
+	global glVGCSBSSAPPid _sig
+	send _sig $glVGCSBSSAPPid
+	skipMsg
+}
+
+proc RedirectToMM { } {
+	global _sig
+	
+	send _sig
+	skipMsg
+}
+
+proc VgcsForwardToMm { } {
+	global _sig
+	
+	set sig [rd _sig Signal]
+	send sig
+	skipMsg
+}
+
+##############################################################
+# Data Base handling
+##############################################################
+
+proc CreateBssapDb { dbname } {
+			
+	# Set local BSSAP db
+
+		# MsSide
+
+		# Index 
+		lappend idxList [list Idx Index Read_Only]
+		# State
+		lappend idxList [list State Normal Read/Write]
+		# Ss7 Infos (used to find a MS)
+		lappend idxList [list ApIdContextId Key Read/Write]
+		lappend idxList [list ApIdContextIdTarget Key Read/Write]
+		# from ApId,we can find corresponding SCTP connection
+		lappend idxList [list ApId Normal Read/Write]
+		lappend idxList [list ApIdTarget Normal Read/Write]
+		# Cell Identification
+		lappend idxList [list PLMN Normal Read/Write]
+		lappend idxList [list LAC Normal Read/Write]
+		lappend idxList [list CellId Normal Read/Write]
+		lappend idxList [list LACTarget Normal Read/Write]
+		lappend idxList [list CellIdTarget Normal Read/Write]
+		lappend idxList [list HovRef Normal Read/Write]
+		# Encryption Information: used to store choosen encryption algorithm
+		lappend idxList [list Encryption Normal Read/Write]
+		# Channel Type
+		lappend idxList [list Spi Normal Read/Write]
+		lappend idxList [list ChannelRate Normal Read/Write]
+		lappend idxList [list PermSpeech Normal Read/Write]
+		lappend idxList [list DataRate Normal Read/Write]
+		# Traffic Resource
+		lappend idxList [list ContextId Normal Read/Write]
+		lappend idxList [list ContextIdTarget Normal Read/Write]
+		# Message Buffers
+		lappend idxList [list ApDataReqBuf Normal Read/Write]
+		lappend idxList [list ApSyncReqBuf Normal Read/Write]
+		# General Ms Characteristics
+		lappend idxList [list TMSI Key Read/Write]
+		# Reset Handlder - Instance Null
+		lappend idxList [list CurrResetIndex Normal Read/Write]
+		# Traffic resource extended
+		lappend idxList [list ContextIdExt Key Read/Write]
+		lappend idxList [list ContextIdExtTarget Key Read/Write]
+		# Index for the selection of the Queue Id to be used
+		lappend idxList [list QueueIdListIndex	Normal Read/Write]
+		# Parameters for ip user plane activation
+		lappend idxList [list LocalIp        Normal Read/Write]
+		lappend idxList [list HoLocalIp      Normal Read/Write]
+		lappend idxList [list LocalPort	     Normal Read/Write]
+		lappend idxList [list HoLocalPort	 Normal Read/Write]
+		lappend idxList [list DestIp         Normal Read/Write]
+		lappend idxList [list HoDestIp       Normal Read/Write]
+		lappend idxList [list DestPort	     Normal Read/Write]
+		lappend idxList [list HoDestPort     Normal Read/Write]
+		lappend idxList [list IpAddPort      Key Read/Write]
+		lappend idxList [list RtpIdForPpuId	 Key Read/Write]
+		lappend idxList [list CallId	     Key Read/Write]
+		lappend idxList [list SpeechVer	     Normal Read/Write]
+		lappend idxList [list HoSpeechVer	 Normal Read/Write]
+		lappend idxList [list SpeechCodec	 Normal Read/Write]
+		lappend idxList [list PeerMsId	     Normal Read/Write]
+		lappend idxList [list AoipMscPcl     Normal Read/Write]
+		lappend idxList [list PpuId			 Normal Read/Write]
+		lappend idxList [list UpType		Normal Read/Write]
+
+		lappend idxList [list DPhone	     Normal Read/Write]
+		
+		lappend idxList [list T_PERFLOCRESPid Key Read/Write]
+		lappend idxList [list T_LE_WRLSDid Key Read/Write]
+		lappend idxList [list T_LE_T1id Key Read/Write]
+		lappend idxList [list UserPid Normal Read/Write]
+
+		lappend idxList [list SaveQue Normal Read/Write]
+
+
+
+	DbCreate $dbname $idxList
+}
+
+proc SetDPhone { msId dphone } {
+	global glBssapDb
+	log "SetDPhone: msId=$msId dphone=$dphone"
+	DbSet $glBssapDb $msId DPhone $dphone
+}
+
+proc ForceSendOmPcmConnect { msId } {
+	global glBssapDb
+	set str [DbGet $glBssapDb $msId ContextIdConnection]
+	set v [split $str]
+	set spc [DbGet $glBssapDb $msId Spc]
+	set stkid [DbGet $glBssapDb $msId StkId]
+	set pcm [lindex $v 5]
+	set ts [lindex $v 6]
+	set dphone [lindex $v 2]
+
+	log "ForceSendOmPcmConnect: pcm=$pcm"; #cDEBUG
+	# TMA-349 start
+    set stm1PcmLine   [lindex [split $pcm -] 1]
+
+	if { [IsEmpty $stm1PcmLine] || [IsVoid $stm1PcmLine] } {
+		log "ForceSendOmPcmConnect: DPHONE-Electrical PCMs"; #cDEBUG
+		# DPHONE -> Electrical PCMs
+		SendPcmConnect $spc $stkid $pcm $ts DPHONE $dphone 0
+	} elseif { ![IsVoid $stm1PcmLine] } {
+		log "ForceSendOmPcmConnect: DPHONE-STM1 mapped PCMs: stm1PcmLine=$stm1PcmLine"; #cDEBUG
+		# DPHONE -> STM1 mapped PCMs
+		SendMixedStm1PcmConnect $spc $stkid $pcm $ts DPHONE $dphone 0 7
+	} else {
+		log "ForceSendOmPcmConnect: WARNING"
+	}
+	# TMA-349 stop
+
+	log "ForceSendOmPcmConnect: v=$v"
+}
+
+set ::glIuhDb BssapIuhDb
+
+
+
+proc dbIuhCreateFromCsv { csv } {
+    log "dbIuhCreateFromCsv: csv=$csv"
+
+    set dbCsv [DbGetName $csv]
+    log "dbIuhCreateFromCsv: dbCsv=$dbCsv"
+    spawn "DbCreate.tsm $csv"
+
+    set idxList [DbRecordInfo $dbCsv]
+    regsub  -all "Read_Only" $idxList "Read/Write" idxList
+    lappend idxList [list CtlSpc                  Normal  Read/Write]
+    lappend idxList [list CtlStkId                Normal  Read/Write]
+
+    DbCreate $::glIuhDb $idxList
+    # IuhIdx ::= 'Iuh_<int>'
+    foreach IuhIdx [DbGetIndexList $dbCsv] {
+        DbCreateDefEntry $::glIuhDb $IuhIdx
+        foreach col [GetDbColumnList $idxList] {
+            if { [DbFieldExists $dbCsv $col] } {
+                DbSet $::glIuhDb $IuhIdx $col [DbGet $dbCsv $IuhIdx $col]
+            } else {
+                log "dbIuhCreateFromCsv: '$col' is not present in db $dbCsv"
+            }
+        }
+        DbSet $::glIuhDb $IuhIdx CtlSpc                  ?
+        DbSet $::glIuhDb $IuhIdx CtlStkId                ?
+    }
+    DbDelete $dbCsv
+}
+
+proc AddBscEntity { ss7StkDb cfgBscDb bscdb bscid } {
+    
+	global glBtsDb glTrfDb
+
+	DbCreateDefEntry $bscdb $bscid
+
+	logscr "AddBscEntity: bscid=$bscid"
+
+	set spc [DbGet $cfgBscDb $bscid Spc]
+	if { [CnSide] } {
+		# from the point of view of MSC, BSC's Spc is Dpc
+		set side Dpc
+	} else {
+		set side Opc
+	}
+
+	if { [MultiMgwTdm] || [MultiLinkSetCheck] } {
+		log "AddBscEntity: multi_mgw management or multi_linkset management"
+		set check 0
+		for { set id 1 } { $id <= [DbSize $ss7StkDb] } { incr id } {
+			log "id=$id"; #cDEBUG
+			if { [DbGet $ss7StkDb $id $side] == $spc } {
+				set linksetid [DbGet $ss7StkDb $id LinksetId]
+				set check 1
+				break
+			}
+		}
+		if {$check} {
+			log "AddBscEntity: linksetid=$linksetid about Spc=$spc (side=$side)"
+		} else {
+			abort "Spc $spc Not Found in SS7 Db"	
+		}
+	} else {
+		if { [DbKeyExists $ss7StkDb $side $spc] } {
+			set linksetid [DbGetIdx $ss7StkDb $side $spc]
+		} else {
+			abort "Spc $spc Not Found in SS7 Db"	
+		}
+	}
+
+	if { [MsSide] } {
+		global glBscSpc
+		set glBscSpc [DbGet $ss7StkDb $linksetid Opc]
+		log "AddBscEntity: glBscSpc=$glBscSpc"
+	}
+	# Opc
+	DbSet $bscdb $bscid Opc [DbGet $ss7StkDb $linksetid Opc]
+	log "AddBscEntity: DbGet $bscdb $bscid Opc=[DbGet $bscdb $bscid Opc]"
+	# Dpc
+	DbSet $bscdb $bscid Dpc [DbGet $ss7StkDb $linksetid Dpc]
+	log "AddBscEntity: DbGet $bscdb $bscid Dpc=[DbGet $bscdb $bscid Dpc]"
+
+	# Carlo TDM MultiMGW management
+	# nota: lo StkId preso di default nel caso MultiMGW e' quello relativo ad uno dei MGW
+
+	# StkId
+	DbSet $bscdb $bscid StkId [DbGet $ss7StkDb $linksetid StkId]
+	log "AddBscEntity: DbGet $bscdb $bscid StkId=[DbGet $bscdb $bscid StkId]"
+
+	# AllocContextIds
+	DbSet $bscdb $bscid AllocContextIds [DbGet $cfgBscDb $bscid AllocContextIds]
+	# BtsDb
+	DbSet $bscdb $bscid BtsDb [DbGet $cfgBscDb $bscid BtsDb]
+	# TrafficLinksDb
+	DbSet $bscdb $bscid TrafficLinksDb [DbGet $cfgBscDb $bscid TrafficLinksDb]
+
+	if { [GsInterfaceActive] } {
+		# Gs Link
+		DbSet $bscdb $bscid GsLink [DbGet $cfgBscDb $bscid GsLink]
+		set sgsnLink [DbGet $cfgBscDb $bscid GsLink] 
+		log "AddBscEntity sgsnLink=$sgsnLink"
+	} else {
+        set sgsnLink 0   
+    }
+
+	if { !$sgsnLink } {
+
+		# Create Cell Db
+		set dbpath [DbGet $bscdb $bscid BtsDb]
+		set dbname [DbGetName $dbpath]
+		spawn "DbCreate.tsm $dbpath.csv"
+		append glBtsDb($bscid) "Bsc" $bscid "CellDb"  
+		# Index
+		lappend idxList [list Idx Index Read_Only]
+		# Lac - CellId Key
+		lappend idxList [list LacCellId Key Read/Write]
+
+		log "AddBscEntity: creating $glBtsDb($bscid) DB"; #debug
+		DbCreate $glBtsDb($bscid) $idxList
+
+		foreach cellIdx [DbGetIndexList $dbname] {
+
+			set lac [DbGet $dbname $cellIdx LAC]
+			set cellid [DbGet $dbname $cellIdx CellId]
+			append cellDscr $lac "_" $cellid; #TODO: use a proc to create the key
+			DbCreateDefEntry $glBtsDb($bscid) $cellIdx
+			DbSet $glBtsDb($bscid) $cellIdx LacCellId $cellDscr
+			log "AddBscEntity: DbSet $glBtsDb($bscid) $cellIdx LacCellId $cellDscr"; #debug
+			set cellDscr ""
+
+		}
+
+		# Create Traffic Links Db
+		set dbpath [DbGet $bscdb $bscid TrafficLinksDb]
+		set glTrfDb($bscid) [DbGetName $dbpath]
+		spawn "DbCreate.tsm $dbpath.csv"
+	}
+
+	if { [CnSide] } {
+
+		# DTX Flag
+		DbSet $bscdb $bscid DTXflag [DbGet $cfgBscDb $bscid DTXflag]
+
+		# Timer T_2 (reset guard period)
+		DbSet $bscdb $bscid T_2id [tmrnew T_2 1000]
+		# Timer T_16 (time to receipt RST_ACK)
+		DbSet $bscdb $bscid T_16id [tmrnew T_16 5000]
+		# Timer T_21 (time to receipt of BLKG_ACK)
+		DbSet $bscdb $bscid T_21id [tmrnew T_21 2000]
+		# Timer T_22 (time to receipt of CIRC_GROUP_BLKG_ACK)
+		DbSet $bscdb $bscid T_22id [tmrnew T_22 2000]
+
+		if { $::glAoip } {
+			global __Dbssap25 __Dbssap_rmsc __Dbssap_PerGlobalReset __Dbssap_PerCircReset __Dbssap_PerIpReset
+			# Timer T_25 (Internal Handover Required guard period)
+			if { [info exists __Dbssap25] && ![IsVoid $__Dbssap25] } {
+				DbSet $bscdb $bscid T_25id [tmrnew T_25 $__Dbssap25]
+			} else {
+				DbSet $bscdb $bscid T_25id [tmrnew T_25 2000]
+			}
+			# Timer T_rmsc (Time to receipt Reset IP Resource ACK at the MSC)
+			if { [info exists __Dbssap_rmsc] && ![IsVoid $__Dbssap_rmsc] } {
+				DbSet $bscdb $bscid T_RMSCid [tmrnew T_RMSC $__Dbssap_rmsc]
+			} else {
+				DbSet $bscdb $bscid T_RMSCid [tmrnew T_RMSC 5000]
+			}
+			# Timer T_ResetGlobal (Periodic Trigger Time of the Reset Global)
+			if { [info exists __Dbssap_PerGlobalReset] && ![IsVoid $__Dbssap_PerGlobalReset] } {
+				DbSet $bscdb $bscid T_RESET_GLOBALid [tmrnew T_RESET_GLOBAL $__Dbssap_PerGlobalReset]
+			} else {
+				DbSet $bscdb $bscid T_RESET_GLOBALid [tmrnew T_RESET_GLOBAL 60000]
+			}
+			# Timer T_ResetTdmCircuit (Periodic Trigger Time of the Reset TDM Circuit)
+			if { [info exists __Dbssap_PerCircReset] && ![IsVoid $__Dbssap_PerCircReset] } {
+				DbSet $bscdb $bscid T_RESET_TDMCIRCUITid [tmrnew T_RESET_TDMCIRCUIT $__Dbssap_PerCircReset]
+			} else {
+				DbSet $bscdb $bscid T_RESET_TDMCIRCUITid [tmrnew T_RESET_TDMCIRCUIT 60000]
+			}
+			# Timer T_ResetIpResource (Periodic Trigger Time of the Reset IP Resource)
+			if { [info exists __Dbssap_PerIpReset] && ![IsVoid $__Dbssap_PerIpReset] } {
+				logv1 "AddBscEntity: __Dbssap_PerIpReset=$__Dbssap_PerIpReset"
+				DbSet $bscdb $bscid T_RESET_IPRESOURCEid [tmrnew T_RESET_IPRESOURCE $__Dbssap_PerIpReset]
+			} else {
+				DbSet $bscdb $bscid T_RESET_IPRESOURCEid [tmrnew T_RESET_IPRESOURCE 60000]
+			}
+		}
+	} else {
+
+		# Timer T_1 (time to receipt of BLKG_ACK)
+		DbSet $bscdb $bscid T_1id [tmrnew T_1 2000]
+	
+		# Timer T_13 (reset guard period)
+	##	DbSet $bscdb $bscid T_13id [tmrnew T_13 1000]
+		# Carlo 20/07/2011 workaround (caso per  200 Ms o +)
+		DbSet $bscdb $bscid T_13id [tmrnew T_13 10000]
+	
+		# Timer T_4 (time to receipt RST_ACK)
+		DbSet $bscdb $bscid T_4id [tmrnew T_4 30000]
+		# Timer T_20 (time to receipt of CIRC_GROUP_BLKG_ACK)
+		DbSet $bscdb $bscid T_20id [tmrnew T_20 2000]
+	}
+}
+
+
+
+##############################################################
+# Multi Instance Handling
+##############################################################
+
+proc BssapConfigHnd { } {
+
+	global glMsId glInstNull
+
+	# Settings
+	set glMsId $glInstNull
+}
+
+proc GetInstGlob { } {
+
+	global glInstNull glMsId glBssapDb
+
+	GetInstWithSave $glInstNull $glBssapDb glMsId
+}
+
+proc GetInstPcStateInd { } {
+	global glInstNull glMsId glBssapDb _sig
+
+	#TMA-337
+	if { ![IsVoid [rd _sig RstTimer]] } {
+		log "GetInstPcStateInd: BSSAP_OM_PCSTATE_IND not sent at the initial phase"; #cDEBUG
+
+			#TODO Carlo probabilmente è da sistemare qs !!!
+			log "GetInstPcStateInd: glMsId=$glMsId"; #cDEBUG
+
+			GetInstWithSave $glMsId $glBssapDb glMsId
+	} else {
+		log "GetInstPcStateInd: BSSAP_OM_PCSTATE_IND sent at the initial phase"; #cDEBUG
+		GetInstGlob
+	}
+}
+
+proc GetTClrCmplteInst { } {
+
+	global glMsId glBssapDb _src glTarget glTmrClrApIdContextId
+
+	set timerid $_src
+
+	set ApIdContextId [tmclcmp_getlinkbytimer $timerid]
+	logscr "GetTClrCmplteInst: found link = $ApIdContextId"
+	if { [string compare $ApIdContextId "NotFound"] } {
+		# Try to find MS link
+		if { [DbKeyExists $glBssapDb ApIdContextId $ApIdContextId] } {
+			set idx [DbGetIdx $glBssapDb ApIdContextId $ApIdContextId]
+			log "GetTClrCmplteInst: link = $ApIdContextId (Field:ApIdContextId) MsId = $idx"
+			GetInstWithSave $idx $glBssapDb glMsId
+			set glTmrClrApIdContextId $ApIdContextId
+		# Try with target
+		} elseif { [DbKeyExists $glBssapDb ApIdContextIdTarget $ApIdContextId] } {
+			set idx [DbGetIdx $glBssapDb ApIdContextIdTarget $ApIdContextId]
+			log "GetTClrCmplteInst: link = $ApIdContextId (Field:ApIdContextIdTarget) MsId = $idx"
+			GetInstWithSave $idx $glBssapDb glMsId
+			set glTarget $ApIdContextId
+			set glTmrClrApIdContextId $ApIdContextId
+		} else {
+			log "ApIdContextId = $ApIdContextId not found in normal link neither in target"
+			log "Disconnecting the link $ApIdContextId"
+			SendSccpNDisconnectReq $ApIdContextId "?"
+			skipMsg
+		}
+	CleanUpClrCmplteTimer $timerid
+	} else {
+		logscr "ERROR: timer $timerid not found"
+		skipMsg
+		return
+	}
+}
+
+proc GetInstRuaConnectionless { } {
+	
+	global _sig glInstNull glMsId glBssapDb
+
+	set apId [rd _sig ApId]
+
+	log "GetInstRuaConnectionless: apId=$apId"; #cDEBUG
+
+	# Get Instance
+	GetInstWithSave $glInstNull $glBssapDb glMsId
+
+	DbSet $glBssapDb $glInstNull ApId $apId
+
+}
+
+
+proc GetInstBssap { } {
+
+	global _sig glMsId glBssapDb
+
+	set msIdx [rd _sig MsId]
+
+	if { [DbEntryExists $glBssapDb $msIdx] } {
+		# Get Instance
+		GetInstWithSave $msIdx $glBssapDb glMsId
+	} else {
+		log "GetInstBssap: MsId not found = $msIdx"
+		skipMsg
+		return
+	}
+}
+
+proc GetInstBssapLe { } {
+
+	global _sig glMsId glBssapDb
+
+	set msIdx [rd _sig MsId]
+	if { $msIdx } {
+		GetInstBssap
+		return
+	}
+
+	#SendBssmapLeReset
+}
+
+proc GetInstRtp { } {
+
+	global _sig glMsId glBssapDb
+	
+	#LogInputMsg  $_sig
+	set ipaddr [rd _sig LocalAdd]
+	set port [rd _sig LocalPort]
+	set key $ipaddr-$port
+	
+	if { [DbKeyExists $glBssapDb IpAddPort $key] } {
+		# Get Instance
+		set msIdx [DbGetIdx $glBssapDb IpAddPort $key]
+		GetInstWithSave $msIdx $glBssapDb glMsId
+		log "instance $msIdx"
+	} else {
+		log "GetInstRtp: IpAddPort not found = $key"
+		return "-1"
+	}
+}
+
+proc GetInstCsUdg { } {
+
+	global _sig glMsId glBssapDb
+	
+	LogInputMsg  $_sig
+
+	set rabid 	[rd _sig RabId]
+	set inst  	[rd _sig Inst]
+	set rtpinst $rabid-$inst
+
+	log "rabid = $rabid - ppuid=$inst --> rtpinst=$rtpinst"
+	
+	if { [DbKeyExists $glBssapDb RtpIdForPpuId $rtpinst] } {
+		# Get Instance
+		set msIdx [DbGetIdx $glBssapDb RtpIdForPpuId $rtpinst]
+		GetInstWithSave $msIdx $glBssapDb glMsId
+	} else {
+		log "GetInstCsUdg: RabId not found = $rabid for the PpuId $inst"
+		skipMsg
+		return "-1"
+	}
+}
+
+proc GetInstRtpClose { } {
+
+	global _sig glMsId glBssapDb
+	
+	LogInputMsg  $_sig
+
+	set rtpid [rd _sig RtpId]
+	set inst  [rd _sig Inst]
+	set rtpinst $rtpid
+	append rtpinst -
+	append rtpinst $inst
+
+	log "rtpid = $rtpid - ppuid=$inst --> rtpinst=$rtpinst"
+	
+	if { [DbKeyExists $glBssapDb RtpIdForPpuId $rtpinst] } {
+		# Get Instance
+		set msIdx [DbGetIdx $glBssapDb RtpIdForPpuId $rtpinst]
+		GetInstWithSave $msIdx $glBssapDb glMsId
+	} else {
+		log "GetInstRtpClose: rtpid: $rtpid not found for the Ppu instance: $inst"
+		return "-1"
+	}
+}
+
+proc ApEstAckHdl { } {
+
+	global _sig _state glMsId glBssapDb 
+
+	# Get Index
+	set msIdx [rd _sig MsId]
+
+	# Save previous instance's state, if existing 
+	if { [info exists glMsId] } {
+		DbSet $glBssapDb $glMsId State $_state			
+	}
+
+
+	set _state BssapIdle
+
+	set glMsId $msIdx
+}
+
+proc SetgMMRemote { } {
+	
+	global gMMRemote
+
+	set gMMRemote 1
+}
+
+# Remotely called from MM
+proc ApEstAckFromMM { msIdx s } {
+
+	global _sig _state glMsId glBssapDb gMMRemote
+
+	set _sig $s
+
+	log "ApEstAckFromMM: remotely called for MS=$msIdx"
+	# Save previous instance's state, if existing 
+	if { [info exists glMsId] } {
+		DbSet $glBssapDb $glMsId State $_state			
+		log "ApEstAckFromMM: Know MS"
+	} else {
+		log "ApEstAckFromMM: Unknow MS"
+	}
+
+	# Tell that the MM is doing a remote command
+	#set gMMRemote 1
+	set _state BssapIdle
+
+	set glMsId $msIdx
+
+	eval $_state
+}
+
+# Remotely called from MM
+proc ApSetInstFromMM { msIdx s } {
+
+	global _sig _state glMsId glBssapDb 
+
+	set _sig $s
+
+	GetInstWithSave $msIdx $glBssapDb glMsId
+
+	eval $_state
+}
+
+proc ApEstNackHdl { } {
+
+	global _sig _state glMsId glBssapDb 
+
+	# Get Index
+	set msIdx [rd _sig MsId]
+
+	# Save previous instance's state, if existing 
+	if { [info exists glMsId] } {
+		DbSet $glBssapDb $glMsId State $_state			
+	}
+
+	# Restore original state
+	set _state [DbSet $glBssapDb $msIdx State]
+
+	set glMsId $msIdx
+}
+
+proc DefaultTmrMs { } {
+
+	global glBssapDb glMsId 
+
+	GetInstFromTmrWithSave $glBssapDb glMsId
+}
+
+proc DefaultTmrCn { } {
+
+	GetInstFromTmrWithSave $::glBscDb ::glMsId
+}
+
+proc GetInstTrafficData { } {
+
+	global _sig glMsId glBssapDb
+
+	set msIdx [rd _sig DestMsId]
+
+	if { [DbEntryExists $glBssapDb $msIdx] } {
+		GetInstWithSave $msIdx $glBssapDb glMsId
+	} else {
+		log "GetInstTrafficData: MsId not found = $msIdx"
+		skipMsg
+		return
+	}
+}
+
+proc BssapCtlIntHoEnqHnd { } {
+
+	global _state
+
+	if { [string equal $_state "BssapConnectActive"] } {
+		GetInstBssap
+	} else {
+		log "BssapCtlIntHoEnqHnd: received msg 'BSSAP_CTL_INT_HOV_ENQUIRY' in state different from the state 'BssapConnectActive'"
+		skipMsg
+	}
+}
+
+proc GetInstRua { } {
+
+	global _sig __tm_top glMsId glBssapDb glTarget glVGCSBSSAPPid
+
+	set apIdcontextId [rd _sig ApId]
+	append apIdcontextId "-"
+	append apIdcontextId [rd _sig ContextId]
+	
+	if { [DbKeyExists $glBssapDb ApIdContextId $apIdcontextId] } {
+		# Get MsId from Spc StkId Cid
+		set msIdx [DbGetIdx $glBssapDb ApIdContextId $apIdcontextId]
+		# Msg is not from target
+		if { [info exists glTarget] } {
+			unset glTarget
+		}
+	} elseif { [DbKeyExists $glBssapDb ApIdContextIdTarget $apIdcontextId] } {
+		# Get MsId from Spc StkId Cid of the target
+		set msIdx [DbGetIdx $glBssapDb ApIdContextIdTarget $apIdcontextId]
+		set glTarget $apIdcontextId
+	} else {
+		logscr "$apIdcontextId does not exist in BssapDb"
+		return -1
+	}
+
+	# Get Instance
+	GetInstWithSave $msIdx $glBssapDb glMsId
+}
+
+#EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE#

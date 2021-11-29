@@ -1,0 +1,972 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/MM/tags/MM-2.37.13/scripts/mm_bssap_multi_inst.tsm $
+#
+# $Author: carlom $
+#
+# Description: MM Multi Instance Handler (GSM Only)
+# It also performs adaptation layer versus BSSAP
+#
+# $Rev: 50766 $
+#
+# $Date: 2012-04-19 17:37:12 +0200 (Thu, 19 Apr 2012) $
+##############################################################
+
+##############################################################
+# Type Definitions
+##############################################################
+
+typedef { STRUCT {UINT MsId} {STRING SpcStkIdCid} {STRUCTURE Pdu} AP_EST_IND }
+typedef { STRUCT {UINT MsId} {STRING SpcStkIdCid} {STRUCTURE Pdu} AP_EST_CNF }
+typedef { STRUCT {UINT MsId} {UINT Cause} AP_REL_IND }
+typedef { STRUCT {UINT MsId} {STRING Cause} GPRS_AP_REL_IND }
+typedef { STRUCT {UINT MsId} {STRUCTURE Pdu} AP_DATA_IND }
+typedef { STRUCT {UINT MsId} {UINT Res} {UINT Cause} AP_SYNC_CNF }
+typedef { STRUCT {UINT MsId} {STRING SpcStkIdCid} \
+		{STRUCTURE Pdu} {HEXSTR LAI} {HEXSTR CellId} {HEXSTR GroupCallRef} AP_TALKER_IND }
+
+##############################################################
+# Multi-instance Handler
+##############################################################
+
+proc MmMultiInstanceHdl { } {
+
+	# Declare Global Variables
+	global _sig  
+
+	switch -exact -- [lindex $_sig 0] {
+		"BSSAP_AP_EST_IND" 						{ DecApEstInd }
+		"MMBSSAPPLUS_AP_EST_IND"				{ DecBssapPlusEstInd }
+		"MMBSSAPPLUS_AP_DATA_IND" 				{ DecBssapPlusApDataInd }
+		"MMBSSAPPLUS_AP_REL_IND"				{ DecApRelInd }
+		"MMBSSAPPLUS_AP_GPRS_REL_IND"			{ DecGprsApRelInd }
+		"MMBSSAPPLUS_AP_IMSI_DET_IND"			{ DecImsiDetInd }
+		"BSSAP_AP_EST_CNF" 						{ DecApEstCnf }
+		"BSSAP_AP_REL_IND" 						{ DecApRelInd }
+		"BSSAP_AP_DATA_IND"						{ DecApDataInd }
+		"BSSAP_AP_SYNC_CNF"						{ DecApSyncCnf }
+		"BSSAP_AP_TALKER_IND"					{ DecApTalkerInd }
+		"MM_CONFIG"								{ MmConfigHnd }
+		"T_3250"               					-
+		"T_3255"                				-
+		"T_3260"                				-
+		"T_3270"                				-
+		"T_TRIG_AUTH"           				-
+		"T_TRIG_SEC"            				{ DefaultTmrHnd }
+		"T_DBG_GET_STATS"       				{ GetStatistics }
+		"MMBSSAPPLUS_AP_ACTIVATION"				{ BssapPlusActivation }
+		"MMBSSAPPLUS_AP_DEACTIVATION"			{ BssapPlusDeactivation }
+		"MM_SET_USER_PID"						{ }
+		"MM_START_LOAD_REDISTR"					{ }
+		"MM_STOP_LOAD_REDISTR"					{ }
+		default 								{ DefaultHnd }
+	}
+}
+
+##############################################################
+# Statistics
+##############################################################
+
+proc GetStatistics { } {
+
+	log "---------- START OF MM STATISTICS ----------"
+	
+	# Dump Statistics Variable
+	log "[::profiler::print]"
+
+	log "----------  END OF MM STATISTICS  ----------"
+
+	skipMsg
+}
+
+##############################################################
+# Multi Instance Handling
+##############################################################
+
+proc DefaultHnd { } {
+
+	# Global Variables
+	global glMMdb glMsId _sig
+
+	GetInstance	[rd _sig MsId] $glMMdb glMsId
+}
+
+proc DefaultTmrHnd { } {
+
+	# Global Variables
+	global glMMdb glMsId 
+
+	GetInstanceFromTimer $glMMdb glMsId
+}
+
+##############################################################
+# Data Base handling
+##############################################################
+
+proc MmConfigHnd { } {
+
+	# Global Variables
+    global glMsId
+
+	# Settings
+	set glMsId 0
+}
+
+proc CreateDataBase { dbname side} {
+	
+	lappend idxList [list Idx Index Read_Only]
+	lappend idxList [list State Normal Read/Write]
+	lappend idxList [list TMSI Key Read/Write]
+	lappend idxList [list PendingTmsi Normal Read/Write]
+	lappend idxList [list TmsiAssigned Normal Read/Write]
+	lappend idxList [list IMEI Key Read/Write]
+	lappend idxList [list ImeiRetrieved Normal Read/Write] 
+	lappend idxList [list LAI Normal Read/Write]
+	lappend idxList [list ClassMark1 Normal Read/Write]
+	lappend idxList [list ClassMark2 Normal Read/Write]
+	lappend idxList [list ClassMark3 Normal Read/Write]
+	lappend idxList [list CellId Normal Read/Write]
+	lappend idxList [list CipKeySeqNum Normal Read/Write]
+	lappend idxList [list CurrentMMProc Normal Read/Write]
+	lappend idxList [list PendingEstReq Normal Read/Write]
+	lappend idxList [list AuthNeeded Normal Read/Write]
+	lappend idxList [list IdentNeeded Normal Read/Write]
+	lappend idxList [list SecurNeeded Normal Read/Write]
+	lappend idxList [list FollowOnReq Normal Read/Write]
+	lappend idxList [list NumOfMmConnections Normal Read/Write]
+	lappend idxList [list TidBitMap Normal Read/Write]
+	lappend idxList [list SmsTidBitMap Normal Read/Write]
+	lappend idxList [list VgcsTidBitMap Normal Read/Write]
+	lappend idxList [list SsTidBitMap Normal Read/Write]
+	lappend idxList [list MmCcReqBuf Normal Read/Write]
+	lappend idxList [list MmSmsReqBuf Normal Read/Write]
+	lappend idxList [list MmGccReqBuf Normal Read/Write]
+	lappend idxList [list T_3250id Key Read/Write]
+	lappend idxList [list T_3255id Key Read/Write]
+	lappend idxList [list T_3260id Key Read/Write]
+	lappend idxList [list T_3270id Key Read/Write]
+	lappend idxList [list T_TRIG_AUTHid Key Read/Write]
+	lappend idxList [list T_TRIG_SECid Key Read/Write]
+	lappend idxList [list SendSeqNum Normal Read/Write]
+	lappend idxList [list CipResMode Normal Read/Write]
+	lappend idxList [list SpeechInd Normal Read/Write]
+	lappend idxList [list ChRate Normal Read/Write] 
+	lappend idxList [list PermSpeech Normal Read/Write]
+	lappend idxList [list Priority Normal Read/Write]
+	lappend idxList [list RevLev Normal Read/Write]
+	lappend idxList [list UserPid Normal Read/Write]
+	lappend idxList [list FlagCmReqTmsiComplt Normal Read/Write]
+	lappend idxList [list ProfileName Normal Read/Write]
+	lappend idxList [list AuthCounter Normal Read/Write]
+	###########################
+	# Fields for Gs interface #
+	###########################
+	lappend idxList [list GsLink Normal Read/Write]
+	lappend idxList [list BssapPlusIMSI Normal Read/Write]
+	lappend idxList [list GsLinkEstablished Normal Read/Write]
+	# True when the Gs linki has been abandoned for a call, etc... but it has to be re-established at the end
+	lappend idxList [list GsLinkReleased Normal Read/Write]
+	####################
+	# Fields for AFlex #
+	####################
+	lappend idxList [list AFlexOwned Normal Read/Write]
+
+	DbCreate $dbname $idxList
+}
+
+##############################################################
+# Primitives from BSSAP
+##############################################################
+
+# 1) BSSAP_AP_EST_IND
+proc DecApEstInd { } {
+
+	# Declare Global Variables
+	global _sig _sigpdu glMsId glMMdb glCommonDb 
+
+	#LogInputMsg $_sig
+	log "DecApEstInd: _sig=$_sig"
+
+	# Get Pdu
+	set binpdu [rd _sig Pdu]
+	if { ![IsVoid $binpdu] } {
+		mmPduToSig binpdu
+		if { [IsVoid $_sigpdu] } {
+			log "DecApEstInd: invalid pdu"
+			skipMsg
+			return
+		}
+	} else {
+		logscr "DecApEstInd: Empty Message"
+		skipMsg
+		return
+	}
+
+	# Get Parameters
+	set opc_dpc_cid [rd _sig SpcStkIdCid]
+	set lai [rd _sig LAI]
+	set ci [rd _sig CellId]
+	
+	# Read Ms Identity in MM pdu
+	set msident [rd _sigpdu MsIdentity]
+	set idx [GetIdxFromMsIdentity $msident $glMMdb $glCommonDb]
+
+	log "DecApEstInd: MS identity found = $idx"
+	
+	# Unknown IMSI or TMSI
+	if { ![string is integer -strict $idx] } {
+		set idx [GetNextTempId]
+		log "DecApEstInd: ********* ATTENTION: case with REAL MOBILE *********"
+		log "DecApEstInd: identity not found: adding entity $idx"
+		AddMmEntity $idx "Temp"
+		log "DecApEstInd: MSID=$idx"
+	}
+
+	# LAI
+	if { ![IsVoid $lai] } {
+		DbSet $glMMdb $idx LAI $lai
+	}
+
+	#log "DecApEstInd: LAI=[DbGet $glMMdb $idx LAI]"; #cDEBUG
+
+	# CellId
+	if { ![IsVoid $ci] } {
+		DbSet $glMMdb $idx CellId $ci
+	}
+
+	# Instance
+	GetInstance	$idx $glMMdb glMsId
+
+	log "DecApEstInd: MSID=$idx --> glMsId=$glMsId"
+
+	# AP_EST_IND
+	new 	AP_EST_IND s
+	wr		s MsId $idx
+	wr      s SpcStkIdCid $opc_dpc_cid
+	if { ![IsVoid $binpdu] } {
+		wr  s Pdu $_sigpdu
+	}
+	set 	_sig $s
+}
+
+# 2) BSSAP_AP_EST_CNF
+proc DecApEstCnf { } {
+
+	# Declare Global Variables
+	global _sig _sigpdu glMMdb glCommonDb glMsId
+
+	LogInputPrim $_sig
+
+	# Get Parameters
+	set opc_dpc_cid [rd _sig SpcStkIdCid]
+	set lai [rd _sig LAI]
+	set ci [rd _sig CellId]
+	set _sigpdu "?"
+
+	# Check if RR
+	set binpdu [rd _sig Pdu]
+	if { ![IsVoid $binpdu] } {
+		rrPduToSig binpdu
+		set msg [lindex $_sigpdu 0]
+		if { [string compare $msg "RR_PGING_RSP"] } {
+			logscr "DecApEstCnf: Unexpected RR Message ($msg)"
+			skipMsg
+			return
+		}
+	} else {
+		logscr "DecApEstCnf: Empty Message"
+		skipMsg
+		return
+	}
+
+	# Read Ms Identity in RR pdu
+	set msident [rd _sigpdu mobile_id]
+	set msid [GetIdxFromMsIdentity $msident $glMMdb $glCommonDb]
+	# Unknown Identity
+	if { ![string is integer -strict $msid] } {
+		logscr "DecApEstCnf: Unknown Mobile msid=$msid"
+		return
+	}
+
+	# Revision Level
+	set clmark [rd _sigpdu mobile_station_clsmrk]
+	set revlev [hbits $clmark 1 2]
+	DbSet $glMMdb $msid RevLev $revlev
+
+	# LAI
+	if { ![IsVoid $lai] } {
+		DbSet $glMMdb $msid LAI $lai
+	}
+
+	# CellId
+	if { ![IsVoid $ci] } {
+		DbSet $glMMdb $msid CellId $ci
+	}
+
+	# Instance
+	GetInstance $msid $glMMdb glMsId
+
+	# AP_EST_CNF
+	new 	AP_EST_CNF s
+	wr		s MsId $glMsId
+	wr      s SpcStkIdCid $opc_dpc_cid
+	wr      s Pdu $_sigpdu
+	set 	_sig $s
+}
+
+# 3) BSSAP_AP_REL_IND
+proc DecApRelInd { } {
+	
+	# Declare Global Variables
+	global _sig _sigpdu glMMdb glMsId
+
+	LogInputMsg $_sig
+
+	# Check the existance of the MS in the Db
+	if { [DbEntryExists $glMMdb [rd _sig MsId]] } {
+		# Instance
+		GetInstance [rd _sig MsId] $glMMdb glMsId
+		# AP_REL_IND
+		new 	AP_REL_IND s
+		wr		s MsId [rd _sig MsId]
+		wr      s Cause [rd _sig RelCause]
+		set 	_sig $s
+	} else {
+		log "The MsId $glMsId is not present in the MM Db, the BSSAP_AP_REL_IND \
+			is not forwarded to the MM state machine"
+		skipMsg
+		return
+	}
+}
+
+proc DecImsiDetInd { } {
+	global _sig glMsId glMMdb
+
+	LogInputMsg $_sig
+
+	set imsi [rd _sig IMSI]
+	set msId [rd _sig MsId]
+
+	new MM_IMSI_DETACH_IND s
+	# Trying to use a dummy (?) value to avoid the Send Sequence Number Check
+	wr	s	Sn	-1
+	#wr	s	MsClassmark
+	wr	s	MsIdentity	$imsi
+
+	GetInstance $msId $glMMdb glMsId
+
+	set _sig $s	
+}
+
+proc DecGprsApRelInd { } {
+	global _sig glMsId glMMdb
+
+	LogInputMsg $_sig
+
+	# Check the existance of the MS in the Db
+	if { [DbEntryExists $glMMdb [rd _sig MsId]] } {
+		# Instance
+		GetInstance [rd _sig MsId] $glMMdb glMsId
+
+		new 	GPRS_AP_REL_IND s
+		wr		s MsId [rd _sig MsId]
+		wr      s Cause [rd _sig Cause]
+
+		set 	_sig $s
+	} else {
+		log "The MsId $glMsId is not present in the MM Db, the MMBSSAPPLUS_AP_REL_IND \
+			is not forwarded to the MM state machine"
+		skipMsg
+		return
+	}
+}
+
+
+# 4) BSSAP_AP_DATA_IND
+proc DecApDataInd { } {
+	 
+	# Declare Global Variables
+	global _sig _sigpdu glMMdb glMsId
+
+	LogInputPrim $_sig
+		
+	# Get Parameters
+	set binpdu [rd _sig Pdu]
+	if { ![IsVoid $binpdu] } {
+		mmPduToSig binpdu
+		if { [IsVoid $_sigpdu] } {
+			log "DecApEstInd: invalid pdu"
+			skipMsg
+			return
+		}
+	} else {
+		logscr "DecApDataInd: Empty Message"
+		skipMsg
+		return
+	}
+	
+	# Instance
+	GetInstance [rd _sig MsId] $glMMdb glMsId
+
+	set	_sig $_sigpdu
+}
+
+# 5) BSSAP_AP_SYNC_CNF
+proc DecApSyncCnf { } {
+	 
+	global _sig glMMdb glMsId
+
+	LogInputMsgv0 $_sig
+
+	# Instance
+	GetInstance [rd _sig MsId] $glMMdb glMsId
+
+	new 	AP_SYNC_CNF s
+	wr		s MsId [rd _sig MsId]
+	wr		s Res [rd _sig Res]
+	wr      s Cause [rd _sig Cause]
+	set 	_sig $s
+}
+
+# 6) BSSAP_AP_TALKER_IND
+proc DecApTalkerInd { } {
+	 
+	# Declare Global Variables
+	global _sig glMMdb glMsId _sigpdu
+	global glCommonDb
+
+	LogInputMsg $_sig
+
+	#Get Pdu
+	set binpdu [rd _sig Pdu]
+	if { ![IsVoid $binpdu] } {
+		rrPduToSig binpdu
+	} else {
+		logscr "DecApTalkerInd: Empty message"
+		skipMsg
+		return
+	}
+
+	# Get Parameters
+	set opc_dpc_cid [rd _sig SpcStkIdCid]
+	set lai [rd _sig LAI]
+	set ci [rd _sig CellId]
+
+	# Read Ms Identity in RR pdu
+	set msident [rd _sigpdu mobile_id]
+	set idx [GetIdxFromMsIdentity $msident $glMMdb $glCommonDb]
+
+	# Unknown IMSI or TMSI
+	if { ![string is integer -strict $idx] } {
+		set idx [GetNextTempId]
+		AddMmEntity $idx "Temp"
+	}
+
+	# LAI
+	if { ![IsVoid $lai] } {
+		DbSet $glMMdb $idx LAI $lai
+	}
+	# CellId
+	if { ![IsVoid $ci] } {
+		DbSet $glMMdb $idx CellId $ci
+	}
+	# Instance
+	GetInstance $idx $glMMdb glMsId
+
+	new 	AP_TALKER_IND s
+	wr		s MsId $idx
+	wr		s GroupCallRef [rd _sig GroupCallRef]
+	wr		s SpcStkIdCid $opc_dpc_cid
+	if { ![IsVoid $binpdu] } {
+		wr s Pdu $_sigpdu
+	}
+
+	set 	_sig $s
+}
+
+##############################################################
+# Primitives towards BSSAP
+##############################################################
+
+# BSSAP_AP_EST_REQ 
+proc SendApEstReq { msId tmsi cmtype args } {
+	global glCommonDb
+
+	if { [llength $args] == 0 } {
+		new 	BSSAP_AP_EST_REQ s
+		wr 		s MsId $msId
+		wr      s TMSI $tmsi
+	} else {
+		if [lindex $args 0] {
+			#useBssapPlus = 1
+			new	MMBSSAPPLUS_AP_EST_REQ s
+			wr	s	MsId	$msId
+			# Remove the initial 24.008 pdu while it has not to be included in the BSSAPPLUS pdu
+			set tmsi [string range $tmsi 2 9]
+			wr	s	TMSI	$tmsi
+			wr	s	IMSI	[DbGet $glCommonDb $msId IMSI]
+		}
+	}
+	send s
+	LogOutputMsg $s
+}
+
+# BSSAP_AP_EST_ACK - Proprietary
+proc SendApEstAck { msId opc_dpc_cid } {
+
+	# Global Variables
+	global glMMdb _bssappid gNumMs
+
+	set lai [DbGet $glMMdb $msId LAI]
+	set ci [DbGet $glMMdb $msId CellId]
+
+	new 	BSSAP_AP_EST_ACK s
+	wr 		s MsId $msId 
+	wr 		s SpcStkIdCid $opc_dpc_cid
+	wr      s LAI $lai
+	wr      s CellId $ci
+
+	LogOutputMsg $s
+	if { [isSplitted] } {
+		#Add the slave number in case of unassigned MS by BSSAP
+		if { $msId > $gNumMs } {
+			set slaveId [getslaveid]
+			wr	s	SlaveId		$slaveId
+			log "SendApEstAck Setting the slave id = $slaveId"
+		}
+		send s
+	} else {
+		remcmd $_bssappid "ApEstAckFromMM $msId {$s}"
+	}
+}
+
+# BSSAP_AP_EST_NACK - Proprietary
+proc SendApEstNack { msId opc_dpc_cid } {
+
+	# Global Variables
+
+	new 	BSSAP_AP_EST_NACK s
+	wr 		s MsId $msId 
+	wr 		s SpcStkIdCid $opc_dpc_cid
+
+	send s
+	LogOutputMsg $s
+}
+
+# BSSAP_AP_REL_REQ 
+proc SendApRelReq { msId cause } {
+
+	# Global Variables
+
+	switch -exact -- $cause {
+		"Normal_Event_MM"  		{ set pd 5; set ti 0; set cause_val 60 }
+		"Protocol_Error_MM"		{ set pd 5; set ti 0; set cause_val 60 }
+		"TimerExpired_MM"  		{ set pd 5; set ti 0; set cause_val 60 }
+		"Service_Abort_MM" 		{ set pd 5; set ti 0; set cause_val 60 }
+		"User_Busy_MM"			{ set pd 5; set ti 0; set cause_val 91 }
+		"Normal_Unspecified" 	{ set pd 5; set ti 0; set cause_val 9f }
+		default     			{ abort "Unexpected Release Cause ($cause)"; return }
+    }
+
+	new 	REL_CAUSE r 
+	wr 		r ProtDisc $pd
+	wr 		r TransId $ti
+	wr 		r Cause $cause_val
+
+	new 	BSSAP_AP_REL_REQ s
+	wr 		s MsId $msId 
+	wr 		s RelCause $r
+
+	send s
+	LogOutputMsg $s
+}
+
+#BSSAP_AP_REL_REQ_LINK
+proc SendApRelReqLink { msId cause spcStkIdCid } {
+
+    # Global Variables
+
+    switch -exact -- $cause {
+        "Normal_Event_MM"   { set pd 5; set ti 0; set cause_val 60 }
+        "Protocol_Error_MM" { set pd 5; set ti 0; set cause_val 60 }
+        "TimerExpired_MM"   { set pd 5; set ti 0; set cause_val 60 }
+        "Service_Abort_MM"  { set pd 5; set ti 0; set cause_val 60 }
+        default     { abort "Unexpected Release Cause ($cause)"; return }
+    }
+
+    new     REL_CAUSE r
+    wr      r ProtDisc $pd
+    wr      r TransId $ti
+    wr      r Cause $cause_val
+
+    new     BSSAP_AP_REL_REQ_LINK s
+    wr      s MsId $msId
+    wr      s RelCause $r
+	wr		s SpcStkIdCid $spcStkIdCid
+
+    send s
+    LogOutputMsg $s
+}
+
+# BSSAP_AP_DATA_REQ
+proc SendApDataReq { msId sapi binpdu } {
+	global glMMdb glMsId
+
+	set connNum [DbGet $glMMdb $glMsId NumOfMmConnections]
+	set connAvail [expr ($connNum > 0)]
+	log "SendApDataReq: connNum=$connNum"
+	
+	if { ![IsMSOnGsLink $msId] } {
+		new BSSAP_AP_DATA_REQ s
+		wr s MsId $msId
+		wr s Sapi $sapi
+		wr s Pdu $binpdu
+	} else {
+		global _sigpdu
+		new MMBSSAPPLUS_AP_DATA_REQ s
+
+		# Undo the pdu just created
+		set p $binpdu
+
+		mmPduToSig p
+
+		wr s MsId $msId
+		wr s Sig $_sigpdu
+	}
+
+	send s
+	LogOutputPrim $s
+}
+
+# BSSAP_AP_SYNC_REQ
+proc SendApSyncReq { msId cause {grCallRef ?} } {
+	
+	# Declare Global Variables
+	global glMMdb glCommonDb
+
+	set causetag [lindex $cause 0]
+
+	switch -exact -- $causetag {
+		"MM_SYNC_CPHR"    {
+			new 	SYNC_CPHR r
+			wr 		r PermAlg [DbGet $glCommonDb $msId PermAlg]
+			wr 		r Key [DbGet $glCommonDb $msId CipKey]
+			wr 		r CiphrRespMode [DbGet $glCommonDb $msId CiphrRespMode] }
+		"MM_SYNC_RES_ASS" {
+			new 	SYNC_RES_ASS r
+			wr 		r CallType [rd cause CallType]
+			wr 		r ChRate [rd cause MsRate]
+			wr 		r PermSpeech [rd cause SpeechVer]
+			wr 		r DataRate [rd cause DataRate]
+			wr 		r Priority [DbGet $glCommonDb $msId Priority] }
+		"MM_SYNC_CONNECT" {
+			new		SYNC_CONNECT r
+			wr      r MsIdDst [rd cause MsIdDst]
+			wr		r DPhone [rd cause DPhone] }
+		default           { logscr "SendApSyncReq: Unexpected Cause ($cause)"; return }
+	}
+
+	# BSSAP_AP_SYNC_REQ
+	new 	BSSAP_AP_SYNC_REQ s
+	wr 		s MsId $msId
+	wr 		s CauseVal $r
+	wr		s GroupCallReference $grCallRef
+
+	send s
+	LogOutputMsg $s
+}
+
+# BSSAP_AP_ABORT_REQ 
+proc SendApAbortReq { msId cause } {
+
+	# Global Variables
+
+	switch -exact -- $cause {
+		"Normal_Event_MM"  	{ set cause_val 00 }
+		default     		{ abort "Unexpected Release Cause ($cause)"; return }
+    }
+
+	new 	BSSAP_AP_ABORT_REQ s
+	wr 		s MsId $msId 
+	wr 		s Cause $cause_val
+
+	send s
+	LogOutputMsg $s
+}
+
+# Start TMA-236
+# BSSAPGS_AP_ABORT_REQ 
+proc SendApAbortReqGs { msId cause } {
+
+	# Global Variables
+
+	global _bssappid _bssappluspid
+
+	switch -exact -- $cause {
+		"Normal_Event_MM"  	{ set cause_val 00 }
+		default     		{ abort "Unexpected Release Cause ($cause)"; return }
+    }
+	# Send the Abort the BSSAP 
+	new 	BSSAPGS_AP_ABORT_REQ s
+	wr 		s MsId $msId 
+	wr 		s Cause $cause_val
+
+	send s $_bssappid
+	LogOutputMsg $s
+	
+	# Send the Abort to the BSSAPPlus
+	new     BSSAPPLUS_AP_ABORT_REQ s
+        wr              s MsId $msId
+
+        send s $_bssappluspid
+        LogOutputMsg $s
+
+
+
+}
+# End TMA-236
+
+# BSSAP_AP_SET_INST
+proc SendApSetInst { idx } {
+
+	# Global Variables
+	global glMsId _bssappid glMMdb
+	
+	# Send to BSSAP
+	new 	BSSAP_AP_SET_INST s
+	wr		s MsId $glMsId
+	wr      s MsIdDst $idx
+		
+	LogOutputMsg $s
+	if { [isSplitted] } {
+		send s
+		set glMsId $idx
+	
+		logscr "SendApSetInst:TMSI=[DbGet $glMMdb $idx TMSI]"
+	
+	} else {
+		remcmd $_bssappid "ApSetInstFromMM $glMsId {$s}"
+	}
+
+	# Replace Current Entity
+	set glMsId $idx
+}
+
+# BSSAP_AP_CLSMK1_UPDATE
+proc SendApClassmark1 { clsmark } {
+
+	# Global Variables
+	global glMsId
+
+	# Send to BSSAP
+	new 	BSSAP_AP_CLSMK1_UPDATE s
+	wr		s MsId $glMsId
+	wr      s ClassMark1 $clsmark
+	
+	send  s
+	LogOutputMsg $s
+}
+
+# BSSAP_AP_CLSMK2_UPDATE
+proc SendApClassmark2 { clsmark } {
+
+	# Global Variables
+	global glMsId
+
+	# Send to BSSAP
+	new 	BSSAP_AP_CLSMK2_UPDATE s
+	wr		s MsId $glMsId
+	wr      s ClassMark2 $clsmark
+	
+	send  s
+	LogOutputMsg $s
+}
+
+# BSSAP_AP_CLSMK3_UPDATE
+proc SendApClassmark3 { clsmark } {
+
+	# Global Variables
+	global glMsId
+
+	# Send to BSSAP
+	new 	BSSAP_AP_CLSMK3_UPDATE s
+	wr		s MsId $glMsId
+	wr      s ClassMark3 $clsmark
+	
+	send  s
+	LogOutputMsg $s
+}
+
+# BSSAP_AP_NEW_TMSI_ALLOC
+proc SendApNewTmsiAlloc { msId tmsi } {
+	new BSSAP_AP_NEW_TMSI_ALLOC s
+	wr	s	MsId	$msId
+	wr	s	TMSI	$tmsi
+
+	send s
+	LogOutputMsg $s
+}
+
+##############################################################
+# Primitives towards BSSAP PLUS
+##############################################################
+
+proc GetLuByGprsLu { gprsLu } {
+	switch  -exact -- $gprsLu {
+	0x00	{	return 0x00	}
+	0x02	{	return 0x00	}
+	0x01	{	return 0x02 }
+	default {	return 0x00 }
+	}
+}
+
+# 1) MMBSSAPPLUS_AP_EST_IND 
+proc DecBssapPlusEstInd { } {
+
+	global _sig _sigpdu glMsId glMMdb glCommonDb 
+
+	#LogInputMsg $_sig
+	log "DecBssapPlusApEstInd: _sig=$_sig"
+
+	set bssapplusSig [rd _sig Sig]
+	set luType [lindex $bssapplusSig 3]
+	set imsi [lindex $bssapplusSig 1]
+	set rac [lindex $bssapplusSig 4]
+	set lac [string range $rac 0 9]
+	set classMark [lindex $bssapplusSig 5]
+	set imsi [lindex $bssapplusSig 1]
+	# CABLONE
+	set cipSeqNumLu	7
+	append cipSeqNumLu [GetLuByGprsLu [lindex $bssapplusSig 3]]
+
+	new MM_LOC_UPDATE_REQ s
+
+	# CABLONE
+	wr	s	Sn						0
+	# Calculated values
+	wr	s	CipKeySeqNum_LocUpType	$cipSeqNumLu
+	wr	s	LAI						$lac
+	wr	s	MsClassmark				$classMark
+	wr	s	MsIdentity				$imsi				
+	
+	#set idx [rd _sig MsId]
+	set idx [GetIdxFromMsIdentity $imsi $glMMdb $glCommonDb]
+	# Unknown IMSI
+	if { ![string is integer -strict $idx] } {
+		set idx [GetNextTempId]
+		log "DecBssapPlusEstInd: identity not found: adding entity"
+		AddMmEntity $idx "Temp"
+		# Store the IMSI for further usage
+		DbSet $glMMdb $idx BssapPlusIMSI $imsi
+	}
+
+	set _sig $s
+
+	# Instance
+	GetInstance	$idx $glMMdb glMsId
+
+	#Set the link as from SGSN
+	DbSet $glMMdb $idx GsLink 1
+	DbSet $glMMdb $idx AuthNeeded 0
+	if { ![IsVoid $lac] } {
+		DbSet $glMMdb $idx LAI $lac
+	}
+	return
+
+	# NEVER EXECUTED !	
+	# Keeping all the code relative to the usual DecEstInd for BSSAP sigs
+
+	# Get Pdu
+	set binpdu [rd _sig Pdu]
+	if { ![IsVoid $binpdu] } {
+		mmPduToSig binpdu
+		if { [IsVoid $_sigpdu] } {
+			log "DecBssapPlusEstInd: invalid pdu"
+			skipMsg
+			return
+		}
+	} else {
+		logscr "DecBssapPlusEstInd: Empty Message"
+		skipMsg
+		return
+	}
+
+	# Get Parameters
+	set opc_dpc_cid [rd _sig SpcStkIdCid]
+	set lai [rd _sig LAI]
+	set ci [rd _sig CellId]
+	
+	# Read Ms Identity in MM pdu
+	set msident [rd _sigpdu MsIdentity]
+	set idx [GetIdxFromMsIdentity $msident $glMMdb $glCommonDb]
+
+	log "DecBssapPlusEstInd: MS identity found = $idx"
+	
+	# Unknown IMSI or TMSI
+	if { ![string is integer -strict $idx] } {
+		set idx [GetNextTempId]
+		log "DecBssapPlusEstInd: identity not found: adding entity"
+		AddMmEntity $idx "Temp"
+		log "DecBssapPlusEstInd: MSID=$idx"
+	}
+
+	# LAI
+	if { ![IsVoid $lai] } {
+		DbSet $glMMdb $idx LAI $lai
+	}
+
+	# CellId
+	if { ![IsVoid $ci] } {
+		DbSet $glMMdb $idx CellId $ci
+	}
+
+	# Instance
+	GetInstance	$idx $glMMdb glMsId
+
+	# AP_EST_IND
+	new 	AP_EST_IND s
+	wr		s MsId $idx
+	wr      s SpcStkIdCid $opc_dpc_cid
+	if { ![IsVoid $binpdu] } {
+		wr  s Pdu $_sigpdu
+	}
+	set 	_sig $s
+}
+
+proc DecBssapPlusApDataInd { } {
+	global _sig _sigpdu glMsId glMMdb
+
+	set bssapplusSig [rd _sig Sig]
+	set sigName [lindex $bssapplusSig 0]
+
+	if { ![string compare $sigName "BSSAPPLUS_TMSI_REALL_COMPLETE"] } {
+		new MM_TMSI_REAL_COMP s
+		wr  s   Sn  1
+		set idx [rd _sig MsId]
+		GetInstance $idx $glMMdb glMsId
+		set _sig $s
+	}
+}
+
+proc SendApPlusDataReq { msId sig imsi } {
+	new MMBSSAPPLUS_AP_DATA_REQ s
+
+	wr	s	MsId	$msId
+	wr	s	Sig		$sig
+	wr	s	IMSI	$imsi
+
+	send s
+}
+
+	
+
+proc BssapPlusActivation { } {
+	global gGsActive
+
+	log "BssapPlusActivation: Gs interface activated in MM"
+	
+	set gGsActive 1
+
+	skipMsg
+}
+
+#EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE#

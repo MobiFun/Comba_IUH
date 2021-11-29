@@ -1,0 +1,1841 @@
+##############################################################
+# $URL: http://memo.prisma/svn/tm/scriptProt/BSSAP/tags/BSSAP-10.26.2/scripts/bssap_bsc.tsm $
+#
+# $Author: carlom $
+#
+# Description: BSSAP layer on BSS side
+#
+# $Rev: 52586 $
+#
+# $Date: 2012-07-02 18:31:08 +0200 (Mon, 02 Jul 2012) $
+##############################################################
+
+#Global var for RR
+set glRrGcReqMsId 0
+set glRrGcReqGrCallRef 0
+
+##############################################################
+# INIT
+##############################################################
+
+proc Init { args } {
+
+	# Global Variables
+	global _HandleRxSignalProc _self protName 
+	global glBscDb glMsDb glBssapDb
+	global glVGCSBSSAPPid __tm_top glMSVgcsDb
+	global __bssap_plmn
+	
+	# BSSAP script directory 
+	include "common/utils/generalUtils.tsm"
+	include "common/utils/Ss7SaalUtils.tsm"
+	include "common/utils/L3Utils.tsm"
+	include "protocols/BSSAP/bssap_common.tsm"
+	include "protocols/BSSAP/bssap_utils.tsm"
+	include "protocols/BSSAP/bssap_multi_inst.tsm"
+	include "protocols/BSSAP/BSSAPrua.tsm"
+	include "ctl/userplane.tsm"
+
+
+	# evaluate configuration
+	set cfgFile [lindex $args 0]
+	uplevel #0 include $cfgFile
+	log "cfg file is $cfgFile"
+	SetNetside
+
+	# protocol name 
+	set protName BSSAP
+
+	register $protName
+
+	# Create Ms Db
+	set glMsDb [lindex $args 1]
+
+	# Bssap Adapation Layer
+	set Al [lindex $args 2]
+	include "$Al"
+	log "adaptive layer is $Al"
+	# Calculate the PLMN string
+	#RetrievePLMN
+	
+	global _hnbapid
+	
+	set _hnbapid [lindex $args 3]
+	#logscr "HNBAP PID = $_hnbapid"
+	set s HNBAP_BSSAP_SAP
+	send s $_hnbapid
+
+
+	# Create Internal Ms Database
+	set glBssapDb BssapDb
+	CreateBssapDb $glBssapDb
+	
+	dbIuhCreateFromCsv $::__iuh_db
+	# Create Internal Bsc Database
+	# Leon: BSC DB seems useless,we can use glIuhDb in HNBAP layer
+	#set glBscDb BssapBscDb
+	#CreateBscDb $glBscDb
+
+	# handle multi-instance
+	set _HandleRxSignalProc RxSignalProc
+	
+	set glVGCSBSSAPPid ?
+
+	# Create Instance Null
+	global glInstNull
+	set glInstNull 0
+
+	if { $::glAoip } {
+		set ::glFirst 1
+	}	
+
+	if { [info exists ::__bssap_flt_paging] && $::__bssap_flt_paging==1 } {
+		log "DEBUG (Init): Bssap Filter Paging enabled"
+		bssapPagFilterInit $glBssapDb $glMsDb ApId IMSI
+		set ::glPagFilterEnabled 1
+	} else {
+		set ::glPagFilterEnabled 0
+	}
+
+    nextstate BssapWaitConfig
+}
+
+#------------------------------------------------------------#
+# Configuration procedure 					
+#------------------------------------------------------------#
+proc BssapConfig { } {
+
+	# Declare and Initialize Global Variables
+	global glBssapDb glMsDb glInstNull glBssapPlmn __iuh_db
+
+	set nstate BssapIdle
+	DbCreateDefEntry $glBssapDb $glInstNull
+	DbSet $glBssapDb $glInstNull State $nstate 
+	DbSet $glBssapDb $glInstNull SaveQue [sdlNewSaveQue]
+	
+	
+	# Configure Parameters for every DB Index
+	set idxlist [DbGetIndexList $glMsDb]
+	log "Ms Id List is $idxlist"
+	foreach idx $idxlist {
+
+		log "BssapConfig: idx=$idx"
+
+		DbCreateDefEntry $glBssapDb $idx
+		# Set State
+		DbSet $glBssapDb $idx State $nstate 
+
+		set lai [DbGet $glMsDb $idx SysInfoLAI]
+		# Leon: For the truth,PLMN ,LAC and Cellid are also stored in iuhdb
+		# We must confirm these values in MS DB consistent with these in IuhDb
+		# Set HPLMN
+		set plmn [ComposePlmn $lai]
+		log "BssapConfig: plmn=$plmn"
+		DbSet $glBssapDb $idx PLMN $plmn 
+
+		# Set LAC 
+		set lac [hocts $lai 3 4]
+		DbSet $glBssapDb $idx LAC $lac
+
+		# Set CellId
+		set cellid [DbGet $glMsDb $idx CellId]
+		DbSet $glBssapDb $idx CellId $cellid
+
+		# Set ApId
+		set apid [DbGet $glMsDb $idx sHnbId]
+		DbSet $glBssapDb $idx ApId $apid
+		
+		# Set UP local IP
+		set CsUpIp [DbGet $::glIuhDb $apid CsTLAddr]
+		DbSet $glBssapDb $idx LocalIp $CsUpIp
+		
+		# Set Speech type: Format GSM_FR,GSM_HR,GSM_EFR.....
+		#set speechver [DbGet $::glIuhDb $apid SpeechVersion]
+		#DbSet $glBssapDb $idx SpeechVer $speechver
+		
+		DbSet $glBssapDb $idx SaveQue [sdlNewSaveQue]
+	}
+	#LogDb $glBssapDb
+	SendNotifyOk
+
+	logscr ""
+	logscr "BSSAP BRING-UP COMPLETE"
+	logscr ""
+
+	nextstate $nstate
+}
+
+proc SendNotifyOk { } {
+
+	# Global Variables
+
+	new 	BSSAP_OM_CFG_ACK s
+	send  s
+	LogOutputMsg $s
+}
+
+##############################################################
+# BSSMAP procedures (see TS 3GPP 08.08 v.8.15.0)
+##############################################################
+
+#------------------------------------------------------------#
+# 3.1.1 "Assignment" procedure functions 
+#------------------------------------------------------------#
+proc RcvAssignmentReq { } {
+
+	# Global Variables
+	global _sig protName glBscDb glBtsDb glBssapDb glMsId
+
+	LogInputMsg $_sig
+
+	# Get Bsc Id
+	set lac [DbGet $glBssapDb $glMsId LAC]
+	set ci [DbGet $glBssapDb $glMsId CellId]
+	#set bscid [GetBscIdByCellIdfr $lac $ci glBtsDb]
+	set hnbid [GetApIdByCellIdfr $lac $ci]
+	if { [string match "-1" $hnbid] } {
+		exit "RcvAssignmentReq: AP identity unknown (LAC=$lac, CellId=$ci)"
+	}
+
+	# Channel Type
+	set ch_type [rd _sig ch_type]
+	set cell_info [GetChannelTypeInfo $ch_type]
+	DbSet $glBssapDb $glMsId Spi [set spi [lindex $cell_info 0]]
+	DbSet $glBssapDb $glMsId ChannelRate [set ch_rate [lindex $cell_info 1]]
+	DbSet $glBssapDb $glMsId PermSpeech [set perm_speech [lindex $cell_info 2]]
+	DbSet $glBssapDb $glMsId DataRate [set datarate [lindex $cell_info 3]]
+
+	# Comba TLA
+	## Leon Jiang: must replace cic with tla ##
+	
+	set comba_tla [rd _sig ip_port]
+	if { [IsVoid $comba_tla] } {
+		logscr "Debug:Comba TLA is void"
+	}
+
+	#SendAssignmentCmplt $spi $ch_rate 
+	# pass permitted speech to calling proc
+	SendAssignmentCmplt $spi $ch_rate $perm_speech
+ 
+}
+
+proc SendAssignmentCmplt { spi ch_rate perm_speech } {
+
+	global _sig glBssapDb glMsId
+
+	set rr_cause 00; # "Normal event"
+
+	new ASG_CMPLT s
+	wr s rr_cause $rr_cause
+	# ch_rate is not used at current time,reserved
+	#wr s chsn_ch [GetChosenChannel $spi $ch_rate]
+	# select first speech version from permitted list
+	set selected_per [string range $perm_speech 0 1]
+	# convert highest bit to 0
+	set spch_ver	[expr {$selected_per & 0x7F}]
+	wr s spch_ver $spch_ver
+	DbSet $glBssapDb $glMsId SpeechVer $spch_ver
+	wr s chsn_ch [GetChosenChan $spi $spch_ver]
+	#wr s comba_tla $comba_tla
+
+	# Cell Identifier
+	set lac [DbGet $glBssapDb $glMsId LAC]
+	set ci [DbGet $glBssapDb $glMsId CellId]
+	set	cell_ident [GetCellIdentifier $lac $ci $glMsId]
+	wr s cell_idfr		$cell_ident
+
+	wr s chsn_encr_algo [DbGet $glBssapDb $glMsId Encryption]
+	
+	#wr s spch_ver		01; #GSM speech full rate version 1
+	
+	global glAoip __aoip_address
+
+
+	set aupoip_container [rd _sig ip_port]
+	set ip_add [GetIpAddressFromContainer $aupoip_container]
+	set port [GetUdpPortFromContainer $aupoip_container]
+	set loc_port [GetAUPoIPPort]
+	DbSet $glBssapDb $glMsId DestIp $ip_add
+	DbSet $glBssapDb $glMsId DestPort $port
+	#DbSet $glBssapDb $glMsId LocalIp $__aoip_address
+	DbSet $glBssapDb $glMsId LocalPort $loc_port
+				#DbSet $glBssapDb $glMsId IpAddPort $__aoip_address-$loc_port 
+	if { ![DbKeyExists $glBssapDb IpAddPort [DbGet $glBssapDb $glMsId LocalIp]-$loc_port] } {
+			DbSet $glBssapDb $glMsId IpAddPort [DbGet $glBssapDb $glMsId LocalIp]-$loc_port
+	} else {
+			logscr "SendAssignmentCmplt: ERROR: Local IpAddPort already exists in the BssapDb for the MsId=[DbGetIdx $glBssapDb IpAddPort [DbGet $glBssapDb $glMsId LocalIp]-$loc_port]"
+			exit
+	}
+
+	log "SendAssignmentCmplt:ipAdd_local=[DbGet $glBssapDb $glMsId LocalIp]; port_local=$loc_port; IpAddPort=[DbGet $glBssapDb $glMsId IpAddPort]"
+	log "ipAdd_Peer=$ip_add; port_Peer=$port"
+
+	wr	s 	ip_port [GetAUPoIPContainer [DbGet $glBssapDb $glMsId LocalIp] $loc_port]
+
+	if { [IpUpSupported] } {
+			ActivateAoipResources \
+						[DbGet $glBssapDb $glMsId LocalIp] \
+						[DbGet $glBssapDb $glMsId LocalPort] \
+						 $ip_add $port
+			nextstate WaitRtpOpenAck
+	} else {
+		log "SendAssignmentCmplt: Pure Signalling Mode Over IP"
+		# sending RR_SYNC_IND (res: 1 = Resource Assignment)
+		set res 1
+		SendRrSyncInd $res "?"
+		nextstate BssapConnectActive
+	# -end-
+	}
+	# send Assignment Complete to GW
+	LogOutputMsg $s
+	set apIdcontextId [DbGet $glBssapDb $glMsId ApIdContextId]
+	SendRuaNDataReq $apIdcontextId $s
+
+}
+
+proc RcvStartAck { } {
+
+	# sending RR_SYNC_IND (res: 1 = Resource Assignment)
+	set res 1
+	SendRrSyncInd $res "?"
+
+	nextstate BssapConnectActive
+}
+
+proc RecvRtpOpenAck { } {
+
+	if { [info exists ::__aoip_rtp_ssrc] && $::__aoip_rtp_ssrc != 0 } {
+		SyncronizationSourceSetting
+	}
+
+	if { [ConfigureAoipResources] == 0 } {
+		log "RecvRtpOpenAck: case of ConfigureAoipResources = 0"; #cDEBUG
+		RcvStartAck
+	}
+}
+
+#Carlo gestione caso di mobile terminating dove qs ultimo effettua una reverse redirect
+proc RcvRabOpenAck { } {
+
+	if { [info exists ::__aoip_redir_voice] && $::__aoip_redir_voice == 1 \
+			&& [IsVoid [DbGet $::glMsDb $::glMsId CalledMsNum]] } {
+
+		# sending RR_SYNC_IND (res: 1 = Resource Assignment)
+		set res 1
+		SendRrSyncInd $res "?"
+		nextstate BssapConnectActive
+	} else {
+		LogInputSig
+	}
+}
+
+proc RecvRtpOpenNak { } {
+
+	LogInputSig
+	
+	if { [rd ::_sig Res] == -16 } {
+		log "RecvRtpOpenNak: ERROR in the Bind: (Address already in use)"
+		log "RecvRtpOpenNak: Inst=[rd ::_sig Inst]; RtpId=[rd ::_sig RtpId]; LocalAdd=[rd ::_sig LocalAdd]; LocalPort=[rd ::_sig LocalPort]"
+	} elseif { [rd ::_sig Res] == -15 } {
+		log "RecvRtpOpenNak: ERROR in the Socket Open"
+		log "RecvRtpOpenNak: Inst=[rd ::_sig Inst]; RtpId=[rd ::_sig RtpId]; LocalAdd=[rd ::_sig LocalAdd]; LocalPort=[rd ::_sig LocalPort]"
+	} else {
+		exit
+	}
+}
+
+
+proc SendAssignmentFail { bscid cause } {
+
+	# Global Variables
+	global _sig glBssapDb glMsId
+
+	new ASG_FAIL s
+	wr s cause $cause
+	if { [GetPools $bscid] > 1 } {
+		# TODO set pool ???
+		set pool "?"
+		wr s circ_pool $pool
+	}
+
+	LogOutputMsg $s
+
+	set ApIdContextId [DbGet $glBssapDb $glMsId ApIdContextId]
+	SendRuaNDataReq $ApIdContextId $s
+}
+
+
+
+#------------------------------------------------------------#
+# 3.1.3 "Resource Indication" procedure functions
+#------------------------------------------------------------#
+# TODO
+
+#------------------------------------------------------------#
+# 3.1.4 "Reset" procedure functions
+#------------------------------------------------------------#
+proc T_13Expired { } {
+
+	# Global Variables
+	global _sig _src glBscDb
+
+	LogInputMsg $_sig
+
+	set bscid [DbGetIdx $glBscDb T_13id $_src]
+
+	# Reset All Bsc instances
+	BssapAllInstReset
+
+	SendReset $bscid
+}
+
+proc SendReset { bscid } {
+
+	global _sig glBscDb glBssapDb glMsId
+
+	set spc [DbGet $glBscDb $bscid Opc]
+	set stkid [DbGet $glBscDb $bscid StkId]
+	DbSet $glBssapDb $glMsId Spc $spc
+	DbSet $glBssapDb $glMsId StkId $stkid
+	DbSet $glBssapDb $glMsId Dpc [DbGet $glBscDb $bscid Dpc]
+
+	# Cause
+	set cause 07; # "OM intervention"
+
+	SendGlobalReset $cause
+
+	# Start (time to receipt RST_ACK)
+	set tid [DbGet $glBscDb $bscid T_4id]
+	if { [tmrtout $tid] != 0 } {
+		tmrstart $tid
+	}
+
+# TODO
+# 	Add "Blocking procedure
+
+	nextstate BssapWaitForResetAck
+}
+
+proc RcvReset { } {
+
+	global _sig 
+
+	LogInputMsg $_sig
+
+	# Reset dedicated AP instances
+	BssapAllInstReset
+
+	SendResetAck
+
+	nextstate BssapIdle
+}
+
+proc BssapWaitForResetAck_RcvReset { } {
+
+	global _sig 
+
+	LogInputMsg $_sig
+
+	# Reset All Bsc instances
+	BssapAllInstReset
+
+	SendResetAck
+}
+
+proc T_4Expired { } {
+
+	global _sig _src glBscDb glNumOfAvailReset glNumOfTotReset glUnlimitedResetAttempts
+
+	LogInputMsg $_sig
+
+	set bscid [DbGetIdx $glBscDb T_4id $_src]
+
+	incr glNumOfAvailReset -1
+	if { !$glUnlimitedResetAttempts && ($glNumOfAvailReset == 0) } {	
+		exit "BSSAP Reset for BSC $bscid : exhausted all $glNumOfTotReset reset attempts"
+	} else {
+		# Send again a RST
+		set cause 07; # "OM intervention"
+
+		SendGlobalReset $cause
+
+		set tid [DbGet $glBscDb $bscid T_4id]
+		tmrstart $tid
+	}
+}
+
+proc RcvResetAck { } {
+
+	global _sig glInstNull glBscDb glBssapDb
+	
+	LogInputMsg $_sig
+
+	# Stop T_4 timer
+	set spc [DbGet $glBssapDb $glInstNull Spc]
+	set bscid [DbGetIdx $glBscDb Opc $spc]
+	
+	if { ![IsVoid $bscid] && ![IsEmpty $bscid] } {
+		tmrstop [DbGet $glBscDb $bscid T_4id]
+	} else {
+		logscr "RcvResetAck: ATTENTION: bscid is void or empty for the spc=$spc"
+	}
+
+	SendBssapCtlResetAck
+
+	nextstate BssapIdle
+}
+
+proc RcvResetResource { } {
+
+	global _sig
+	
+	LogInputMsg $_sig
+
+	set resList [GetCallIdListFromSig [rd _sig res_list]]
+	set resCause [rd _sig cause]
+	log "RcvResetResource: res_list=[rd _sig res_list] --> resList = $resList; resCause=$resCause"
+
+	# Carlo TODO fare rilascio risorse identificate dalla lista del Call Identifiers
+
+	# 3gpp-48008.9.4.0 §3.1.4.3.2 (BSS always return the ACK)
+	SendResetResourceAck [rd _sig res_list]
+}
+
+proc SendResetResource { cause } {
+
+	SendResetIpResource [rd ::_sig res_list] $cause
+}
+
+proc RcvResetResourceAck { } {
+
+	# only for debug
+
+	LogInputMsg $::_sig
+
+	#Carlo TODO
+}
+
+
+#------------------------------------------------------------#
+# 3.1.5 "External Handover" procedure functions
+#------------------------------------------------------------#
+proc RcvBssapHov { } {
+
+	global _sig glBtsDb glBssapDb glMsId
+	
+	LogInputMsg $_sig
+	
+	# Cause
+	set cause [rd _sig Cause]
+
+	# Target LAC/CellId
+	set lac_tgt [rd _sig LAC]
+	set ci_tgt [rd _sig CellId]
+	# Target AP
+	# Check MS is hand over to AP in configured AP DB
+	set ap_tgt [GetApIdByCellIdfr $lac_tgt $ci_tgt]
+	if { [string match "-1" $ap_tgt] } {
+		exit "RcvBssapHov: target AP identity unknown (LAC=$lac_tgt, CellId=$ci_tgt)"
+	}
+	
+	# Current LAC/CellId
+	set lac [DbGet $glBssapDb $glMsId LAC]
+	set ci [DbGet $glBssapDb $glMsId CellId]
+	# Current Bsc
+	set ap [GetApIdByCellIdfr $lac $ci]
+	if { [string match "-1" $ap] } {
+		exit "RcvBssapHov: current AP identity unknown (LAC=$lac, CellId=$ci)"
+	}
+
+	if { $lac_tgt == $lac && $ci_tgt == $ci } {
+		logscr "Handover Required on the current cell (lac=$lac; cell_id=$ci).No action"
+	} else {
+		# Handover Required is external to the current AP
+		# For only one cell on one AP,so Handover is external
+		SendHovRequired $cause $lac_tgt $ci_tgt
+	}
+}
+
+# Sent by Serving AP
+proc SendHovRequired { cause lac ci } {
+
+	# Global Variables
+	global _sig glBssapDb glMsId
+	
+	# Cell Identifier List 
+	set cellidfr 01; # Warning: hardcoded disc (01 = LAC + single Cell)
+	append cellidfr $lac
+	append cellidfr $ci
+
+	# Current Channel Type 1
+	set spi [DbGet $glBssapDb $glMsId Spi]
+	set ch_rate [DbGet $glBssapDb $glMsId ChannelRate]
+
+	# Speech Version (Used)
+	set perm_speech [DbGet $glBssapDb $glMsId PermSpeech]
+	if { $perm_speech != "?" } {
+		# Warning: we consider used the first "permitted speech"
+		set spch_ver [hocts $perm_speech 1]
+	}
+
+	new HOV_RQRD s
+
+	wr 	s cause $cause
+	wr	s cell_idfr_list $cellidfr
+	wr 	s curr_ch_type_1 [GetCurrChType1 $spi $ch_rate]
+	wr 	s spch_ver $spch_ver
+
+	LogOutputMsg $s
+
+	set ApIdContextId [DbGet $glBssapDb $glMsId ApIdContextId]
+	SendRuaNDataReq $ApIdContextId $s
+}
+
+# Received by Target Bsc
+proc RcvHovRequest { } {
+
+	# Global Variables
+	global _sig
+	
+	LogInputMsg $_sig
+
+	# Cell Identifier Target
+	set cell_info [GetCellInfo [rd _sig cell_idfr_tgt]]
+	log "RcvHovRequest: cell_info=$cell_info"
+	set lac_tgt [lindex $cell_info 0]
+	set ci_tgt [lindex $cell_info 1]
+
+	SendHovRequestAck $lac_tgt $ci_tgt
+	# (to test Handover Failure)
+	#set cause_value c0
+	#SendHovFail $cause_value
+}
+
+# Sent by Target Bsc
+proc SendHovFail { cause_value } {
+
+	# Global Variables
+	global _sig glBssapDb glMsId
+	
+	# Send RR Handover Failure
+	new HOV_FAIL s 
+	wr s cause $cause_value
+
+	LogOutputMsg $s
+
+	set ApIdContextId [DbGet $glBssapDb $glMsId ApIdContextId]
+	# Acknowledge from new BSC
+	SendSccpNConnectRes $ApIdContextId $s
+}
+
+# Sent by Target AP
+proc SendHovRequestAck { lac_tgt ci_tgt } {
+
+	log "SendHovRequestAck lac_tgt=$lac_tgt ci_tgt=$ci_tgt"
+
+	# Global Variables
+	global _sig glBssapDb glHovInfo glApIdContextId glMsId 
+	
+	# Store Handover Information
+	set hov_num [llength [array names glHovInfo]]
+	set hov_ref [expr $hov_num % 256]
+	set glHovInfo($hov_ref) "$glApIdContextId $lac_tgt $ci_tgt"
+
+	# Send RR Handover Command
+	new RR_HO_CMD t 
+	wr t cell_desc ffff
+	wr t desc_frst_ch_aft_time ffffff
+	wr t ho_ref [uctoh $hov_ref]
+	wr t pwr_cmd_and_acc_type ff
+	#set l3pdu [bssapSigToPdu t]
+	set l3pdu [rrSigToPdu t]
+
+	new HOV_REQ_ACK s
+	wr 	s l3_info $l3pdu
+	global glAoip __aoip_address
+	if { $glAoip && [CheckCodecList] } {
+		set spch_ver f066
+		DbSet $glBssapDb $glMsId SpeechVer $spch_ver
+
+		wr 		s speech_codec $spch_ver
+
+		set aupoip_container [rd _sig aoip_tla]
+		set ip_add [GetIpAddressFromContainer $aupoip_container]
+		set port [GetUdpPortFromContainer $aupoip_container]
+		set loc_port [GetAUPoIPPort]
+		DbSet $glBssapDb $glMsId DestIp $ip_add
+		DbSet $glBssapDb $glMsId DestPort $port
+		DbSet $glBssapDb $glMsId LocalIp $__aoip_address
+		DbSet $glBssapDb $glMsId LocalPort $loc_port
+		log "SendHovRequestAck: spch_ver = $spch_ver; ip_add = $ip_add; port = $port"
+
+		wr		s aoip_tla [GetAUPoIPContainer \
+							$__aoip_address $port]
+
+		if { [IpUpSupported] } {
+			ActivateAoipResources \
+				[DbGet $glBssapDb $glMsId LocalIp] \
+				[DbGet $glBssapDb $glMsId LocalPort] \
+				 $ip_add $port
+			nextstate WaitRtpOpenAck
+		} else {
+			log "SendHovRequestAck: UserPlane over IP isn't supported: Pure Signalling Mode"
+		}
+	}
+
+	LogOutputMsg $s
+
+	# Acknowledge from new BSC
+	SendSccpNConnectRes $glApIdContextId $s
+}
+
+# Received by Serving Bsc
+proc RcvHovCommand { } {
+
+	# Global Variables
+	global _sig _sigpdu glBssapDb glMsId
+	
+	LogInputMsg $_sig
+
+	set l3pdu [rd _sig l3_info]
+	if { ![string match "?" $l3pdu] } {
+		# decode RR Handover Command
+		rrPduToSig l3pdu
+		# Set Handover Reference 
+		set hov_ref [htouc [rd _sigpdu ho_ref]]
+		DbSet $glBssapDb $glMsId HovRef $hov_ref
+
+	} else {
+		exit "External Handover procedure failed"
+	}
+
+	#SendHovDetect $hov_ref
+}
+
+# Sent by Target Bsc
+proc SendHovDetect { } {
+
+	# Global Variables
+	global _sig glHovInfo glBssapDb glMsId
+
+	new HOV_DET s
+
+	LogOutputMsg $s
+
+	set hov_ref [DbGet $glBssapDb $glMsId HovRef]
+	set ApIdContextId [lindex $glHovInfo($hov_ref) 0]
+	SendRuaNDataReq $ApIdContextId $s
+
+	SendHovCmplt $hov_ref
+}
+
+# Sent by Target Bsc
+proc SendHovCmplt { hov_ref } {
+
+	# Global Variables
+	global _sig glHovInfo glBssapDb glMsId
+	
+	# Store SS7 infos of the Bsc target
+	set ApIdContextId [lindex $glHovInfo($hov_ref) 0]
+	DbSet $glBssapDb $glMsId ApIdContextIdTarget $ApIdContextId
+	# Store Cell Identification infos of the Bsc target
+	set lac_tgt [lindex $glHovInfo($hov_ref) 1]
+	set ci_tgt [lindex $glHovInfo($hov_ref) 2]
+	DbSet $glBssapDb $glMsId LACTarget $lac_tgt
+	DbSet $glBssapDb $glMsId CellIdTarget $ci_tgt
+
+	new HOV_CMPLT s
+
+	# Warning: hardcoded RR Cause (00 = "normal event")
+	wr s rr_cause 00
+
+	LogOutputMsg $s
+
+	set ApIdContextId [lindex $glHovInfo($hov_ref) 0]
+	SendRuaNDataReq $ApIdContextId $s
+
+	nextstate BssapConnectActive
+}
+
+#------------------------------------------------------------#
+# 3.1.5a "Handover from GSM to another System" procedure functions
+#------------------------------------------------------------#
+# TODO
+
+#------------------------------------------------------------#
+# 3.1.6 "Internal Intra-Cell Handover" procedure functions
+#------------------------------------------------------------#
+proc RcvIntHovEnquiry { } {
+
+	global _sig glMsDb
+
+	LogInputMsg $_sig
+
+	set mscCodecListChosen [rd _sig speech_codec]
+
+	if { ![IsVoid $mscCodecListChosen] && [BssSclIncludeMscPcl AoipBssScl $mscCodecListChosen] } {
+		set cause 16; # "response to an INTERNAL HANDOVER ENQUIRY message" (00010110) : to see Alcatel document '0163_SFD_AUPoIP_02p1'
+		SendIntHovRqd $cause
+	} else {
+		set cause 17; # "INTERNAL HANDOVER ENQUIRY reject" (00010111) : to see Alcatel document '0163_SFD_AUPoIP_02p1'
+		SendHovFail $cause
+	}
+}
+
+proc SendIntHovRqd { causeValue } {
+
+	global glMsId glMsDb glBssapDb __aoip_address
+
+	# Cell Identifier
+	set lac			[DbGet $glBssapDb $glMsId LAC]
+	set ci 			[DbGet $glBssapDb $glMsId CellId]
+	set cellIdfr	[GetCellIdentifier $lac $ci]
+
+	set port		[DbGet $glBssapDb $glMsId LocalPort]	
+	set ApIdContextId [DbGet $glBssapDb $glMsId ApIdContextId]
+	log "SendIntHovRqd: glMsId=$glMsId; lac=$lac; ci=$ci; __aoip_address=$__aoip_address; local_port=$port; ApIdContextId=$ApIdContextId"
+
+	if { ![IsVoid $port] } {
+		set aoipTransportLayerAddress [GetAUPoIPContainer $__aoip_address $port]
+	} else {
+		log "SendIntHovRqd: WARNING: port=$port --> Send Hov Failure with cause INTERNAL HANDOVER ENQUIRY reject"
+		set cause 17; # "INTERNAL HANDOVER ENQUIRY reject" (00010111) : to see Alcatel document '0163_SFD_AUPoIP_02p1'
+		SendHovFail $cause
+		return
+	}
+
+	set codecBssScl [DbGet $glMsDb $glMsId AoipBssScl]
+
+	new INTERNAL_HO_RQD s
+		
+	wr 	s	cause 		$causeValue
+	wr	s 	cell_idfr 	$cellIdfr
+	wr 	s 	aoip_tla 	$aoipTransportLayerAddress
+	wr	s	codec_list	$codecBssScl
+
+	LogOutputMsg $s
+	SendRuaNDataReq $ApIdContextId $s
+}
+
+proc RcvIntHovRqdReject { } {
+
+	LogInputMsg $::_sig
+
+	# Carlo TODO management
+	log "TODO"
+}
+
+proc RcvIntHovCmd { } {
+
+	LogInputMsg $::_sig
+
+	# Carlo TODO management
+	log "TODO"
+}
+
+#------------------------------------------------------------#
+# 3.1.7 "Internal Inter-Cell Handover" procedure functions
+#------------------------------------------------------------#
+proc SendHovPerformed { cause lac ci } {
+
+	global _sig glBssapDb glMsId
+	
+	# Store New LAC/CellId
+	DbSet $glBssapDb $glMsId LAC $lac
+	DbSet $glBssapDb $glMsId CellId $ci
+
+	new HOV_PERFD s
+
+	wr 	s cause $cause
+	wr	s cell_idfr [GetCellIdentifier $lac $ci]
+
+	LogOutputMsg $s
+
+	set ApIdContextId [DbGet $glBssapDb $glMsId ApIdContextId]
+	SendRuaNDataReq $ApIdContextId $s
+}
+
+#------------------------------------------------------------#
+# 3.1.8 "Handover Candidate Enquiry" procedure functions
+#------------------------------------------------------------#
+# TODO
+
+#------------------------------------------------------------#
+# 3.1.9 "Release of Radio Resource and Terrestrial Resource" 
+#        procedure functions
+#------------------------------------------------------------#
+proc SendClrReq { cause } {
+
+	global glBssapDb glMsId
+
+	new CLR_REQ s
+	wr s cause $cause
+	
+	LogOutputMsg $s
+
+	set ApIdContextId [DbGet $glBssapDb $glMsId ApIdContextId]
+	SendRuaNDataReq $ApIdContextId $s
+}
+
+proc RcvClrCmd { } {
+
+	# Sending Clear Complete
+	SendClrCmplt
+}
+
+proc SendClrCmplt { } {
+
+	global glBssapDb glMsId
+
+	new CLR_CMPLT s
+
+	LogOutputMsg $s
+
+	set ApIdContextId [DbGet $glBssapDb $glMsId ApIdContextId]
+	SendRuaDisconnectReq $ApIdContextId $s
+}
+
+
+#------------------------------------------------------------#
+# 3.1.10 "Paging" procedure functions
+#------------------------------------------------------------#
+proc RcvPaging { } {
+
+	global _sig glMsDb glMsId glBssapDb glInstNull _state
+
+	LogInputMsg $_sig
+
+	set imsi [rd _sig imsi]
+
+	if { ![IsVoid $imsi] } {
+		set idx [DbGetIdx $glMsDb IMSI $imsi]
+		if {[IsEmpty $idx]} {
+			set humanImsi [GetImsiFrom24008Format $imsi]
+			logscr "Received paging for unknown IMSI $humanImsi"
+			return
+		}
+
+		# Check if this MS is registered
+		if { [IsVoid [DbGet $glBssapDb $idx TMSI]]} {
+			log "Paging received for not registered MS"
+			return
+		}
+
+	} else {
+		exit "WARNING: Paging without IMSI"
+	}
+	# Set Current Instance
+	set glMsId $idx
+
+	# Get Tmsi
+	set tmsi [rd _sig tmsi]
+	if { $tmsi != "?" } {
+		set id "f4"
+		append id $tmsi
+	} else {
+		set id $imsi
+	}
+
+	# Carlo -begin SS management-
+	# *SS-CFNRC* (simulo il No Paging Response)
+	#LogDb $glMsDb ; #cDEBUG
+	
+	set _state [DbGet $glBssapDb $glMsId State]
+	log "RcvPaging: glMsId=$glMsId at State $_state"; #cDEBUG
+	#set apid [DbGet $glBssapDb $glMsId ApId]
+	if { [DbFieldExists $glMsDb Call_Forwarding] && [DbGet $glMsDb $glMsId Call_Forwarding] == "CFNRC" } {
+		log "RcvPaging: [DbGet $glMsDb $glMsId Call_Forwarding] activated on mobile $glMsId"; #cDEBUG
+	# @Carlo -end SS management-
+	} else {
+    	SendPagingResponse $idx $id
+	}
+}
+
+# simulation paging procedure in BSS environment
+proc SendPagingResponse { idx id } {
+
+	global glMsDb 
+
+	new RR_PGING_RSP s 
+	wr s cphr_key_seq_num 07; # no key is available
+	wr s spare_octet 00
+	wr s mobile_station_clsmrk [DbGet $glMsDb $idx ClassMark2]
+	wr s mobile_id $id
+	set l3pdu [rrSigToPdu s]
+
+	# sending CMPLT_L3_INFO
+	SendInitialMsMsg $l3pdu
+
+	nextstate BssapPagingResponse
+}
+
+#------------------------------------------------------------#
+# 3.1.11 "Trace Invocation" procedure functions
+#------------------------------------------------------------#
+# TODO
+
+#------------------------------------------------------------#
+# 3.1.12 "Flow Control" procedure functions
+#------------------------------------------------------------#
+# TODO
+
+#------------------------------------------------------------#
+# 3.1.13 "Classmark Handling" procedure functions
+#------------------------------------------------------------#
+proc RcvClsmkReq { } {
+
+	global _sig
+
+	LogInputMsg $_sig
+
+	SendClsmkUpd
+}
+
+proc SendClsmkUpd { } {
+
+	global _sig glMsDb glBssapDb glMsId
+
+	new CLSMK_UPD s
+
+	wr s clsmk_info_2 [DbGet $glMsDb $glMsId ClassMark2]
+	wr s clsmk_info_3 [DbGet $glMsDb $glMsId ClassMark3]
+
+	LogOutputMsg $s
+
+	set ApIdContextId [DbGet $glBssapDb $glMsId ApIdContextId]
+	SendRuaNDataReq $ApIdContextId $s
+}
+
+
+#------------------------------------------------------------#
+# 3.1.14 "Cipher Mode Control" procedure functions
+#------------------------------------------------------------#
+proc RcvCphrModeCmd { } {
+	
+	global _sig glBssapDb glMsId
+
+	LogInputSig
+
+	# sending RR_SYNC_IND (res: 0 = Ciphering)
+	set res 0
+	SendRrSyncInd $res "?"
+
+	set chosen_encr_alg [ChooseEncrAlg [string range [rd _sig encr_info] 0 1]]
+	DbSet $glBssapDb $glMsId Encryption $chosen_encr_alg
+
+	SendCphrModeCmplt $chosen_encr_alg
+}
+
+# encrAlgList is an HEXSTR of 1 byte (first byte of Encryption Information)
+# return value is an HEXSTR of 1 byte
+proc ChooseEncrAlg {encrAlgList} {
+	log "ChooseEncrAlg: encrAlgList=$encrAlgList"
+
+	set NoEncryptionUsed	01
+	set GSM_A5_1			02
+	set GSM_A5_2			03
+	set GSM_A5_3			04
+	set GSM_A5_4			05
+	set GSM_A5_5			06
+	set GSM_A5_6			07
+	set GSM_A5_7			08
+
+	set NoEncryptionBit	0x01
+	set GSM_A5_1Bit		0x02
+	set GSM_A5_2Bit		0x04
+	set GSM_A5_3Bit		0x08
+	set GSM_A5_4Bit		0x10
+	set GSM_A5_5Bit		0x20
+	set GSM_A5_6Bit		0x40
+	set GSM_A5_7Bit		0x80
+
+	# choose the lowest encryption algorithm
+	if {[expr "0x$encrAlgList & $NoEncryptionBit"]} {
+		return $NoEncryptionUsed
+	} elseif {[expr "0x$encrAlgList & $GSM_A5_1Bit"]} {
+		return $GSM_A5_1
+	} elseif {[expr "0x$encrAlgList & $GSM_A5_2Bit"]} {
+		return $GSM_A5_2
+	} elseif {[expr "0x$encrAlgList & $GSM_A5_3Bit"]} {
+		return $GSM_A5_3
+	} elseif {[expr "0x$encrAlgList & $GSM_A5_4Bit"]} {
+		return $GSM_A5_4
+	} elseif {[expr "0x$encrAlgList & $GSM_A5_5Bit"]} {
+		return $GSM_A5_5
+	} elseif {[expr "0x$encrAlgList & $GSM_A5_6Bit"]} {
+		return $GSM_A5_6
+	} elseif {[expr "0x$encrAlgList & $GSM_A5_7Bit"]} {
+		return $GSM_A5_7
+	} else {exit "ChooseEncrAlg: unexpected encrAlgList=$encrAlgList"}
+}
+
+proc SendCphrModeCmplt { chosen_encr_alg } {
+	
+	global _sig glBssapDb glMsId
+
+	new CPHR_MODE_CMPLT s
+	wr s chsn_encr_algo $chosen_encr_alg
+
+	set ApIdContextId [DbGet $glBssapDb $glMsId ApIdContextId]
+	SendRuaNDataReq $ApIdContextId $s
+
+    nextstate BssapConnectActive
+}
+
+#------------------------------------------------------------#
+# 3.1.15 "General SCCP Abnormal Conditions" procedure functions
+#------------------------------------------------------------#
+# TODO
+
+#------------------------------------------------------------#
+# 3.1.16 "Initial MS Msg" procedure functions 
+#------------------------------------------------------------#
+proc SendInitialMsMsg { l3pdu } {
+
+	global _sig _state glBtsDb glBssapDb glMsId glBscDb
+
+	set lac [DbGet $glBssapDb $glMsId LAC]
+	log "SendInitialMsMsg: lac=$lac"
+	set ci [DbGet $glBssapDb $glMsId CellId]
+
+	new CMPLT_L3_INFO s
+
+	# Cell Identifier
+	set 	cell_ident [GetCellIdentifier $lac $ci $glMsId]
+	log " SendInitialMsMsg: Cell Ident is $cell_ident"
+	wr      s cell_idfr $cell_ident
+	# L3 info
+	wr      s l3_info $l3pdu
+
+	LogOutputMsg $s
+
+	# getting apId from Bsc/Bts databases
+	set apid [DbGet $glBssapDb $glMsId ApId]
+	log "SendInitialMsMsg: AP ID = $apid"
+	if { $apid == "-1" || $apid == "?" } {
+		exit "SendInitialMsMsg: AP not found for MS $glMsId"
+	}
+
+	SendRuaConnectReq $apid $s
+}
+
+#------------------------------------------------------------#
+# 3.1.17 "Queueing Indication" procedure functions
+#------------------------------------------------------------#
+# TODO
+
+#------------------------------------------------------------#
+# 3.1.18 "Data Link Control SAPI not Equal to 0" procedure functions
+#------------------------------------------------------------#
+# TODO
+
+#------------------------------------------------------------#
+# 3.1.19 "BSSMAP Error Handling" procedure functions
+#------------------------------------------------------------#
+# TODO
+
+#------------------------------------------------------------#
+# 3.1.20 "Load Indication" procedure functions
+#------------------------------------------------------------#
+# TODO
+
+#------------------------------------------------------------#
+# 3.1.21 "Voice group call service and voice broadcast service
+#         call set-up and resource assignment" procedure functions
+#------------------------------------------------------------#
+# TODO
+
+#------------------------------------------------------------#
+# 3.1.22 "Voice group call service and voice broadcast service
+#         assignment" procedure functions
+#------------------------------------------------------------#
+# TODO
+
+#------------------------------------------------------------#
+# 3.1.23 "void"
+#------------------------------------------------------------#
+# TODO
+
+#------------------------------------------------------------#
+# 3.1.24 "Voice group call uplink control" procedure functions
+#------------------------------------------------------------#
+# TODO
+
+#------------------------------------------------------------#
+# 3.1.25 "PDSS1 flow control" procedure functions
+#------------------------------------------------------------#
+# TODO
+
+#------------------------------------------------------------#
+# 3.1.26 "Circuit re-selection" procedure functions
+#------------------------------------------------------------#
+# TODO
+
+#------------------------------------------------------------#
+# 3.1.27 "LSA handling" procedure functions
+#------------------------------------------------------------#
+# TODO
+
+#------------------------------------------------------------#
+# 3.1.28 "Location Acquisition" procedure functions
+#------------------------------------------------------------#
+proc RcvPerfLocReq { } {
+	
+	global _sig 
+
+	LogInputMsg $_sig
+
+	# Send Location Response to MSC
+	SendPerfLocRsp
+
+}
+
+# Warning !!! Hardcoded values inside
+proc SendPerfLocRsp { } {
+	
+	global _sig glBssapDb glMsId
+
+	new PERF_LOC_RSP s
+	wr s loc_estm 00
+
+	LogOutputMsg $s
+
+	set ApIdContextId [DbGet $glBssapDb $glMsId ApIdContextId]
+	SendRuaNDataReq $ApIdContextId $s
+}
+
+#------------------------------------------------------------#
+# 3.1.29 "Connectionless Information Transfer" procedure functions
+#------------------------------------------------------------#
+# see "SendSccpNUnitdataReq" and "DecSccpNUnitdataInd"
+
+#------------------------------------------------------------#
+# 3.1.30 "Common Id" procedure functions 
+#------------------------------------------------------------#
+proc SendCommonId { } {
+
+	global _sig glBssapDb glMsDb glMsId
+
+	set 	Imsi [DbGet $glMsDb $glMsId IMSI]
+
+	# sending COMMON_ID
+	new 	COMMON_ID s
+	wr  s imsi $Imsi
+
+	set ApIdContextId [DbGet $glBssapDb $glMsId ApIdContextId]
+	SendRuaNDataReq $ApIdContextId $s
+}
+
+proc RcvCommonId { } {
+
+	global _sig glBssapDb glMsDb glMsId
+
+	LogInputMsg $_sig
+
+	# check COMMON_ID
+	set Imsi [rd _sig imsi]
+	set imsi [DbGet $glMsDb $glMsId IMSI]
+	if { $Imsi != $imsi } {
+		exit "Error: Unexpected IMSI ($Imsi) in COMMON ID, expected $imsi"
+	}
+}
+
+##############################################################
+# DTAP procedures (see TS 3GPP 08.06 v.8.0.1)
+##############################################################
+
+proc SendDirectTransfer { dlci l3pdu } {
+
+	global _sig glBssapDb glMsId
+
+	new DTAP_DATA s
+	## Dlci
+	wr s Dlci $dlci
+	## Data
+	wr s Data $l3pdu
+
+	set ApIdContextId [DbGet $glBssapDb $glMsId ApIdContextId]
+	SendRuaNDataReq $ApIdContextId $s
+}
+
+proc RcvDirectTransfer { } {
+
+	global _sig glMsId
+
+	LogInputPrim $_sig
+
+	set l3pdu [rd _sig Data]
+		
+	SendRrDataInd $l3pdu
+}
+
+##############################################################
+# PRMITIVES HANDLING
+##############################################################
+
+#------------------------------------------------------------#
+# receiving CTL sap signals 
+#------------------------------------------------------------#
+
+# BSSAP_CTL_RESET
+proc RcvCtlReset { } {
+
+	# Global Variables
+	global _sig glBscDb 
+
+	LogInputMsg $_sig
+
+	set bscid [rd _sig BscId]
+
+	# Start reset guard period
+	set tid [DbGet $glBscDb $bscid T_13id]
+	if { [tmrtout $tid] != 0 } {
+		tmrstart $tid
+	}
+}
+
+#------------------------------------------------------------#
+# receiving signals from RUA adaptation layer 
+#------------------------------------------------------------#
+
+# CONNECT_ACK
+proc RcvConnectAck { } {
+
+	global _sig glBssapDb glMsId
+
+	LogInputMsg $_sig
+
+	set ApIdContextId [rd _sig ApIdContextId]
+	set apId [GetApId $ApIdContextId]
+	set contextId [GetContextId $ApIdContextId]
+
+	if { ![DbKeyExists $glBssapDb ApIdContextId $ApIdContextId] } {
+		# Store ApIdContextId
+		DbSet $glBssapDb $glMsId ApIdContextId $ApIdContextId
+	} else {
+		log "RcvConnectAck: ERROR: ApIdContextId=$ApIdContextId already exists in the glBssapDb\															for the MsId=[DbGetIdx $glBssapDb ApIdContextId $ApIdContextId]"
+	}
+
+	DbSet $glBssapDb $glMsId ApId $apId
+	DbSet $glBssapDb $glMsId ContextId $contextId
+
+	#nextstate BssapWaitConfirm
+	RcvConnectCnf
+}
+
+
+# CONNECT_ACK
+proc RcvConnectAckPgRes { } {
+
+	global _sig glBssapDb glMsId
+
+	LogInputMsg $_sig
+		
+	set ApIdContextId [rd _sig ApIdContextId]
+	set apId [GetApId $ApIdContextId]
+	set contextId [GetContextId $ApIdContextId]
+
+	if { ![DbKeyExists $glBssapDb ApIdContextId $ApIdContextId] } {
+		# Store ApIdContextId
+		DbSet $glBssapDb $glMsId ApIdContextId $ApIdContextId
+	} else {
+		log "RcvConnectAck: ERROR: ApIdContextId=$ApIdContextId already exists in the glBssapDb\															for the MsId=[DbGetIdx $glBssapDb ApIdContextId $ApIdContextId]"
+	}
+
+	DbSet $glBssapDb $glMsId ApId $apId
+	DbSet $glBssapDb $glMsId ContextId $contextId
+
+	#nextstate BssapWaitCnfForPaging
+	RcvConnectCnfForPaging
+}
+
+# CONNECT_IND
+proc RcvConnectIndForHov { } {
+
+	global _sig _state glApIdContextId
+
+	LogInputPrim $_sig
+		
+	set glApIdContextId [rd _sig ApIdContextId]
+
+	# Store Pdu in _sig
+	set _sig [rd _sig Pdu]
+	if { $_sig != "?"} {
+		eval $_state
+	}
+}
+
+# CONNECT_CNF
+proc RcvConnectCnf { } {
+
+	global _sig _state
+
+	LogInputPrim $_sig
+
+	SendRrEstCnf 
+
+	# Store Pdu in _sig 
+	#set _sig [rd _sig Pdu]
+	#if { ![IsVoid $_sig] } {
+	#	eval $_state
+	#}
+
+	nextstate BssapConnectActive 
+}
+
+proc RcvConnectCnfForPaging { } {
+
+	global _sig _state
+
+	LogInputMsg $_sig
+
+	SendRrEstInd 
+
+	# Store Pdu in _sig 
+	#set _sig [rd _sig Pdu]
+	#if { $_sig != "?" } {
+	#	eval $_state
+	#}
+
+	nextstate BssapConnectActive
+}
+
+# DISCONNECT_IND
+proc RcvDisconnectInd { } {
+
+	global _sig _state glBssapDb glMsId glMsDb
+
+	LogInputPrim $_sig
+
+	# Store Pdu in _sig
+	set _sig [rd _sig Pdu]
+	if { $_sig != "?" } {
+		eval $_state
+	}
+
+	#  only if we are not in External Handover proc
+	set target [DbGet $glBssapDb $glMsId ApIdContextIdTarget]
+	if { [IsVoid $target]  } {	
+
+		# Send Release Ind to MM
+		set cause "Normal Event"
+		SendRrRelInd $cause
+
+		set lai [DbGet $glMsDb $glMsId SysInfoLAI]
+		
+		# Send System Info to MM
+		new     RR_SYSINFO_IND s
+		wr      s MsId $glMsId
+		wr      s LAI $lai
+		send    s
+		LogOutputMsg $s
+
+		nextstate BssapIdle
+	}
+
+	# Remove or change SS7 link for this instance
+	BssapMovInst $glMsId
+}
+
+# DATA_IND
+proc RcvDataInd { } {
+
+	global _sig _state glMsId 
+
+	LogInputMsg $_sig
+
+	# Store Pdu in _sig 
+	set _sig [rd _sig Pdu]
+	if { $_sig != "?" } {
+		eval $_state
+	}
+}
+
+#------------------------------------------------------------#
+# receiving primitives from upper level
+#------------------------------------------------------------#
+
+proc RcvCtlResetResources { } {
+
+	LogInputMsg $::_sig
+
+	set cause 07; # 'OM intervention'
+	SendResetResource $cause
+}
+
+# RR_EST_REQ
+proc RcvRrEstReq { } {
+
+	global _sig glBssapDb glMsId
+	global glVGCSBSSAPPid
+	
+	LogInputPrim $_sig
+
+	set est_cause [rd _sig EstCause]
+	set l3pdu [rd _sig Pdu]
+	# Set Channel Type Infos
+	set res [SetChannelType $est_cause]
+	log "RcvRrEstReq: est_cause = $est_cause res = $res"
+	switch -exact -- $est_cause {
+		"Voice Group Call" {
+			new VGCS_CALL_BEGIN s
+			wr s MsId $glMsId	
+			wr s ApIdContextId [DbGet $glBssapDb $glMsId ApIdContextId]
+			send s $glVGCSBSSAPPid
+		}
+		"Subsequent Talker Uplink Request" {
+			new VGCS_SUBTALKER s
+			wr s MsId $glMsId
+			wr s ApIdContextId [DbGet $glBssapDb $glMsId ApIdContextId]
+			send s $glVGCSBSSAPPid
+		}
+	}
+
+	if { $res == "-1" } {
+		logscr "RR Establishment failed"
+	} elseif { $res == "-2" } {
+		log "RcvRrEstReq: est_cause = $est_cause"
+		#new UL_REQ s
+		#new BSSAP_CTL_SEND_ON_VGCS_LINK t
+		#wr t SignalToSend $s
+		#send t $glVGCSBSSAPPid
+		#remcmd $glVGCSBSSAPPid "SendUplinkRequest"
+	} else {
+		SendInitialMsMsg $l3pdu
+	}
+}
+
+# RR_DATA_REQ
+proc RcvRrDataReq { } {
+
+	global _sig   
+
+	LogInputPrim $_sig
+
+	# Dlci
+	set dlci 0
+
+	# retrieving "pdu" from RR_DATA_REQ
+	set l3pdu [rd _sig Pdu]
+
+	# sending DTAP_DATA
+	SendDirectTransfer $dlci $l3pdu
+}
+
+# RR_NEWTMSI_REQ
+proc RcvRrNewTmsiReq { } {
+
+	global _sig glBssapDb glMsId
+
+	LogInputMsg $_sig
+	# Set new Tmsi
+	DbSet $glBssapDb $glMsId TMSI [rd _sig TMSI]
+}
+
+#------------------------------------------------------------#
+# sending primitives to upper level
+#------------------------------------------------------------#
+
+# BSSAP_CTL_RESET_ACK
+proc SendBssapCtlResetAck { } {
+
+	new 	BSSAP_CTL_RESET_ACK r
+
+	send r
+	LogOutputMsg $r
+}
+
+# RR_EST_CNF
+proc SendRrEstCnf { } {
+
+	global glMsId 
+
+	new RR_EST_CNF r
+	wr r MsId $glMsId
+
+	send r
+	LogOutputMsg $r
+}
+
+# RR_EST_IND
+proc SendRrEstInd { } {
+
+	global glMsId 
+
+	# Warning: Index is stored in Cid
+	new RR_EST_IND r
+	wr r MsId $glMsId
+
+	send r
+	LogOutputMsg $r
+}
+
+# RR_REL_IND
+proc SendRrRelInd { cause } {
+
+	# Global Variables
+	global glMsId
+
+	new RR_REL_IND r
+	wr r MsId $glMsId
+	wr r Cause $cause
+
+	send r
+	LogOutputMsg $r
+}
+
+# RR_DATA_IND
+proc SendRrDataInd { l3pdu } {
+
+	global _sig glMsId
+	
+	new  RR_DATA_IND r 
+	wr r MsId $glMsId
+	wr r Pdu $l3pdu
+
+	send r
+	LogOutputPrim $r
+}
+
+# RR_SYNC_IND
+proc SendRrSyncInd { res cause } {
+
+	global _sig glMsId
+
+	new RR_SYNC_IND r
+	wr r MsId $glMsId
+	wr r Res $res
+	wr r Cause $cause
+
+	send r
+	LogOutputMsg $r
+}
+
+proc RcvRrJoicGcReq { } {
+	global _sig _mmpid glRrGcReqMsId glRrGcReqGrCallRef
+	global glBssapDb glMsId glVGCSBSSAPPid glMSVgcsDb
+	
+	set glRrGcReqMsId [rd _sig MsId]
+	set glRrGcReqGrCallRef [rd _sig GroupCallRef]
+	set grCallRef [rd _sig GroupCallRef]
+
+	new VGCS_JOIN_REQ s
+	wr s MsId $glMsId
+	wr s ApIdContextId [DbGet $glBssapDb $glMsId ApIdContextId]
+	wr s GroupCallRef $grCallRef
+	send s $glVGCSBSSAPPid
+
+	#new UL_RELSE_IND s
+	#wr s cause 0e
+	#new BSSAP_CTL_SEND_ON_VGCS_LINK t
+	#wr t GroupCallReference $glRrGcReqGrCallRef
+	#wr t SignalToSend $s
+
+	#send t $glVGCSBSSAPPid
+
+	#remcmd $glVGCSBSSAPPid [list SendOnVGCSDedicatedLink $s]
+
+	nextstate WaitForDedicatedClearCommand
+}
+
+proc RcvRrAbortReq { } {
+	
+	global glMsId _sig glBssapDb
+
+	set msId [rd _sig MsId]
+
+	logscr "Received RR_ABORT_REQ for msId = $msId glMsId = $glMsId"
+
+	set ApIdContextId [DbGet $glBssapDb $glMsId ApIdContextId]
+	if { ![IsVoid $ApIdContextId] } {
+		SendClrReq 01 
+	} else {
+		log "RcvRrAbortReq: (ApIdContextId is void) --> it skips the sending of the 'CLR_REQ' message"
+	}
+}
+
+proc RecvClearCommand { } {
+	
+	LogInputPrim $::_sig
+	RcvClrCmd
+	nextstate WaitForDisconnectInd
+}
+
+proc RecvDiscInd { } {
+	
+	nextstate BssapIdle
+}
+
+proc RecvDedClearCommand { } {
+	
+	global glRrGcReqGrCallRef glRrGcReqMsId
+	
+	new RR_JOIN_GC_CNF s
+	wr s MsId $glRrGcReqMsId
+	wr s GroupCallRef $glRrGcReqGrCallRef
+	wr s Mode "group_receive"
+	send s
+	#Manage clear command as usual
+	RcvClrCmd
+	nextstate WaitForDedicatedDisconnectInd
+}
+
+proc RecvDediDiscInd { } {
+	
+	nextstate BssapIdle
+}
+
+proc RcvAsgReqBssapIdle { } {
+	
+	global glMsId glBssapDb glApIdContextId
+	
+	DbSet $glBssapDb $glMsId ApIdContextId $glApIdContextId
+	SendSccpNConnectRes $glApIdContextId ?
+	RcvAssignmentReq
+	nextstate BssapConnectActive
+}
+
+proc RecvJoinGcReqIdle { } {
+	
+	global glMsId glBssapDb glVGCSBSSAPPid _sig
+	
+	new RR_JOIN_GC_CNF s
+	wr s MsId $glMsId
+	send s
+	new VGCS_JOIN_REQ t
+	wr t MsId $glMsId
+	wr t GroupCallRef [rd _sig GroupCallRef]
+	send t $glVGCSBSSAPPid
+}
+
+proc ClearTMSI { msId } {
+	
+	DbSet $::glBssapDb $msId TMSI "?"
+}
+
+##############################################################
+# FSM
+##############################################################
+
+state BssapWaitConfig {
+	BSSAP_OM_CFG 			BssapConfig      
+	default 				Unexpected
+}
+
+
+state BssapIdle {
+	CONNECT_ACK 			RcvConnectAck
+	CONNECT_IND 			RcvConnectIndForHov
+	RR_EST_REQ 				RcvRrEstReq
+    PAG         			RcvPaging
+	ASG_REQ					RcvAsgReqBssapIdle
+	RR_JOIN_GC_REQ			RecvJoinGcReqIdle
+	RST_CIRC				RecvRstCircIdle
+	RR_ABORT_REQ			RcvRrAbortReq
+	RR_DATA_REQ				LogInputSig
+	default 				Any
+}
+#RR_ABORT_REQ			RcvRrAbortReq aggiunto nello stato sopra Carlo 28/11/2011
+#RR_DATA_REQ			LogInputSig aggiunto nello stato sopra Carlo 13/03/2012
+
+state BssapWaitForResetAck {
+	RST_ACK 				RcvResetAck
+	T_4						T_4Expired
+   	RST 					BssapWaitForResetAck_RcvReset
+	default					Unexpected
+}
+
+state BssapPagingResponse {
+	CONNECT_ACK 			RcvConnectAckPgRes
+	default					Any
+}
+
+state BssapWaitConfirm {
+	CONNECT_CNF				RcvConnectCnf
+	DTAP_DATA 				RcvDirectTransfer
+	default 				Any
+}
+
+state BssapWaitCnfForPaging {
+	CONNECT_CNF				RcvConnectCnfForPaging
+	default 				Any
+}
+
+state BssapConnectActive {
+	DTAP_DATA 				RcvDirectTransfer
+	CPHR_MODE_CMD 			RcvCphrModeCmd
+	COMMON_ID				RcvCommonId
+	CLR_CMD					RcvClrCmd
+	DISCONNECT_IND 			RcvDisconnectInd
+	ASG_REQ 				RcvAssignmentReq
+	PERF_LOC_REQ			RcvPerfLocReq
+	RR_DATA_REQ 			RcvRrDataReq
+	RR_NEWTMSI_REQ			RcvRrNewTmsiReq
+	RR_JOIN_GC_REQ			RcvRrJoicGcReq
+	RR_ABORT_REQ			RcvRrAbortReq
+	RR_SYNC_REQ				LogInputSig
+	default 				Any
+}
+
+state WaitForClearCommand {
+	CLR_CMD					RecvClearCommand
+	default { Unexpected }
+}
+
+state WaitForDisconnectInd {
+	DISCONNECT_IND 			RecvDiscInd
+	default { Unexpected }
+}
+state WaitForDedicatedClearCommand {
+	CLR_CMD					RecvDedClearCommand
+	default { Unexpected }
+}
+
+state WaitForDedicatedDisconnectInd {
+	DISCONNECT_IND 			RecvDediDiscInd
+	default { Unexpected }
+}
+
+state WaitRtpOpenAck {
+	RTP_OPEN_ACK			RecvRtpOpenAck
+	RAB_OPEN_ACK            RcvRabOpenAck
+	PLAY_OPEN_ACK           LogInputSig
+	START_ACK               RcvStartAck
+	RTP_OPEN_NAK            RecvRtpOpenNak
+	RAB_OPEN_NAK            { LogInputSig ; exit }
+	PLAY_OPEN_NAK           { LogInputSig ; exit }
+	START_NAK               { LogInputSig ; exit }
+	PERF_LOC_REQ			RcvPerfLocReq
+	CLR_CMD					RecvClearCommand
+	RR_ABORT_REQ			RcvRrAbortReq
+	default 				Any
+}
+
+state Any {
+	BSSAP_CTL_RESET 			RcvCtlReset
+	T_13						T_13Expired
+	BSSAP_HOV_REQUIRED 			RcvBssapHov
+	BSSAP_HOV_DETECT 			SendHovDetect
+   	RST 						RcvReset
+	BLKG_ACK					RcvBlkAck
+	T_1							T_1Expired
+	CIRC_GROUP_BLKG_ACK     	RcvCircGroupBlkAck
+	CLSMK_REQ					RcvClsmkReq
+	HOV_REQ						RcvHovRequest
+	HOV_CMD						RcvHovCommand
+	TERMINATE_ACK           	LogInputSig
+	PLAY_CLOSE_ACK          	LogInputSig
+	RAB_CLOSE_ACK          		RcvRabCloseAck 
+	RTP_CLOSE_ACK          		RcvRtpCloseAck
+	RTP_CLOSE_NAK          		LogInputSig 
+	RAB_CLOSE_NAK           	LogInputSig
+	RESET_RESOURCE          	RcvResetResource
+	INTERNAL_HO_ENQ				RcvIntHovEnquiry
+	INTERNAL_HO_RQD_REJ			RcvIntHovRqdReject
+	INTERNAL_HO_CMD				RcvIntHovCmd
+	BSSAP_CTL_RESET_RESOURCES   RcvCtlResetResources
+	RESET_RESOURCE_ACK			RcvResetResourceAck
+	default 					Unexpected
+}
+
+#EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE#

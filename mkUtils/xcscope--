@@ -1,0 +1,125 @@
+#
+# xcscope--
+#
+
+  version=1.1.0
+
+
+#
+#   Crea cscope.out nella cartella <outdir>, usando <slist> come lista
+#   dei percorsi da esaminare e <ilist> come lista dei percorsi per i
+#   file di include.
+#
+#   <outdir>, <slist> e <ilist> sono espansi dalla shell e resi assoluti
+#   nella cartella attuale.
+#
+#   Se è presente l'opzione -r (o -R), cscope viene invocato in modo
+#   ricorsivo (con l'opzione -R); in ogno caso, l'esecuzione di cscope
+#   avviene in una cartella temporanea vuota.
+#
+#   Le liste sono nomi separati da virgole, e possono contenere caratteri
+#   jolly.
+#
+
+
+oo()    { echo -e >&2 "$@"; }
+error() { oo "\nerror: $@ (-h for help)\n"; exit 1; }
+
+
+usage()
+    { oo \
+    "\n${0##*/} version $version"\
+    "\n"\
+    "\n usage: [-h|--help] [-rR] [-o outdir] [-i ilist]... slist..."\
+    "\n"\
+    "\n   -h,--help     this help"\
+    "\n   -r,-R         recursive search (cscope -R option)"\
+    "\n   -o OUTDIR     output file is OUTDIR/cscope.out"\
+                        "(default: ./cscope.out)"\
+    "\n   -i ilist      list of directories for include files"\
+    "\n      slist      list of directories for source files"\
+    "\n"\
+    "\nLists are comma-separated directory names, that are expanded"\
+                        "in the current"\
+    "\ndirectory and can contain wildcard characters."\
+    "\n";
+
+    exit 0
+    }
+
+#########################################################
+
+fullpath()
+    {
+    typeset path
+    path=$(readlink -e $1) || error "cannot resolve '$1'"
+    echo -n $path
+    }
+
+
+list()
+    {
+    typeset x name  opt=$1  z=${2//,/ }
+
+    x=; for name in $z; do x+=\ $(fullpath $name) || exit 1; done
+    z=; for name in $x; do z+=\ ${opt}${name}; done
+
+    echo -n $z
+    }
+
+
+ckarg()
+    {
+    typeset opt=$1  z=$2
+    [ "$z" != "${z#-}" ] && error "missing arg to option '$1'"
+    echo -n $z
+    }
+
+#########################################################
+
+optr=; slist=; ilist=; outdir=. # default output dir
+
+
+while [ $# -gt 0 ]; do case "$1" in
+
+        -h|--help)  usage;;
+        -r|-R)      optr=R;;
+
+        -o)         outdir=$(ckarg -o "$2"); shift;;
+        -o*)        outdir=${1:2};;
+
+        -i)         ilist+=\ $(ckarg -i "$2"); shift;;
+        -i*)        ilist+=\ ${1:2};;
+
+        -*)         error "unknown option '$1'";;
+        *)          slist+=" $1";;
+
+    esac; shift
+done
+
+###############################
+
+
+outdir=$(fullpath $outdir) || exit 1
+
+slist=$(list -s "$slist") || exit 1
+ilist=$(list -I "$ilist") || exit 1
+
+
+[ -z "$slist" ] && error "no source dirs"
+
+
+#
+# proceed
+#
+outfile=$outdir/cscope.out
+rm -f $outfile
+
+
+cmnd="cscope -ub$optr -f$outfile $slist $ilist"
+
+tdir=$(mktemp -dt _xcscope.XXXXX) &&
+    {
+    (cd $tdir && $cmnd)
+    rmdir $tdir
+    }

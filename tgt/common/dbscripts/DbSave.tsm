@@ -1,0 +1,70 @@
+# $URL: http://memo.prisma/svn/tm/tstmDb/tags/DbScripts-5.1.4/DbSave.tsm $
+# $Rev: 32822 $
+# $Date: 2010-05-05 11:14:17 +0200 (Wed, 05 May 2010) $
+# $Author: roger $
+
+include DbCommon.tsm
+
+#translate a list of triplets in the heading lines
+#of a csv file
+proc CreateDbHead {DbName DbAttrList} {
+	global AttrNameIdx TypeIdx AccessIdx
+	global TitleLineTag TypeLineTag AccessLineTag
+
+	foreach Elem $DbAttrList {
+		lappend TitleList [lindex $Elem $AttrNameIdx]
+		lappend TypeList [lindex $Elem $TypeIdx]
+		lappend AccessList [lindex $Elem $AccessIdx]
+	}
+
+	##create and store the Title, Type and Access line, as they would written in a csv file 
+	foreach Attr {Title Type Access} {
+		set ${Attr}Str [join [set ${Attr}List] ,]
+		set ${Attr}Str [set ${Attr}LineTag],[set ${Attr}Str]
+	}
+
+	return "$TitleStr\n$TypeStr\n$AccessStr"
+}
+
+#DbSave /DbName/ /csvfile/; save the content of 'DbName' DB in the file 'csvfile'
+#The first three lines are the same of the csv file that originated the DB
+#The order of the Value lines isn't garanted to be the same of the csv file
+#that originated the DB
+proc Init {DbName csvfile {ordering "ascii"}} {
+	if {[info commands tm_open] == ""} {
+		#tm_open doesn't exist in this Test Manager
+		set OpenCmd open
+		logscr "DbSave: \"tm_open\" command not supported in this Test Manager..."
+		logscr "... \"open\" will be used"
+	} else {
+		set OpenCmd tm_open
+	}
+
+	set CsvHnd [$OpenCmd $csvfile w]
+
+	#write the first three lines
+	puts $CsvHnd  [CreateDbHead ${DbName} [DbRecordInfo ${DbName}]]
+
+	foreach idx [lsort -$ordering [DbGetIndexList ${DbName}]] {
+		#puts $CsvHnd "$idx"
+		set DbRec [DbGetRecord ${DbName} $idx]
+		set i 0
+		foreach field $DbRec {
+			if {$field == "?"} {
+				set DbRec [lreplace $DbRec $i $i ""]
+			}
+			incr i
+		}
+		set ValueLine "Value"
+		foreach field $DbRec {
+			set ValueLine "$ValueLine,$field"
+		}
+		puts $CsvHnd $ValueLine
+	}
+
+	close $CsvHnd
+
+	log "DbSave: DB ${DbName} saved in file $csvfile "
+
+	stop
+}
